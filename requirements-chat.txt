@@ -1,0 +1,6 @@
+# The lean .venv for reachy_chat.py (STT + realtime voice). The heavy
+# reachy_env (SDK, dlib, gstreamer) is set up separately — see README.
+faster-whisper
+sounddevice
+numpy
+websockets

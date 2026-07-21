@@ -1,0 +1,68 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wonder-dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["reachy_viewer.py"],
+      "port": 8770,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-camera",
+      "runtimeExecutable": "reachy_env/bin/python3",
+      "runtimeArgs": ["reachy_camera.py"],
+      "port": 8771,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-chat",
+      "runtimeExecutable": ".venv/bin/python3",
+      "runtimeArgs": ["reachy_chat.py"],
+      "port": 8772,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-memory",
+      "runtimeExecutable": "reachy_env/bin/python3",
+      "runtimeArgs": ["reachy_memory.py"],
+      "port": 8773,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-vibeverse",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["reachy_vibeverse.py"],
+      "port": 8774,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-robotmic",
+      "runtimeExecutable": "reachy_env/bin/python3",
+      "runtimeArgs": ["reachy_robot_mic.py"],
+      "port": 8775,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-telegram",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["reachy_telegram.py"],
+      "port": 0,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-alarm",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["reachy_alarm.py"],
+      "port": 0,
+      "autoPort": false
+    },
+    {
+      "name": "wonder-bridge",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["reachy_bridge.py"],
+      "port": 0,
+      "autoPort": false
+    }
+  ]
+}
