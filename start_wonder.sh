@@ -15,7 +15,26 @@ cd "$(dirname "$0")"
 # Load .env and export everything in it (REACHY_URL, keys, …)
 set -a; source .env 2>/dev/null; set +a
 # reachy_camera.py takes a bare host, derive it from REACHY_URL
-export REACHY_HOST=$(echo "${REACHY_URL:-http://192.168.12.240:8000}" | sed -E 's|https?://([^:/]+).*|\1|')
+export REACHY_HOST=$(echo "${REACHY_URL:-http://reachy-mini.local:8000}" | sed -E 's|https?://([^:/]+).*|\1|')
+
+# Auto-discovery: the robot's DHCP lease moves constantly (it has burned us
+# three separate times — .env said .120 while the robot sat on .106), so the
+# canonical name in .env is the mDNS hostname "reachy-mini.local". Resolve it
+# to an IP once here, at boot: the SDK's GStreamer/WebRTC path is happier with
+# a literal address than with .local, and every service inherits the resolved
+# value. If mDNS is unavailable we keep whatever .env said and let the
+# reachability check below decide.
+if [[ "$REACHY_HOST" == *.local ]]; then
+  _ip=$(ping -c1 -t2 "$REACHY_HOST" 2>/dev/null \
+        | sed -nE '1s/.*\(([0-9.]+)\).*/\1/p')
+  if [[ -n "$_ip" ]]; then
+    echo "discovered $REACHY_HOST → $_ip"
+    export REACHY_HOST="$_ip"
+    export REACHY_URL="http://${_ip}:8000"
+  else
+    echo "⚠️  could not resolve $REACHY_HOST via mDNS — trying it as-is"
+  fi
+fi
 # A stale token in ~/.cache/huggingface/token 401s even PUBLIC model downloads
 # (whisper small.en). Anonymous access works fine.
 export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
@@ -79,7 +98,16 @@ sleep 12
 ok=0
 for svc in "8771/status camera" "8770/perception viewer" "8772/state chat" "8773/current memory"; do
   port_path="${svc%% *}"; name="${svc##* }"
-  if curl -s -m 3 "http://localhost:$port_path" > /dev/null; then
+  # Retry rather than probe once: the camera's WebRTC handshake regularly
+  # finishes a few seconds after the fixed sleep above, which used to report a
+  # scary "❌ camera" for a service that was actually mid-negotiation and came
+  # up fine seconds later. Up to ~24s of grace, exits early the moment it answers.
+  up=0
+  for _ in $(seq 1 12); do
+    if curl -s -m 3 "http://localhost:$port_path" > /dev/null; then up=1; break; fi
+    sleep 2
+  done
+  if [[ $up -eq 1 ]]; then
     echo "  ✅ $name  (:${port_path%%/*})"
     ok=$((ok+1))
   else
