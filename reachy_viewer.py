@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -35,6 +36,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from reachy_voice import say  # ElevenLabs → robot speaker (loads .env)
 
 REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/")
+
+# Finding the robot and moving it between networks, without the desktop app.
+# Every _get/_post below reads the REACHY_URL global at call time, so
+# repointing the dashboard at a new address is just a reassignment.
+import reachy_connect
 HANDSFREE_URL = os.environ.get("HANDSFREE_URL", "http://localhost:8765").rstrip("/")
 # Live camera MJPEG feed served by reachy_camera.py (runs in the SDK venv).
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
@@ -500,6 +506,24 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
              border:1px solid var(--line);display:block;background:var(--sunken)}
   .capgrid .cap-tag{position:absolute;bottom:4px;right:4px;font-size:9px;
              background:rgba(0,0,0,.7);padding:1px 5px;border-radius:4px;color:#cbd2e0}
+  /* --- connection panel: find the robot, move it between networks --- */
+  .conn-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .robot-card{display:flex;align-items:center;gap:12px;padding:11px 13px;
+              border:1px solid var(--line);border-radius:var(--r-md);
+              background:var(--well);margin-bottom:8px;flex-wrap:wrap}
+  .robot-card.active{border-color:var(--accent-line);background:var(--accent-soft)}
+  .robot-card .rc-main{flex:1;min-width:180px}
+  .robot-card .rc-name{font-weight:650;font-size:13px}
+  .robot-card .rc-meta{font-size:11px;color:var(--dim);
+                       font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .net-list{display:flex;flex-direction:column;gap:5px;max-height:190px;
+            overflow-y:auto;margin-top:8px}
+  .net{display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:var(--r-sm);
+       cursor:pointer;font-size:13px;border:1px solid transparent}
+  .net:hover{background:var(--panel-2);border-color:var(--line)}
+  .net.on{background:var(--good-soft);border-color:var(--good-line);color:var(--good);
+          font-weight:650}
+  .net .lock{margin-left:auto;font-size:11px;color:var(--dim)}
   /* Inputs that used to carry inline hex colours now share this. */
   .field{background:var(--well);border:1px solid var(--line);border-radius:var(--r-md);
          color:var(--txt);font:inherit;outline:none;transition:border-color .15s,box-shadow .15s}
@@ -589,6 +613,29 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   <div class="panel full">
     <h2>🧠 Vibey's head <span class=sub style="display:inline;margin-left:6px">OpenClaw agent — thinking, tool calls, code edits</span></h2>
     <div id=brainlog class=brainlog><div class=brainlog-empty>Turn on 🎮 Vibe mode and talk to it — its thought process streams here.</div></div>
+  </div>
+  <div class="panel full">
+    <h2>Connection · robot link <span id=connsub class=sub
+        style="display:inline;margin-left:6px;text-transform:none;letter-spacing:0"></span></h2>
+    <div class=conn-row>
+      <button id=findbtn class=cap-btn>🔍 Find robot</button>
+      <button id=scanbtn class=cap-btn title="Also sweep every address on this network (slower)">Deep scan</button>
+      <span id=connstatus class=vc-chip>idle</span>
+    </div>
+    <div id=robotlist></div>
+    <div class=conn-row style="margin-top:14px">
+      <button id=wifibtn class=cap-btn title="Scanning makes the robot sweep every Wi-Fi channel, which can briefly drop it off the network">📶 Robot Wi-Fi</button>
+      <span id=wifinow class=sub style="margin:0"></span>
+    </div>
+    <div id=wifiwrap style="display:none">
+      <div class=net-list id=netlist></div>
+      <div class=conn-row style="margin-top:10px">
+        <input id=wifissid class=field placeholder="network name" style="padding:8px 11px;flex:1;min-width:150px">
+        <input id=wifipass class=field type=password placeholder="password" style="padding:8px 11px;flex:1;min-width:150px">
+        <button id=wifijoin class=btn-accent style="padding:9px 16px">Join</button>
+      </div>
+      <div id=wifimsg class=sub style="margin:8px 0 0"></div>
+    </div>
   </div>
   <div class="panel full">
     <h2>Sound effects <span id=sfxstatus class=sub style="display:inline;margin-left:6px"></span></h2>
@@ -1361,6 +1408,104 @@ $('alarmadd').onclick=async()=>{
   fetchAlarms();
 };
 setInterval(fetchAlarms,20000);fetchAlarms();
+
+// --- connection panel: find the robot, repoint the stack, move networks ----
+// Everything here talks to the robot's own daemon API (proxied through this
+// server), which is all the Reachy desktop app was ever doing.
+(function(){
+  const $$ = id => document.getElementById(id);
+  const chip = (t, cls) => { const c=$$('connstatus'); c.textContent=t;
+                             c.className = 'vc-chip' + (cls ? ' '+cls : ''); };
+
+  function card(r, active){
+    const el = document.createElement('div');
+    el.className = 'robot-card' + (active ? ' active' : '');
+    const addrs = (r.addresses||[]).join(' · ');
+    el.innerHTML =
+      '<span class=dot style="--c:var(--'+(r.state==='running'?'good':'warn')+')"></span>'
+      + '<span class=rc-main><span class=rc-name>'+(r.name||'reachy')+'</span>'
+      + '<div class=rc-meta>'+addrs+'  ·  '+(r.network||'?')+'  ·  '+(r.hardware_id||'')+'</div></span>';
+    const btn = document.createElement('button');
+    btn.className = active ? 'cap-btn' : 'btn-accent';
+    btn.style.padding = '8px 14px';
+    btn.textContent = active ? 'Connected' : 'Use this';
+    btn.disabled = !!active;
+    btn.onclick = async () => {
+      // Persist + repoint. The other services read REACHY_URL once at
+      // startup, so they need the restart to follow it.
+      btn.disabled = true; chip('connecting…','talk');
+      const res = await (await fetch('/robot/connect', {method:'POST',
+        body: JSON.stringify({url: r.url, restart: true})})).json();
+      if (res.error) { chip('failed: '+res.error,'') ; btn.disabled=false; return; }
+      chip('restarting the stack — this page will reload','talk');
+      setTimeout(()=>location.reload(), 22000);
+    };
+    el.appendChild(btn);
+    return el;
+  }
+
+  async function find(deep){
+    chip(deep ? 'sweeping the network…' : 'looking…','talk');
+    try{
+      const r = await (await fetch('/robot/discover?scan='+(deep?'1':'0'))).json();
+      const list = $$('robotlist'); list.innerHTML='';
+      (r.robots||[]).forEach(rb =>
+        list.appendChild(card(rb, (rb.addresses||[]).some(a => (r.active||'').includes(a)))));
+      $$('connsub').textContent = r.env_url ? '.env → '+r.env_url : '';
+      if (!(r.robots||[]).length){
+        list.innerHTML = '<div class=gallery-empty>No robot answered on this network.</div>';
+        chip(deep ? 'nothing found' : 'nothing found — try Deep scan','');
+      } else {
+        chip((r.robots.length)+' found','live');
+      }
+      (r.notes||[]).forEach(n => { const d=document.createElement('div');
+        d.className='sub'; d.style.margin='6px 0 0'; d.textContent=n; $$('robotlist').appendChild(d); });
+    }catch(e){ chip('discovery failed','') }
+  }
+
+  $$('findbtn').onclick = () => find(false);
+  $$('scanbtn').onclick = () => find(true);
+
+  $$('wifibtn').onclick = async () => {
+    const wrap=$$('wifiwrap');
+    if (wrap.style.display === 'block'){ wrap.style.display='none'; return; }
+    wrap.style.display='block';
+    $$('wifimsg').textContent='scanning…';
+    const st = await (await fetch('/robot/wifi')).json();
+    $$('wifinow').textContent = st.connected_network
+      ? 'on "'+st.connected_network+'"' : (st.error||'');
+    const known = new Set(st.known_networks||[]);
+    const res = await (await fetch('/robot/wifi/scan',{method:'POST'})).json();
+    const list=$$('netlist'); list.innerHTML='';
+    (res.networks||[]).forEach(ssid => {
+      const d=document.createElement('div');
+      d.className='net' + (ssid===st.connected_network ? ' on' : '');
+      d.innerHTML = '<span>'+ssid+'</span>'
+        + '<span class=lock>'+(ssid===st.connected_network ? 'connected'
+            : known.has(ssid) ? 'saved' : '')+'</span>';
+      d.onclick = () => { $$('wifissid').value = ssid; $$('wifipass').focus(); };
+      list.appendChild(d);
+    });
+    $$('wifimsg').textContent = (res.networks||[]).length
+      ? 'Pick a network, then enter its password. Note: scanning makes the robot '
+        + 'sweep every channel, so it can drop off for a few seconds — use Find robot if it does.'
+      : (res.error||'no networks seen');
+  };
+
+  $$('wifijoin').onclick = async () => {
+    const ssid=$$('wifissid').value.trim(), pw=$$('wifipass').value;
+    if(!ssid){ $$('wifimsg').textContent='Enter a network name.'; return; }
+    $$('wifimsg').textContent='joining "'+ssid+'" — the robot may drop off for a moment…';
+    const r = await (await fetch('/robot/wifi/join',{method:'POST',
+      body: JSON.stringify({ssid, password: pw})})).json();
+    $$('wifipass').value='';
+    $$('wifimsg').textContent = r.error
+      ? 'failed: '+r.error
+      : 'sent. If it moved to a different network, hit Find robot to pick up its new address.';
+  };
+
+  find(false);   // quick look on load
+})();
 </script></body></html>"""
 
 
@@ -1368,8 +1513,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # quiet
         pass
 
-    def _send(self, body: bytes, ctype: str):
-        self.send_response(200)
+    def _send(self, body: bytes, ctype: str, code: int = 200):
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
@@ -1413,6 +1558,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(
                 _get(f"{CHAT_URL}/vibelog", timeout=6.0) or {"events": []}
             ).encode(), "application/json")
+        elif self.path.startswith("/robot/discover"):
+            # ?scan=0 skips the 254-host sweep when you only want the quick
+            # lookups (mDNS / .env / AP).
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[-1]
+                                       if "?" in self.path else "")
+            scan = qs.get("scan", ["1"])[0] not in ("0", "false")
+            try:
+                res = reachy_connect.discover(scan=scan)
+            except Exception as e:  # noqa: BLE001
+                res = {"robots": [], "notes": [f"discovery failed: {e}"]}
+            res["active"] = REACHY_URL
+            self._send(json.dumps(res).encode(), "application/json")
+        elif self.path.startswith("/robot/wifi"):
+            try:
+                out = reachy_connect.wifi_status(REACHY_URL)
+            except Exception as e:  # noqa: BLE001
+                out = {"error": str(e)}
+            self._send(json.dumps(out).encode(), "application/json")
         elif self.path == "/captures":
             # Only real media files. This used to list bare os.listdir(), which
             # swept up the timelapse_YYYYMMDD/ subdirectories too — every one
@@ -1483,7 +1646,54 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        if self.path.startswith("/power"):
+        if self.path.startswith("/robot/connect"):
+            # Point the whole stack at a robot: persist to .env (so the next
+            # start sticks) and repoint this process immediately. The other
+            # services latch REACHY_URL at startup, so they need a restart —
+            # start_wonder.sh is the tested path for that and re-resolves
+            # mDNS itself, so we just hand off to it.
+            global REACHY_URL
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                url = reachy_connect.set_env_url(str(body.get("url", "")))
+                REACHY_URL = url
+                restart = bool(body.get("restart"))
+                self._send(json.dumps({"ok": True, "url": url,
+                                       "restarting": restart}).encode(),
+                           "application/json")
+                if restart:
+                    # Detached, and only AFTER responding: start_wonder.sh
+                    # kills this very process on its way through.
+                    here = os.path.dirname(os.path.abspath(__file__))
+                    subprocess.Popen(["/bin/zsh", os.path.join(here, "start_wonder.sh")],
+                                     cwd=here, start_new_session=True,
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+            except Exception as e:  # noqa: BLE001
+                self._send(json.dumps({"error": str(e)}).encode(),
+                           "application/json", code=400)
+        elif self.path.startswith("/robot/wifi/scan"):
+            try:
+                out = {"networks": reachy_connect.wifi_scan(REACHY_URL)}
+            except Exception as e:  # noqa: BLE001
+                out = {"error": str(e)}
+            self._send(json.dumps(out).encode(), "application/json")
+        elif self.path.startswith("/robot/wifi/join"):
+            # Password arrives in the body, never in our query string, so it
+            # stays out of this server's URLs and logs.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                ssid = str(body.get("ssid", "")).strip()
+                if not ssid:
+                    raise ValueError("ssid required")
+                out = reachy_connect.wifi_join(REACHY_URL, ssid,
+                                               str(body.get("password", "")))
+            except Exception as e:  # noqa: BLE001
+                out = {"error": str(e)}
+            self._send(json.dumps(out).encode(), "application/json")
+        elif self.path.startswith("/power"):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n))
@@ -1643,8 +1853,15 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=_timelapse_loop, daemon=True).start()
     # Make sure face tracking is on so the view has data to show.
-    _post(f"{REACHY_URL}/api/media/tracking/enable")
-    _post(f"{REACHY_URL}/api/media/wobbling/enable")
+    # Nudge the robot into its usual live state, but NEVER on the startup
+    # path: these are blocking HTTP calls, and when the robot is offline they
+    # each sit out their full timeout before the server binds. That made the
+    # dashboard unreachable for ~16s exactly when the robot was down — i.e.
+    # precisely when you need the connection panel to go find it.
+    threading.Thread(target=lambda: (
+        _post(f"{REACHY_URL}/api/media/tracking/enable"),
+        _post(f"{REACHY_URL}/api/media/wobbling/enable"),
+    ), daemon=True).start()
     print(f"[viewer] reachy    = {REACHY_URL}")
     print(f"[viewer] handsfree = {HANDSFREE_URL}")
     print(f"[viewer] open       http://localhost:{PORT}")
