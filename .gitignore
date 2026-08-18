@@ -9,3 +9,5 @@ __pycache__/
 .telegram_state.json
 captures/
 agent_runs/
+.venv-gestures/
+models/

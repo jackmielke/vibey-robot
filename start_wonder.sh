@@ -49,6 +49,7 @@ stop_all() {
   pkill -f "reachy_telegram.py" 2>/dev/null
   pkill -f "reachy_bridge.py" 2>/dev/null
   pkill -f "reachy_alarm.py" 2>/dev/null
+  pkill -f "reachy_gestures.py" 2>/dev/null
   pkill -f "reachy_watchdog.py" 2>/dev/null
   echo "wonder stack stopped."
 }
@@ -89,6 +90,10 @@ python3                reachy_telegram.py  > /tmp/telegram.log      2>&1 &
 # fun for parties, twitchy as an always-on behavior. Opt in with BRIDGE=1.
 [[ "$BRIDGE" == "1" ]] && NO_WAKE=1 python3 reachy_bridge.py > /tmp/reachy_bridge.log 2>&1 &
 python3                reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
+# Gesture watcher: waves back at you. Its own venv on purpose — mediapipe pins
+# numpy<2 and the robot SDK needs numpy>=2.2.5, so they cannot share one.
+[[ -x .venv-gestures/bin/python3 ]] && \
+  .venv-gestures/bin/python3 reachy_gestures.py > /tmp/reachy_gestures.log 2>&1 &
 python3                reachy_watchdog.py  > /tmp/reachy_watchdog.log 2>&1 &   # restarts anything that dies
 pgrep -x caffeinate >/dev/null || (caffeinate -dims > /dev/null 2>&1 &)   # alarms need an awake Mac
 

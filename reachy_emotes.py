@@ -44,7 +44,7 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("
 NEUTRAL = {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
 
 EMOTIONS = ["happy", "excited", "curious", "sad", "smug", "thinking", "victory",
-            "wave", "nod", "shake"]
+            "wave", "nod", "shake", "wave_left", "wave_right", "peace"]
 
 
 # --------------------------------------------------------------------------- #
@@ -234,6 +234,50 @@ def _do_wave():
     _goto(NEUTRAL, [0.0, 0.0], 0.35)
 
 
+def _ANT(right: float, left: float) -> list[float]:
+    """Antenna vector in the daemon's order. The SDK joint list names
+    `right_antenna` before `left_antenna`, so index 0 is Vibey's RIGHT."""
+    return [right, left]
+
+
+def _wave_one(side: str):
+    """Wave with ONE antenna, the other held still — so the wave has a side.
+
+    Used to wave back at a person mirror-wise: they raise their left hand,
+    Vibey answers with the antenna on that same side of the shared space,
+    which is Vibey's right. The head leans toward the waving antenna the way
+    you tilt toward the hand you're waving with."""
+    lean = 0.18 if side == "right" else -0.18
+    for i in range(3):
+        up = 1.15 if i < 2 else 0.5
+        a = _ANT(up, 0.0) if side == "right" else _ANT(0.0, up)
+        b = _ANT(-0.5, 0.0) if side == "right" else _ANT(0.0, -0.5)
+        _goto(_pose(roll=lean, pitch=-0.12), a, 0.24); time.sleep(0.26)
+        _goto(_pose(roll=lean * 0.4, pitch=-0.12), b, 0.22); time.sleep(0.24)
+    _goto(NEUTRAL, _ANT(0.0, 0.0), 0.35)
+
+
+def _do_wave_right():
+    """Vibey's RIGHT antenna — answers a person's LEFT hand."""
+    _wave_one("right")
+
+
+def _do_wave_left():
+    """Vibey's LEFT antenna — answers a person's RIGHT hand."""
+    _wave_one("left")
+
+
+def _do_peace():
+    """Answer to a peace sign: both antennas snap up into a V and hold,
+    with a pleased little double-bounce."""
+    _goto(_pose(pitch=-0.16), _ANT(1.25, -1.25), 0.26); time.sleep(0.32)
+    for _ in range(2):
+        _goto(_pose(pitch=-0.10), _ANT(1.0, -1.0), 0.16); time.sleep(0.18)
+        _goto(_pose(pitch=-0.18), _ANT(1.3, -1.3), 0.16); time.sleep(0.18)
+    time.sleep(0.25)
+    _goto(NEUTRAL, _ANT(0.0, 0.0), 0.4)
+
+
 def _do_nod():
     for _ in range(2):
         _goto(_pose(pitch=0.22), [0.5, -0.5], 0.18); time.sleep(0.2)
@@ -251,7 +295,8 @@ def _do_shake():
 _MOVES = {"happy": _do_happy, "excited": _do_excited, "curious": _do_curious,
           "sad": _do_sad, "smug": _do_smug, "thinking": _do_thinking,
           "victory": _do_victory, "wave": _do_wave, "nod": _do_nod,
-          "shake": _do_shake}
+          "shake": _do_shake, "wave_left": _do_wave_left,
+          "wave_right": _do_wave_right, "peace": _do_peace}
 
 
 def play(emotion: str, sound: bool = False) -> bool:
