@@ -234,104 +234,198 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Vibey — what the robot sees</title>
 <style>
-  :root{--bg:#0a0b10;--panel:#14161f;--line:#242838;--txt:#e6e9f2;--dim:#8b90a6;
-        --accent:#5ac8fa;--good:#4ade80;--warn:#fbbf24;--bad:#f87171;}
+  /* ---------------------------------------------------------------------
+     Theme tokens. Every colour in this sheet resolves through one of these,
+     so a theme is a token swap and nothing else. Dark is the default (the
+     robot mostly lives in a dim room); light is opt-in via the header
+     toggle, and "system" — no data-theme attribute — follows the OS.
+     --------------------------------------------------------------------- */
+  :root{
+    color-scheme:dark;
+    --bg:#0d0f16;         --bg-wash:#131726;
+    --panel:#161a25;      --panel-2:#1d2231;
+    --well:#10131c;       --sunken:#070910;
+    --line:#262c3d;       --line-soft:#1e2433;
+    --txt:#e8ebf5;        --dim:#8b93ad;        --faint:#4c5470;
+    --accent:#4cc4f5;     --accent-txt:#04141f;
+    --accent-soft:#10334a; --accent-line:#1c4d6b;
+    --good:#4ade80;       --good-soft:#123023;  --good-line:#1d5238;
+    --warn:#fbbf24;       --warn-soft:#332612;  --warn-line:#5f4715;
+    --bad:#f87171;        --bad-soft:#38141b;   --bad-line:#7a2531; --bad-txt:#fca5a5;
+    --violet:#a78bfa;     --violet-soft:#221844; --violet-line:#4c2f9e;
+    --openai:#10a37f;     --openai-soft:#0a2b23; --openai-line:#127a60;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+    --shadow-lg:0 24px 64px rgba(0,0,0,.6);
+    --r-sm:8px; --r-md:11px; --r-lg:14px; --r-xl:18px;
+  }
+  /* System preference, only when the user hasn't explicitly chosen. */
+  @media (prefers-color-scheme:light){
+    :root:not([data-theme="dark"]){
+      color-scheme:light;
+      --bg:#f4f6fb;         --bg-wash:#e9eef8;
+      --panel:#ffffff;      --panel-2:#f2f5fa;
+      --well:#f7f9fc;       --sunken:#0d1017;
+      --line:#dde3ee;       --line-soft:#e7ecf4;
+      --txt:#141824;        --dim:#5d6579;        --faint:#a3abbd;
+      --accent:#0a86c4;     --accent-txt:#ffffff;
+      --accent-soft:#dbf0fb; --accent-line:#9ad6f2;
+      --good:#15803d;       --good-soft:#dcfce7;  --good-line:#8ee0ab;
+      --warn:#a16207;       --warn-soft:#fef3c7;  --warn-line:#ecca6a;
+      --bad:#c0332f;        --bad-soft:#fee2e2;   --bad-line:#f0a7a7; --bad-txt:#a02725;
+      --violet:#6d28d9;     --violet-soft:#ede7fd; --violet-line:#c0a9f5;
+      --openai:#0b7f63;     --openai-soft:#d7f2ea; --openai-line:#7fcbb7;
+      --shadow:0 8px 24px rgba(23,35,66,.10);
+      --shadow-lg:0 24px 56px rgba(23,35,66,.18);
+    }
+  }
+  /* Explicit choice always wins over the system preference. */
+  :root[data-theme="light"]{
+    color-scheme:light;
+    --bg:#f4f6fb;         --bg-wash:#e9eef8;
+    --panel:#ffffff;      --panel-2:#f2f5fa;
+    --well:#f7f9fc;       --sunken:#0d1017;
+    --line:#dde3ee;       --line-soft:#e7ecf4;
+    --txt:#141824;        --dim:#5d6579;        --faint:#a3abbd;
+    --accent:#0a86c4;     --accent-txt:#ffffff;
+    --accent-soft:#dbf0fb; --accent-line:#9ad6f2;
+    --good:#15803d;       --good-soft:#dcfce7;  --good-line:#8ee0ab;
+    --warn:#a16207;       --warn-soft:#fef3c7;  --warn-line:#ecca6a;
+    --bad:#c0332f;        --bad-soft:#fee2e2;   --bad-line:#f0a7a7; --bad-txt:#a02725;
+    --violet:#6d28d9;     --violet-soft:#ede7fd; --violet-line:#c0a9f5;
+    --openai:#0b7f63;     --openai-soft:#d7f2ea; --openai-line:#7fcbb7;
+    --shadow:0 8px 24px rgba(23,35,66,.10);
+    --shadow-lg:0 24px 56px rgba(23,35,66,.18);
+  }
+
   *{box-sizing:border-box}
-  body{margin:0;font:14px/1.4 -apple-system,system-ui,sans-serif;background:var(--bg);
-       color:var(--txt);padding:20px;}
-  h1{font-size:18px;margin:0 0 2px;letter-spacing:.5px}
-  .sub{color:var(--dim);font-size:12px;margin-bottom:18px}
+  body{margin:0;padding:22px 20px 40px;
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+       -webkit-font-smoothing:antialiased;
+       background:var(--bg);color:var(--txt);min-height:100vh;
+       background-image:radial-gradient(1100px 520px at 50% -12%,var(--bg-wash),transparent 70%);
+       background-attachment:fixed;
+       transition:background-color .25s ease,color .25s ease}
+  h1{font-size:19px;margin:0 0 2px;letter-spacing:-.2px;font-weight:650}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:20px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px;margin:0 auto}
   @media (max-width:720px){
+    body{padding:16px 14px 32px}
     .grid{grid-template-columns:1fr}
     .full{grid-column:1}
   }
   .hdr{max-width:900px;margin:0 auto}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
-  .panel h2{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);
-            margin:0 0 12px;font-weight:600}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-xl);
+         padding:18px;box-shadow:var(--shadow)}
+  .panel h2{font-size:10.5px;text-transform:uppercase;letter-spacing:1.3px;color:var(--dim);
+            margin:0 0 13px;font-weight:650}
   .full{grid-column:1/3}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;
-       vertical-align:middle}
-  .kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;
+       vertical-align:middle;background:var(--c,var(--dim));
+       box-shadow:0 0 0 3px color-mix(in srgb,var(--c,var(--dim)) 20%,transparent)}
+  /* Status line under the title. It used to be class="sub hdr", where .hdr's
+     `margin:0 auto` silently cancelled .sub's bottom margin — hence the
+     cramped gap to the first panel. Own class, own spacing, and the robot's
+     address demoted to a quiet mono chip so it stops competing with the
+     status text. */
+  .statusline{max-width:900px;margin:8px auto 22px;display:flex;align-items:center;
+              gap:9px;flex-wrap:wrap;line-height:1;font-size:12.5px;color:var(--dim)}
+  .statusline .st-label{font-weight:600;color:var(--txt);letter-spacing:-.1px}
+  .statusline .st-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+              font-size:11px;color:var(--dim);background:var(--well);
+              border:1px solid var(--line-soft);border-radius:999px;
+              padding:3px 9px;letter-spacing:-.2px}
+  .kv{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line-soft)}
   .kv:last-child{border:0}
   .kv span:first-child{color:var(--dim)}
-  .mono{font-family:ui-monospace,Menlo,monospace}
-  .big{font-size:20px;font-weight:600}
-  .fov{position:relative;border-radius:10px;overflow:hidden;background:#05060a;aspect-ratio:16/9}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .big{font-size:20px;font-weight:650;letter-spacing:-.3px}
+  .fov{position:relative;border-radius:var(--r-lg);overflow:hidden;background:var(--sunken);
+       aspect-ratio:16/9;border:1px solid var(--line-soft)}
   .fov img{width:100%;height:100%;object-fit:cover;display:block}
   .fov canvas{position:absolute;inset:0;width:100%;height:100%}
   .fov .noc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-            color:#3a3f52;font-size:14px;text-align:center;padding:0 20px}
-  .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
-  .power{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);
-         background:var(--panel);color:var(--good);font-size:20px;cursor:pointer;
-         transition:all .15s;max-width:840px}
-  .power.off{background:#3b1219;border-color:#7f1d2d;color:#f87171}
+            color:var(--faint);font-size:14px;text-align:center;padding:0 20px}
+  .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:650}
+  /* Header action buttons (alarm / reboot / power / theme). */
+  .power{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);
+         background:var(--panel);color:var(--good);font-size:18px;cursor:pointer;
+         display:inline-flex;align-items:center;justify-content:center;
+         box-shadow:var(--shadow);
+         transition:transform .12s ease,border-color .15s,background .15s}
+  .power:hover{transform:translateY(-1px);border-color:var(--accent-line)}
+  .power:active{transform:translateY(0)}
+  .power.off{background:var(--bad-soft);border-color:var(--bad-line);color:var(--bad)}
+
   /* --- voice controls: two tidy rows of segmented, square icon buttons --- */
-  .vc-controls{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+  .vc-controls{display:flex;flex-direction:column;gap:10px;margin-bottom:15px}
   .vc-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .seg{display:inline-flex;background:#0a0b10;border:1px solid var(--line);
-       border-radius:11px;padding:3px;gap:2px}
-  .icon-btn{width:34px;height:34px;border-radius:8px;border:1px solid transparent;
+  .seg{display:inline-flex;background:var(--well);border:1px solid var(--line);
+       border-radius:var(--r-md);padding:3px;gap:2px}
+  .icon-btn{width:34px;height:34px;border-radius:var(--r-sm);border:1px solid transparent;
             background:transparent;font-size:15px;cursor:pointer;line-height:1;
             display:inline-flex;align-items:center;justify-content:center;
-            transition:background .12s,border-color .12s;color:var(--txt)}
-  .icon-btn:hover{background:#1b1f2e}
-  .icon-btn:disabled{opacity:.3;cursor:not-allowed}
-  .icon-btn.muted{background:#3b1219;border-color:#7f1d2d}
-  .icon-btn.fast-on{background:#3a2e10;border-color:#7c5c1e}
-  .icon-btn.vibe-on{background:#1e1233;border-color:#5b21b6}
+            transition:background .12s,border-color .12s,transform .12s;color:var(--txt)}
+  .icon-btn:hover{background:var(--panel-2);transform:translateY(-1px)}
+  .icon-btn:active{transform:translateY(0)}
+  .icon-btn:disabled{opacity:.3;cursor:not-allowed;transform:none}
+  .icon-btn.muted{background:var(--bad-soft);border-color:var(--bad-line)}
+  .icon-btn.fast-on{background:var(--warn-soft);border-color:var(--warn-line)}
+  .icon-btn.vibe-on{background:var(--violet-soft);border-color:var(--violet-line)}
+  .icon-btn.openai-on{background:var(--openai-soft);border-color:var(--openai-line)}
   .micmeter{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);
             text-transform:uppercase;letter-spacing:.8px}
-  .micbar{position:relative;width:72px;height:8px;border-radius:4px;background:#0a0b10;
+  .micbar{position:relative;width:72px;height:8px;border-radius:4px;background:var(--well);
           border:1px solid var(--line);overflow:hidden;display:inline-block}
   #miclevel{position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--good);
             transition:width .15s}
   #micnotch{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--warn)}
-  .vc-chip{font-size:12px;color:var(--dim);background:#0a0b10;border:1px solid var(--line);
+  .vc-chip{font-size:12px;color:var(--dim);background:var(--well);border:1px solid var(--line);
            border-radius:20px;padding:6px 12px;white-space:nowrap}
-  .vc-chip.live{color:var(--good);border-color:#1e3a2f}
-  .vc-chip.talk{color:var(--accent);border-color:#14324a}
+  .vc-chip.live{color:var(--good);border-color:var(--good-line);background:var(--good-soft)}
+  .vc-chip.talk{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
   .vc-vol{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;
           text-transform:uppercase;letter-spacing:.8px}
   .vc-vol input{width:120px;accent-color:var(--accent)}
   .sfxbar{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:8px}
-  .sfx-btn{height:42px;background:#0a0b10;border:1px solid var(--line);border-radius:10px;
-           color:var(--txt);font:inherit;font-size:12px;cursor:pointer;padding:0 10px;
+  .sfx-btn{height:42px;background:var(--well);border:1px solid var(--line);
+           border-radius:var(--r-md);color:var(--txt);font:inherit;font-size:12px;
+           cursor:pointer;padding:0 10px;
            display:flex;align-items:center;justify-content:space-between;gap:8px;
            transition:border-color .12s,background .12s,transform .12s}
-  .sfx-btn:hover{border-color:var(--accent);background:#101521}
+  .sfx-btn:hover{border-color:var(--accent);background:var(--panel-2)}
   .sfx-btn:active{transform:translateY(1px)}
-  .sfx-btn.playing{border-color:#1e3a2f;background:#102018;color:var(--good)}
-  .sfx-icon{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--accent);
-            border:1px solid #14324a;border-radius:999px;padding:2px 6px;white-space:nowrap}
+  .sfx-btn.playing{border-color:var(--good-line);background:var(--good-soft);color:var(--good)}
+  .sfx-icon{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;
+            color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;
+            padding:2px 6px;white-space:nowrap}
   .sfx-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .convo{max-height:260px;min-height:80px;overflow-y:auto;display:flex;flex-direction:column;
          gap:8px;padding:4px 2px;scroll-behavior:smooth}
-  .convo-empty{color:#3a3f52;font-size:13px;text-align:center;padding:24px 0}
-  .msg{max-width:78%;padding:9px 13px;border-radius:16px;font-size:14px;line-height:1.4}
-  .msg.you{align-self:flex-end;background:#14324a;border-bottom-right-radius:4px}
-  .msg.wonder{align-self:flex-start;background:#1b1f2e;border-bottom-left-radius:4px}
+  .convo-empty{color:var(--faint);font-size:13px;text-align:center;padding:24px 0}
+  .msg{max-width:78%;padding:9px 13px;border-radius:16px;font-size:14px;line-height:1.45}
+  .msg.you{align-self:flex-end;background:var(--accent-soft);border-bottom-right-radius:4px}
+  .msg.wonder{align-self:flex-start;background:var(--panel-2);border:1px solid var(--line-soft);
+              border-bottom-left-radius:4px}
   .msg .who{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1px;
             color:var(--dim);margin-bottom:2px}
   .gallery{display:flex;flex-wrap:wrap;gap:14px}
-  .gallery-empty{color:#3a3f52;font-size:13px;padding:16px 0}
+  .gallery-empty{color:var(--faint);font-size:13px;padding:16px 0}
   .person{width:104px;text-align:center}
-  .person .thumb{width:104px;height:104px;border-radius:12px;object-fit:cover;
-                 background:#0a0b10;border:2px solid var(--line);display:block}
-  .person.named .thumb{border-color:#14324a}
+  .person .thumb{width:104px;height:104px;border-radius:var(--r-lg);object-fit:cover;
+                 background:var(--well);border:2px solid var(--line);display:block}
+  .person.named .thumb{border-color:var(--accent-line)}
   .person-del{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;
-              background:#3b1219;border:1px solid #7f1d2d;color:#fca5a5;font-size:14px;
-              line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
-  .person-del:hover{background:#5a1a25}
+              background:var(--bad-soft);border:1px solid var(--bad-line);color:var(--bad-txt);
+              font-size:14px;line-height:1;cursor:pointer;display:flex;align-items:center;
+              justify-content:center}
+  .person-del:hover{background:var(--bad);color:#fff}
   .pname-wrap{margin-top:6px}
-  .pname-wrap .combo-input{width:104px;height:auto;font-size:13px;font-weight:600;
+  .pname-wrap .combo-input{width:104px;height:auto;font-size:13px;font-weight:650;
                color:var(--txt);background:transparent;border:1px solid transparent;
                border-radius:6px;text-align:center;padding:3px 4px;font-family:inherit}
   .pname-wrap .combo-input::placeholder{color:var(--dim);font-weight:400;font-style:italic}
   .pname-wrap .combo-input:hover,.pname-wrap .combo-input:focus{border-color:var(--line);
-               background:#0a0b10}
+               background:var(--well)}
   .pname-wrap .combo-menu{min-width:150px}
   .person .pmeta{font-size:11px;color:var(--dim);margin-top:1px}
   .pstack{display:flex;justify-content:center;align-items:center;margin-top:5px}
@@ -340,76 +434,106 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   .pstack img:first-child{margin-left:0}
   .pstack-more{font-size:10px;color:var(--dim);margin-left:4px}
   /* --- Vibey's head: the OpenClaw thought stream --- */
-  .brainlog{max-height:280px;overflow-y:auto;font-family:ui-monospace,Menlo,monospace;
+  .brainlog{max-height:280px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
             font-size:12px;line-height:1.55;display:flex;flex-direction:column;gap:6px;
-            scroll-behavior:smooth;background:#05060a;border:1px solid var(--line);
-            border-radius:10px;padding:12px}
-  .brainlog-empty{color:#3a3f52;text-align:center;padding:18px 0;font-family:inherit}
+            scroll-behavior:smooth;background:var(--well);border:1px solid var(--line);
+            border-radius:var(--r-lg);padding:12px}
+  .brainlog-empty{color:var(--faint);text-align:center;padding:18px 0;font-family:inherit}
   .bl{display:flex;gap:8px;align-items:baseline}
   .bl .tag{flex-shrink:0;font-size:10px;text-transform:uppercase;letter-spacing:.8px;
            width:64px;text-align:right}
-  .bl.thinking .tag{color:#a78bfa} .bl.thinking .tx{color:#8b90a6;font-style:italic}
-  .bl.tool .tag{color:var(--warn)}  .bl.tool .tx{color:#d0d4e2}
-  .bl.result .tag{color:#4b5266}   .bl.result .tx{color:#4b5266}
+  .bl.thinking .tag{color:var(--violet)} .bl.thinking .tx{color:var(--dim);font-style:italic}
+  .bl.tool .tag{color:var(--warn)}  .bl.tool .tx{color:var(--txt)}
+  .bl.result .tag{color:var(--faint)}   .bl.result .tx{color:var(--faint)}
   .bl.say .tag{color:var(--good)}  .bl.say .tx{color:var(--txt)}
   .bl.user .tag{color:var(--accent)} .bl.user .tx{color:var(--accent)}
   .bl .tx{white-space:pre-wrap;word-break:break-word}
   .peoplerows{display:flex;flex-direction:column;gap:8px;margin:8px 0}
   .prow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .prow-known{background:#14324a;color:var(--accent);border-radius:20px;
-              padding:4px 12px;font-size:13px;font-weight:600}
+  .prow-known{background:var(--accent-soft);color:var(--accent);border-radius:20px;
+              padding:4px 12px;font-size:13px;font-weight:650}
   /* --- unified name combobox: one input, a floating suggestion list that
      always tracks the input directly below it, never drifts off elsewhere --- */
   .combo{position:relative;display:inline-block}
-  .combo-input{background:#0a0b10;border:1px solid var(--line);border-radius:10px;
+  .combo-input{background:var(--well);border:1px solid var(--line);border-radius:var(--r-md);
                height:34px;padding:0 12px;color:var(--txt);font:inherit;font-size:13px;
-               outline:none;transition:border-color .15s;width:100%}
-  .combo-input:focus{border-color:var(--accent)}
+               outline:none;transition:border-color .15s,box-shadow .15s;width:100%}
+  .combo-input:focus{border-color:var(--accent);
+               box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
   .combo-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:30;
               max-height:200px;overflow-y:auto;background:var(--panel);
-              border:1px solid var(--line);border-radius:12px;padding:5px;
-              box-shadow:0 12px 32px rgba(0,0,0,.55)}
+              border:1px solid var(--line);border-radius:var(--r-lg);padding:5px;
+              box-shadow:var(--shadow-lg)}
   .combo-menu.open{display:block}
-  .combo-item{padding:8px 12px;border-radius:8px;font-size:13px;cursor:pointer;
+  .combo-item{padding:8px 12px;border-radius:var(--r-sm);font-size:13px;cursor:pointer;
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .combo-item:hover,.combo-item.hi{background:#1b1f2e}
+  .combo-item:hover,.combo-item.hi{background:var(--panel-2)}
   .combo-empty{padding:8px 12px;font-size:12px;color:var(--dim);font-style:italic}
   /* --- per-person photo manager modal --- */
-  .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(3,4,8,.72);
+  .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(6,9,16,.62);
+                  backdrop-filter:blur(3px);
                   z-index:50;align-items:center;justify-content:center;padding:20px}
   .modal-backdrop.open{display:flex}
-  .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;
-         padding:18px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto;
-         box-shadow:0 24px 64px rgba(0,0,0,.6)}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-xl);
+         padding:20px;max-width:560px;width:100%;max-height:80vh;overflow-y:auto;
+         box-shadow:var(--shadow-lg)}
   .modal-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
   .pm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px}
   .pm-cell{position:relative}
-  .pm-cell img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;
+  .pm-cell img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--r-md);
                border:2px solid var(--line);display:block}
   .pm-del{position:absolute;top:-7px;right:-7px;width:24px;height:24px;border-radius:50%;
-          background:#3b1219;border:1px solid #7f1d2d;color:#fca5a5;font-size:13px;
-          cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
-  .pm-del:hover{background:#5a1a25}
+          background:var(--bad-soft);border:1px solid var(--bad-line);color:var(--bad-txt);
+          font-size:13px;cursor:pointer;display:flex;align-items:center;
+          justify-content:center;line-height:1}
+  .pm-del:hover{background:var(--bad);color:#fff}
   .pm-del:disabled{opacity:.3;cursor:not-allowed}
   .pm-cell .when{font-size:10px;color:var(--dim);margin-top:3px;text-align:center}
-  .cap-btn{background:#0a0b10;border:1px solid var(--line);border-radius:10px;height:36px;
-           padding:0 16px;color:var(--txt);font:inherit;font-size:13px;cursor:pointer}
-  .cap-btn:hover{border-color:var(--accent)}
+  .cap-btn{background:var(--well);border:1px solid var(--line);border-radius:var(--r-md);
+           height:36px;padding:0 16px;color:var(--txt);font:inherit;font-size:13px;
+           cursor:pointer;transition:border-color .12s,background .12s}
+  .cap-btn:hover{border-color:var(--accent);background:var(--panel-2)}
   .cap-btn:disabled{opacity:.4}
   .capgrid{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
   .capgrid a{display:block;position:relative}
-  .capgrid img,.capgrid video{width:120px;height:68px;object-fit:cover;border-radius:8px;
-             border:1px solid var(--line);display:block;background:#05060a}
-  .capgrid .cap-tag{position:absolute;bottom:4px;right:4px;font-size:9px;background:rgba(0,0,0,.7);
-             padding:1px 5px;border-radius:4px;color:var(--dim)}
-</style></head><body>
+  .capgrid img,.capgrid video{width:120px;height:68px;object-fit:cover;border-radius:var(--r-sm);
+             border:1px solid var(--line);display:block;background:var(--sunken)}
+  .capgrid .cap-tag{position:absolute;bottom:4px;right:4px;font-size:9px;
+             background:rgba(0,0,0,.7);padding:1px 5px;border-radius:4px;color:#cbd2e0}
+  /* Inputs that used to carry inline hex colours now share this. */
+  .field{background:var(--well);border:1px solid var(--line);border-radius:var(--r-md);
+         color:var(--txt);font:inherit;outline:none;transition:border-color .15s,box-shadow .15s}
+  .field:focus{border-color:var(--accent);
+         box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+  .btn-accent{background:var(--accent);color:var(--accent-txt);border:0;
+              border-radius:var(--r-md);font:inherit;font-weight:650;cursor:pointer;
+              transition:filter .12s,transform .12s}
+  .btn-accent:hover{filter:brightness(1.08)}
+  .btn-accent:active{transform:translateY(1px)}
+  /* Scrollbars, so the panels don't get a bright OS bar in dark mode. */
+  .convo::-webkit-scrollbar,.brainlog::-webkit-scrollbar,
+  .combo-menu::-webkit-scrollbar,.modal::-webkit-scrollbar{width:9px}
+  .convo::-webkit-scrollbar-thumb,.brainlog::-webkit-scrollbar-thumb,
+  .combo-menu::-webkit-scrollbar-thumb,.modal::-webkit-scrollbar-thumb{
+    background:var(--line);border-radius:99px;border:2px solid transparent;
+    background-clip:content-box}
+</style>
+<script>
+  // Runs before first paint: without this a light-mode user gets a dark flash.
+  try{
+    var _t=localStorage.getItem('vibey-theme');
+    if(_t==='light'||_t==='dark')document.documentElement.setAttribute('data-theme',_t);
+  }catch(e){}
+</script>
+</head><body>
 <div class=hdr style="display:flex;align-items:center;gap:14px">
   <h1 style="flex:1">🤖 Vibey — what the robot sees</h1>
+  <button id=themebtn class=power title="Switch colour theme" style="color:var(--dim)">☀️</button>
   <button id=alarmbtn class=power title="Wake-up show: sunrise song + singing + dance" style="color:var(--accent)">🌅</button>
   <button id=rebootbtn class=power title="Reboot the robot (fixes stuck motors/sounds/camera, ~30s)" style="color:var(--warn)">⟳</button>
   <button id=powerbtn class=power title="Put Vibey to sleep / wake it up">⏻</button>
 </div>
-<div class="sub hdr" id=status>connecting…</div>
+<div class=statusline id=status><span class=st-label>connecting…</span></div>
 <div class=grid>
   <div class="panel full">
     <h2>Field of view · live camera + face</h2>
@@ -430,6 +554,7 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
           <button id=mutebtn class=icon-btn title="Mute Vibey's ears">🎙️</button>
           <button id=fastbtn class=icon-btn title="Fast mode: ElevenLabs agent, skips Claude">⚡</button>
           <button id=vibebtn class=icon-btn title="Vibe mode: OpenClaw agent — can improve its own code">🎮</button>
+          <button id=openaibtn class=icon-btn title="Realtime mode: OpenAI full-duplex voice — just talk, interrupt anytime">🅾️</button>
           <button id=resaybtn class=icon-btn title="Re-say the last thing Vibey said">🔁</button>
         </span>
         <span id=vcstatus class=vc-chip>connecting…</span>
@@ -449,12 +574,9 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
     </div>
     <div id=convo class=convo><div class=convo-empty>Say something — the conversation shows up here.</div></div>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <input id=saytext placeholder="…or message Vibey here (prefix with say: to speak text verbatim)"
-        style="flex:1;background:#0a0b10;border:1px solid var(--line);border-radius:10px;
-               padding:10px 12px;color:var(--txt);font:inherit;outline:none">
-      <button id=saybtn
-        style="background:var(--accent);color:#04121c;border:0;border-radius:10px;
-               padding:10px 18px;font:inherit;font-weight:700;cursor:pointer">Send</button>
+      <input id=saytext class=field placeholder="…or message Vibey here (prefix with say: to speak text verbatim)"
+        style="flex:1;padding:10px 12px">
+      <button id=saybtn class=btn-accent style="padding:10px 18px">Send</button>
     </div>
     <div id=saystatus class=sub style="margin:8px 0 0"></div>
   </div>
@@ -500,12 +622,8 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
     <h2>⏰ Alarms <span class=sub style="display:inline;margin-left:6px">wake-up shows</span></h2>
     <div id=alarmlist style="display:flex;flex-direction:column;gap:6px"></div>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <input id=alarmtime type=time value="07:00"
-        style="background:#0a0b10;border:1px solid var(--line);border-radius:10px;
-               padding:8px 10px;color:var(--txt);font:inherit;outline:none">
-      <select id=alarmrepeat
-        style="background:#0a0b10;border:1px solid var(--line);border-radius:10px;
-               padding:8px 10px;color:var(--txt);font:inherit;outline:none">
+      <input id=alarmtime type=time value="07:00" class=field style="padding:8px 10px">
+      <select id=alarmrepeat class=field style="padding:8px 10px">
         <option value=once>once</option><option value=daily>daily</option>
       </select>
       <button id=alarmadd class=cap-btn>＋ Add</button>
@@ -530,6 +648,38 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   </div>
 </div>
 <script>
+// --- colour theme: dark (default) / light, remembered across reloads -------
+// Tokens live in CSS; JS only flips the data-theme attribute and reads
+// computed values back out for the <canvas> face overlay.
+const themeColor = v =>
+  getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#4cc4f5';
+(function(){
+  const root = document.documentElement, KEY = 'vibey-theme';
+  const sysLight = () => matchMedia('(prefers-color-scheme: light)').matches;
+  const active   = () => root.getAttribute('data-theme') || (sysLight() ? 'light' : 'dark');
+  function paint(){
+    const b = document.getElementById('themebtn');
+    if(!b) return;
+    const light = active() === 'light';
+    b.textContent = light ? '🌙' : '☀️';
+    b.title = light ? 'Switch to dark mode' : 'Switch to light mode';
+  }
+  function toggle(){
+    const next = active() === 'light' ? 'dark' : 'light';
+    root.setAttribute('data-theme', next);
+    try{ localStorage.setItem(KEY, next); }catch(e){}
+    paint();
+  }
+  const btn = document.getElementById('themebtn');
+  if(btn) btn.addEventListener('click', toggle);
+  // Keep following the OS for as long as the user hasn't picked one.
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    let picked = null;
+    try{ picked = localStorage.getItem(KEY); }catch(e){}
+    if(!picked) paint();
+  });
+  paint();
+})();
 const REACHY=%REACHY%, HANDSFREE=%HANDSFREE%, CAM=%CAM%;
 const $=id=>document.getElementById(id);
 const c=$('fovc'),g=c.getContext('2d');
@@ -558,14 +708,18 @@ function drawFOV(people){
     // x,y are normalized offsets ~[-1,1]; center them into the frame
     const x=W/2+(p.x||0)*W/2, y=H/2+(p.y||0)*H/2;
     const known=!!p.name;
-    g.strokeStyle=known?'#5ac8fa':'#4ade80';g.lineWidth=3;
+    // Read the live theme tokens so the overlay tracks light/dark.
+    const col=known?themeColor('--accent'):themeColor('--good');
+    g.strokeStyle=col;g.lineWidth=3;
     g.beginPath();g.arc(x,y,44,0,7);g.stroke();
     const label=p.name||'unknown';
     g.font='bold 14px system-ui';
     const tw=g.measureText(label).width;
-    g.fillStyle='rgba(5,6,10,.75)';
+    // The label sits on video, which is dark in both themes — keep the
+    // plate dark and the text the accent colour for contrast.
+    g.fillStyle='rgba(5,6,10,.78)';
     g.fillRect(x-tw/2-8,y-72,tw+16,24);
-    g.fillStyle=known?'#5ac8fa':'#4ade80';
+    g.fillStyle=col;
     g.fillText(label,x-tw/2,y-55);
   }
 }
@@ -679,11 +833,13 @@ async function tick(){
   try{
     const r=await fetch('/perception');const d=await r.json();
     $('powerbtn').classList.toggle('off',!!d.asleep);
-    $('status').innerHTML = d.asleep
-      ? '<span class=dot style=background:var(--warn)></span>Vibey is asleep 😴 · '+REACHY
-      : d.online
-      ? '<span class=dot style=background:var(--good)></span>robot online · '+REACHY
-      : '<span class=dot style=background:var(--bad)></span>robot offline · '+REACHY;
+    const st = d.asleep  ? ['--warn','Vibey is asleep 😴']
+             : d.online  ? ['--good','robot online']
+             :             ['--bad', 'robot offline'];
+    $('status').innerHTML =
+        '<span class=dot style="--c:var('+st[0]+')"></span>'
+      + '<span class=st-label>'+st[1]+'</span>'
+      + '<span class=st-url>'+REACHY.replace(/^https?:\/\//,'')+'</span>';
     const people=d.people||[];
     $('facedet').textContent=people.length?'yes ✅':'no';
     $('personcount').textContent=people.length
@@ -693,14 +849,15 @@ async function tick(){
     const ang=d.doa&&d.doa.angle!=null?(d.doa.angle*180/Math.PI).toFixed(0)+'°':'—';
     $('doa').textContent=ang;
     $('speech').innerHTML=d.doa&&d.doa.speech
-      ?'<span class=pill style="background:#1e3a2f;color:var(--good)">talking</span>':'quiet';
+      ?'<span class=pill style="background:var(--good-soft);color:var(--good)">talking</span>':'quiet';
     const p=d.pose;
     $('pose').textContent=p?`${p.roll.toFixed(2)} ${p.pitch.toFixed(2)} ${p.yaw.toFixed(2)}`:'—';
     const a=d.antennas;
     $('ant').textContent=a?`${a[0].toFixed(2)}  ${a[1].toFixed(2)}`:'—';
     drawFOV(people);
   }catch(e){
-    $('status').innerHTML='<span class=dot style=background:var(--bad)></span>viewer error';
+    $('status').innerHTML='<span class=dot style="--c:var(--bad)"></span>'
+      +'<span class=st-label>viewer error</span>';
   }
 }
 // handsfree voice state via its SSE stream
@@ -710,7 +867,7 @@ function connectHandsfree(){
     es.onmessage=ev=>{
       try{const d=JSON.parse(ev.data);
         $('voice').innerHTML = d.v2Armed
-          ? '<span class=pill style="background:#14324a;color:var(--accent)">armed 🟢</span>'
+          ? '<span class=pill style="background:var(--accent-soft);color:var(--accent)">armed 🟢</span>'
           : 'standby';
         $('cmd').textContent = d.voiceLastResult && d.voiceLastResult!=='(no match)'
           ? d.voiceLastResult : (d.voiceLastText||'—');
@@ -752,6 +909,14 @@ $('vibebtn').onclick=async()=>{
     body:JSON.stringify({vibe:vcVibe})});}catch(_){}
 };
 
+let vcOpenai=false;
+$('openaibtn').onclick=async()=>{
+  vcOpenai=!vcOpenai;
+  $('openaibtn').classList.toggle('openai-on',vcOpenai);
+  try{await fetch('/openaimode',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({openai:vcOpenai})});}catch(_){}
+};
+
 let volTimer=null;
 $('vol').oninput=()=>{
   $('volval').textContent=$('vol').value;
@@ -790,6 +955,7 @@ async function chatTick(){
     if(d.mode==='offline'){s.textContent='voice chat offline — start reachy_chat.py';s.className='vc-chip';}
     else if(d.speaking){s.textContent='🔊 Vibey is speaking…';s.className='vc-chip talk';}
     else if(d.muted){s.textContent='muted';s.className='vc-chip';}
+    else if(d.openai){s.textContent='👂 🅾️ Realtime (OpenAI full-duplex — just talk, interrupt anytime)';s.className='vc-chip live';}
     else if(d.vibe){s.textContent='👂 listening · 🎮 Vibe (OpenClaw — self-improving)';s.className='vc-chip live';}
     else if(d.fast){s.textContent='👂 listening · ⚡ fast mode (ElevenLabs agent)';s.className='vc-chip live';}
     else{s.textContent='👂 listening · brain: '+d.mode+' ('+(d.model||'').replace('claude-','')+')';s.className='vc-chip live';}
@@ -806,6 +972,14 @@ async function chatTick(){
       vcVibe=d.vibe;
       $('vibebtn').classList.toggle('vibe-on',vcVibe);
     }
+    if(d.openai!==undefined&&d.openai!==vcOpenai){
+      vcOpenai=d.openai;
+      $('openaibtn').classList.toggle('openai-on',vcOpenai);
+    }
+    $('openaibtn').disabled = d.openai_available===false;
+    $('openaibtn').title = d.openai_available===false
+      ? 'Realtime unavailable — OPENAI_API_KEY not configured in .env'
+      : 'Realtime mode: OpenAI full-duplex voice — just talk, interrupt anytime';
     $('vibebtn').disabled = d.vibe_available===false;
     // mic meter: green fill vs the amber speech-threshold notch
     if(d.mic_level!==undefined){
@@ -1240,10 +1414,22 @@ class Handler(BaseHTTPRequestHandler):
                 _get(f"{CHAT_URL}/vibelog", timeout=6.0) or {"events": []}
             ).encode(), "application/json")
         elif self.path == "/captures":
-            files = sorted(os.listdir(CAPTURES_DIR), reverse=True)[:60]
-            out = [{"name": f,
-                    "size": os.path.getsize(os.path.join(CAPTURES_DIR, f))}
-                   for f in files if not f.startswith(".")]
+            # Only real media files. This used to list bare os.listdir(), which
+            # swept up the timelapse_YYYYMMDD/ subdirectories too — every one
+            # of them rendered as an <img> that 404'd on /captures/<dir>,
+            # giving a grid of broken thumbnails.
+            MEDIA = (".jpg", ".jpeg", ".png", ".mp4")
+            names = sorted(os.listdir(CAPTURES_DIR), reverse=True)
+            out = []
+            for f in names:
+                if f.startswith(".") or not f.lower().endswith(MEDIA):
+                    continue
+                p = os.path.join(CAPTURES_DIR, f)
+                if not os.path.isfile(p):
+                    continue
+                out.append({"name": f, "size": os.path.getsize(p)})
+                if len(out) >= 60:
+                    break
             self._send(json.dumps(out).encode(), "application/json")
         elif self.path.startswith("/captures/"):
             name = os.path.basename(urllib.parse.unquote(self.path.split("/captures/", 1)[1]))
@@ -1396,7 +1582,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if (self.path.startswith("/mute") or self.path.startswith("/volume")
                 or self.path.startswith("/nameface") or self.path.startswith("/fastmode")
-                or self.path.startswith("/vibemode") or self.path.startswith("/chatmsg")
+                or self.path.startswith("/vibemode") or self.path.startswith("/openaimode")
+                or self.path.startswith("/chatmsg")
                 or self.path.startswith("/resay") or self.path.startswith("/deletesample")
                 or self.path.startswith("/deleteface")):
             try:
@@ -1408,6 +1595,8 @@ class Handler(BaseHTTPRequestHandler):
                     out = _post(f"{CHAT_URL}/fastmode", {"fast": bool(body.get("fast"))})
                 elif self.path.startswith("/vibemode"):
                     out = _post(f"{CHAT_URL}/vibemode", {"vibe": bool(body.get("vibe"))})
+                elif self.path.startswith("/openaimode"):
+                    out = _post(f"{CHAT_URL}/openaimode", {"openai": bool(body.get("openai"))})
                 elif self.path.startswith("/chatmsg"):
                     out = _post(f"{CHAT_URL}/message", {"text": body.get("text", "")},
                                 timeout=10.0)
