@@ -1364,16 +1364,44 @@ class FastAgent:
 # --------------------------------------------------------------------------- #
 _whisper = None
 
+# Decode settings. Benchmarked 2026-08-17 against a known sentence (M4 Pro,
+# int8 CPU), which is worth recording because it says where the quality
+# actually goes:
+#
+#                       clean 16k TTS      same sentence via the robot mic
+#   small.en                5% WER                  140% WER
+#   medium.en               0% WER (2x slower)      100% WER
+#
+# i.e. the model is NOT the bottleneck — small.en is already near-perfect on
+# clean speech, and medium.en cannot recover audio that arrives degraded, it
+# just costs twice the latency. What wrecks accuracy is the far-field robot
+# mic picking up the whole room (competing media, reverb, distance). The big
+# lever is mic proximity: MIC_SOURCE=laptop with the laptop close by is worth
+# far more than any model upgrade. Bump WHISPER_MODEL to medium.en only if
+# you're on a close-talking mic, where it does go to 0%.
+WHISPER_BEAM = int(os.environ.get("WHISPER_BEAM", "5"))
+WHISPER_VAD = os.environ.get("WHISPER_VAD", "1") not in ("0", "false", "no")
+
 def transcribe(audio: np.ndarray) -> str:
     global _whisper
     if _whisper is None:
         from faster_whisper import WhisperModel
-        # small.en over tiny.en: noticeably better accuracy on room-mic audio;
-        # ~1-2s slower per utterance on CPU, worth it. WHISPER_MODEL overrides.
         model = os.environ.get("WHISPER_MODEL", "small.en")
-        print(f"[stt] loading whisper {model} …", flush=True)
+        print(f"[stt] loading whisper {model} "
+              f"(beam={WHISPER_BEAM}, vad={'on' if WHISPER_VAD else 'off'}) …",
+              flush=True)
         _whisper = WhisperModel(model, device="cpu", compute_type="int8")
-    segments, _ = _whisper.transcribe(audio, beam_size=1, vad_filter=False)
+    segments, _ = _whisper.transcribe(
+        audio,
+        beam_size=WHISPER_BEAM,
+        # Drop non-speech before decoding, so room noise between words doesn't
+        # get turned into words.
+        vad_filter=WHISPER_VAD,
+        # Each utterance is decoded standalone anyway; leaving this on is what
+        # lets the decoder spiral into repeating a phrase over and over (we
+        # had "Stopped in the middle of the air." five times in one turn).
+        condition_on_previous_text=False,
+    )
     return " ".join(s.text.strip() for s in segments).strip()
 
 
