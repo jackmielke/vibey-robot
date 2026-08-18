@@ -43,7 +43,8 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("
 
 NEUTRAL = {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
 
-EMOTIONS = ["happy", "excited", "curious", "sad", "smug", "thinking", "victory"]
+EMOTIONS = ["happy", "excited", "curious", "sad", "smug", "thinking", "victory",
+            "wave", "nod", "shake"]
 
 
 # --------------------------------------------------------------------------- #
@@ -125,6 +126,12 @@ def _chirp(emotion: str) -> bytes:
              + _sweep(1046, 1046, .08) + _silence(.04)
              + _sweep(880, 1318, .2, .65) + _silence(.05)
              + _sweep(1046, 1568, .25, .7))
+    elif emotion == "wave":       # a chirpy two-tone "hi!"
+        s = _sweep(660, 880, .12, .5) + _silence(.04) + _sweep(880, 1100, .16, .5)
+    elif emotion == "nod":        # short affirmative blip
+        s = _sweep(520, 700, .1, .45)
+    elif emotion == "shake":      # descending "nuh-uh"
+        s = _sweep(500, 380, .11, .45) + _silence(.05) + _sweep(420, 300, .13, .45)
     else:                        # smug — two low deadpan blips
         s = _sweep(330, 320, .1, .45) + _silence(.09) + _sweep(280, 270, .14, .45)
     return _to_wav(s)
@@ -214,9 +221,37 @@ def _do_smug():
     _goto(NEUTRAL, [0.0, 0.0], 0.5)
 
 
+def _do_wave():
+    """Waving back, with no arms to wave. Both antennas swing the same
+    direction (in phase — unlike the happy/excited moves, where they mirror)
+    so they read as one hand rocking side to side, and the head leans into
+    each swing the way a person's does."""
+    _goto(_pose(roll=-0.2, pitch=-0.12), [1.2, 1.2], 0.28); time.sleep(0.3)
+    for _ in range(2):
+        _goto(_pose(roll=0.22, pitch=-0.12), [-1.0, -1.0], 0.26); time.sleep(0.28)
+        _goto(_pose(roll=-0.22, pitch=-0.12), [1.2, 1.2], 0.26); time.sleep(0.28)
+    _goto(_pose(pitch=-0.08), [0.4, 0.4], 0.3); time.sleep(0.32)
+    _goto(NEUTRAL, [0.0, 0.0], 0.35)
+
+
+def _do_nod():
+    for _ in range(2):
+        _goto(_pose(pitch=0.22), [0.5, -0.5], 0.18); time.sleep(0.2)
+        _goto(_pose(pitch=-0.1), [0.7, -0.7], 0.18); time.sleep(0.2)
+    _goto(NEUTRAL, [0.2, -0.2], 0.25)
+
+
+def _do_shake():
+    for _ in range(2):
+        _goto(_pose(yaw=0.3), [-0.3, 0.3], 0.2); time.sleep(0.22)
+        _goto(_pose(yaw=-0.3), [-0.3, 0.3], 0.2); time.sleep(0.22)
+    _goto(NEUTRAL, [0.0, 0.0], 0.3)
+
+
 _MOVES = {"happy": _do_happy, "excited": _do_excited, "curious": _do_curious,
           "sad": _do_sad, "smug": _do_smug, "thinking": _do_thinking,
-          "victory": _do_victory}
+          "victory": _do_victory, "wave": _do_wave, "nod": _do_nod,
+          "shake": _do_shake}
 
 
 def play(emotion: str, sound: bool = False) -> bool:

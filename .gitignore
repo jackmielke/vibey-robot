@@ -8,3 +8,4 @@ __pycache__/
 .openclaw/
 .telegram_state.json
 captures/
+agent_runs/

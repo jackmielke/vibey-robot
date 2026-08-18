@@ -113,7 +113,14 @@ class RobotMicSource:
 
     def read(self, block_n: int):
         need = block_n * 2  # bytes per int16 sample
+        # Don't wedge the whole control loop if the robot mic is down: if we
+        # can't fill a block within this window, hand back silence so main()
+        # keeps cycling — mute, mode toggles, and the OpenAI-mode handoff must
+        # still take effect when the robot mic is unavailable.
+        deadline = time.time() + 1.5
         while len(self._buf) < need:
+            if time.time() > deadline:
+                return np.zeros((block_n, 1), dtype=np.float32), False
             try:
                 chunk = self._resp.read(4096)
             except Exception:
@@ -157,7 +164,9 @@ STATE = {
     "fast_available": bool(os.environ.get("ELEVEN_AGENT_ID")),
     "vibe": False,
     "vibe_available": False,  # set at startup if the openclaw CLI is found
-    "think_aloud": False,     # when True, Vibey narrates her thinking before each reply
+    "openai": False,          # OpenAI Realtime full-duplex mode (reachy_openai_realtime.py)
+    "openai_available": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+    "think_aloud": False,     # when True, Vibey narrates their thinking before each reply
     "mic_level": 0.0,         # smoothed RMS — dashboard meter for "can it hear me?"
     "mic_threshold": 0.0,     # the speech gate, so the meter can show the bar
 }
@@ -672,12 +681,20 @@ def _robot_post(path: str, timeout: float = 20.0) -> None:
 #   cli (Wonder)  relaxed, slightly crossed
 #   fast ⚡       both straight up — "all ears, no thinking"
 #   vibe 🎮       one up one cocked — "hands in the code"
+#   openai 🅾️    both forward/perked — "on a live call"
 # antennas-only goto leaves the head to the daemon's face tracker.
-ANTENNA_POSES = {"cli": [0.15, -0.15], "fast": [0.9, -0.9], "vibe": [0.9, 0.3]}
+ANTENNA_POSES = {"cli": [0.15, -0.15], "fast": [0.9, -0.9], "vibe": [0.9, 0.3],
+                 "openai": [-0.6, 0.6]}
+
+
+def _current_mode() -> str:
+    if STATE["openai"]:
+        return "openai"
+    return "vibe" if STATE["vibe"] else ("fast" if STATE["fast"] else "cli")
 
 
 def _mode_antennas() -> None:
-    mode = "vibe" if STATE["vibe"] else ("fast" if STATE["fast"] else "cli")
+    mode = _current_mode()
     try:
         url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
         body = json.dumps({"antennas": ANTENNA_POSES[mode],
@@ -957,6 +974,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 STATE["fast"] = fast
                 if fast:
                     STATE["vibe"] = False   # modes are mutually exclusive
+                    STATE["openai"] = False
                 threading.Thread(target=_mode_antennas, daemon=True).start()
                 self._json({"ok": True, "fast": STATE["fast"]})
             except Exception as e:
@@ -1012,8 +1030,27 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 STATE["vibe"] = vibe
                 if vibe:
                     STATE["fast"] = False   # modes are mutually exclusive
+                    STATE["openai"] = False
                 threading.Thread(target=_mode_antennas, daemon=True).start()
                 self._json({"ok": True, "vibe": STATE["vibe"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/openaimode"):
+            # OpenAI Realtime full-duplex mode. Turning it ON just flips the
+            # flag; the main loop notices and hands the mic/speaker to the
+            # self-contained engine in reachy_openai_realtime.py until it's
+            # turned back off. Mutually exclusive with the other brains.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                on = bool(json.loads(self.rfile.read(n)).get("openai"))
+                if on and not STATE["openai_available"]:
+                    raise ValueError("OPENAI_API_KEY not configured")
+                STATE["openai"] = on
+                if on:
+                    STATE["fast"] = False   # modes are mutually exclusive
+                    STATE["vibe"] = False
+                threading.Thread(target=_mode_antennas, daemon=True).start()
+                self._json({"ok": True, "openai": STATE["openai"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         else:
@@ -1106,6 +1143,30 @@ class Brain:
         if self.mode == "echo" and self._cli_works():
             self.mode = "cli"
         print(f"[brain] mode = {self.mode} ({MODEL})", flush=True)
+        if self.mode == "echo":
+            threading.Thread(target=self._watch_for_cli, daemon=True).start()
+
+    def _watch_for_cli(self) -> None:
+        """Echo mode used to be a dead end for the life of the process, which
+        bites every time the CLI's OAuth expires: you run `claude login` and
+        Vibey keeps parroting until the whole stack is restarted. Re-probe in
+        the background instead and upgrade ourselves the moment it answers.
+        Backs off so a permanently-logged-out CLI isn't probed every minute
+        forever."""
+        delay = 60
+        while self.mode == "echo":
+            time.sleep(delay)
+            delay = min(delay * 2, 300)
+            if self.mode != "echo":
+                return
+            if self._cli_works():
+                self.mode = "cli"
+                # Only touch the display mode if nothing else holds the floor
+                # (fast / vibe / openai each own it while they're active).
+                if STATE.get("mode") == "echo":
+                    STATE["mode"] = "cli"
+                print("[brain] CLI is back — upgraded echo → cli", flush=True)
+                return
 
     @staticmethod
     def _cli_works() -> bool:
@@ -1487,6 +1548,37 @@ def _handle_fast_turn(agent: "FastAgent", audio: np.ndarray, muted_until: float)
 # --------------------------------------------------------------------------- #
 # Main loop
 # --------------------------------------------------------------------------- #
+def _run_openai_realtime() -> None:
+    """Hand the mic + speaker to the self-contained OpenAI Realtime engine and
+    block until STATE['openai'] is turned back off. Fully decoupled from the
+    whisper / Claude / ElevenLabs / OpenClaw brains above — its own websocket,
+    its own VAD, its own playback."""
+    prev_mode = STATE["mode"]
+    STATE["mode"] = "openai"
+    STATE["speaking"] = False
+    STATE["listening"] = True
+    _log_turn("wonder", "(OpenAI Realtime mode — full-duplex, just talk)")
+    print("[chat] → handing off to OpenAI Realtime engine", flush=True)
+    try:
+        import reachy_openai_realtime as rt
+        rt.run(
+            should_run=lambda: STATE["openai"],
+            on_user_text=lambda t: _log_turn("you", t),
+            on_agent_text=lambda t: (_log_turn("wonder", t),
+                                     LAST_SPOKEN.update(text=t)),
+            log=lambda m: print(m, flush=True),
+        )
+    except Exception as e:  # noqa: BLE001 — never let this kill the chat service
+        print(f"[chat] OpenAI Realtime engine crashed: {e}", flush=True)
+        STATE["openai"] = False
+    finally:
+        STATE["mode"] = prev_mode
+        STATE["listening"] = False
+        threading.Thread(target=_mode_antennas, daemon=True).start()
+        print("[chat] ← OpenAI Realtime stopped; back to normal brains",
+              flush=True)
+
+
 def main():
     _start_ctrl_server()
     global BRAIN
@@ -1518,6 +1610,15 @@ def main():
     silence_s = segment_s = 0.0
 
     while True:
+        if STATE["openai"]:
+            # Selected OpenAI Realtime mode — hand off the mic/speaker entirely
+            # until it's toggled back off, then reset our VAD state and resume.
+            _run_openai_realtime()
+            pre_roll.clear(); buf = []; in_speech = False
+            silence_s = segment_s = 0.0
+            muted_until = time.time() + 1.0
+            continue
+
         data, _ = stream.read(BLOCK_N)
         now = time.time()
         effective_muted_until = max(muted_until, MUTED_EXT["until"])
