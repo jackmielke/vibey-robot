@@ -4,13 +4,17 @@ reachy_gestures.py — Vibey waves back.
 
 Watches the camera for hand gestures and answers them with the body:
 
-    you wave your LEFT hand   → Vibey waves its RIGHT antenna
-    you wave your RIGHT hand  → Vibey waves its LEFT antenna
-    you throw a peace sign    → both antennas snap up into a V
+    open palm, LEFT hand    → Vibey waves its RIGHT antenna
+    open palm, RIGHT hand   → Vibey waves its LEFT antenna
+    peace sign              → both antennas snap up into a V
+    closed fist             → puts a beat on and dances to it
+    thumbs up / down        → happy / sad
+    "I love you" sign       → excited
 
-The side-swap is the point. Facing someone, the hand they raise is on the
-same side of the shared space as the antenna that answers it, so it reads
-like a mirror rather than like a robot playing back a recording.
+The side-swap is the point, and it goes the way it does because Vibey is
+facing you, not standing beside you: the hand you raise is across from you,
+so it comes back on the opposite antenna. Same-side would read like a
+recording being played back; opposite-side reads like someone waving back.
 
 Runs in its OWN venv (.venv-gestures) because mediapipe pins numpy<2 and the
 robot SDK requires numpy>=2.2.5 — installing both in reachy_env breaks the
@@ -29,7 +33,8 @@ Env:
     GESTURE_COOLDOWN=4.0  seconds to wait after firing before firing again
     GESTURE_HOLD=3        consecutive frames needed to accept a gesture
     GESTURE_MIN_SCORE=0.6 minimum classifier confidence
-    GESTURE_HAND_FLIP=0   set 1 if the sides come out backwards (see below)
+    GESTURE_HAND_FLIP=0   set 1 only for a mirrored/selfie feed (see below)
+    GESTURE_DANCE_SECONDS=12  how long the fist-pump track runs
 """
 from __future__ import annotations
 
@@ -52,17 +57,23 @@ PORT = int(os.environ.get("GESTURE_PORT", "8776"))
 MODEL = os.environ.get("GESTURE_MODEL", "models/gesture_recognizer.task")
 FPS = float(os.environ.get("GESTURE_FPS", "8"))
 COOLDOWN = float(os.environ.get("GESTURE_COOLDOWN", "4.0"))
+DANCE_SECONDS = float(os.environ.get("GESTURE_DANCE_SECONDS", "12"))
 HOLD = int(os.environ.get("GESTURE_HOLD", "3"))
 MIN_SCORE = float(os.environ.get("GESTURE_MIN_SCORE", "0.6"))
 
-# MediaPipe reports handedness assuming the image is MIRRORED (selfie view).
-# The robot's camera is not mirrored — it sees you straight on — so the label
-# it gives is already the opposite of the hand you actually raised. We then
-# want to answer on the opposite side again (your left hand → Vibey's right
-# antenna). The two inversions cancel, so the raw label maps straight through:
-# mediapipe "Left" → wave_left. If it ever comes out backwards on a different
-# camera or a mirrored feed, flip it with GESTURE_HAND_FLIP=1 rather than
-# editing this logic.
+# Which antenna answers which hand.
+#
+# MediaPipe labels a hand as the person's OWN hand, and on this camera that
+# label is simply correct — waving a right hand reports "Right". (An earlier
+# version reasoned from MediaPipe's "assumes a mirrored image" note that the
+# label would arrive inverted here and would cancel against the mirrored
+# response. It doesn't: nothing inverts it, so the wave came back same-side.)
+#
+# Vibey answers like a person facing you rather than a recording played back:
+# the hand you raise is on the far side of the shared space from where it sits
+# on you, so your RIGHT hand comes back on Vibey's LEFT antenna.
+_MIRROR = {"Right": "wave_left", "Left": "wave_right"}
+# Set 1 only for a mirrored/selfie feed, where the label really is flipped.
 HAND_FLIP = os.environ.get("GESTURE_HAND_FLIP", "0") not in ("0", "false", "no")
 
 STATE = {
@@ -72,32 +83,51 @@ STATE = {
     "seen": 0,             # how many gestures fired since start
     "hands": 0,            # hands visible in the most recent frame
     "raw": None,           # most recent raw classification, for calibration
+    "cooldown": COOLDOWN,  # of the move last fired — the dance needs longer
 }
 
 
 # --------------------------------------------------------------------------- #
 # Gesture → move
 # --------------------------------------------------------------------------- #
+# How long to ignore new gestures after firing one. Mostly this just stops a
+# held pose retriggering; the dance is long enough to need its own, or a fist
+# held through the whole track restarts it repeatedly.
+COOLDOWNS = {"dance": DANCE_SECONDS + 2.0}
+
+
 def _emote_for(gesture: str, handedness: str) -> str | None:
     """Map a mediapipe class + handedness onto one of Vibey's moves."""
-    if gesture == "Victory":
-        return "peace"
     if gesture == "Open_Palm":
         hand = handedness
         if HAND_FLIP:
             hand = "Left" if hand == "Right" else "Right"
-        return "wave_left" if hand == "Left" else "wave_right"
+        return _MIRROR.get(hand)
+    if gesture == "Victory":
+        return "peace"
+    if gesture == "Closed_Fist":      # fist pump — put a track on
+        return "dance"
     if gesture == "Thumb_Up":
         return "happy"
+    if gesture == "Thumb_Down":
+        return "sad"
+    if gesture == "ILoveYou":
+        return "excited"
     return None
 
 
 def _fire(emote: str) -> None:
     STATE["last"] = emote
     STATE["last_at"] = time.time()
+    STATE["cooldown"] = COOLDOWNS.get(emote, COOLDOWN)
     STATE["seen"] += 1
     print(f"[gesture] → {emote}", flush=True)
-    reachy_emotes.play(emote)
+    if emote == "dance":
+        # Not an emote: a synthesized beat uploaded to the robot's speaker
+        # plus a groove for as long as it plays.
+        reachy_emotes.play_dance(DANCE_SECONDS)
+    else:
+        reachy_emotes.play(emote)
 
 
 # --------------------------------------------------------------------------- #
@@ -174,7 +204,8 @@ def watch() -> None:
 
             # Require the gesture to persist, so a hand passing through a
             # pose on its way somewhere else doesn't set the robot off.
-            if streak >= HOLD and time.time() - STATE["last_at"] >= COOLDOWN:
+            if streak >= HOLD and (time.time() - STATE["last_at"]
+                                   >= STATE.get("cooldown", COOLDOWN)):
                 emote = _emote_for(g.category_name, h.category_name)
                 if emote:
                     _fire(emote)
