@@ -7,9 +7,8 @@ Watches the camera for hand gestures and answers them with the body:
     open palm, LEFT hand    → Vibey waves its RIGHT antenna
     open palm, RIGHT hand   → Vibey waves its LEFT antenna
     peace sign              → both antennas snap up into a V
-    closed fist             → puts a beat on and dances to it
+    "I love you" sign       → puts a beat on and dances to it
     thumbs up / down        → happy / sad
-    "I love you" sign       → excited
 
 The side-swap is the point, and it goes the way it does because Vibey is
 facing you, not standing beside you: the hand you raise is across from you,
@@ -105,14 +104,16 @@ def _emote_for(gesture: str, handedness: str) -> str | None:
         return _MIRROR.get(hand)
     if gesture == "Victory":
         return "peace"
-    if gesture == "Closed_Fist":      # fist pump — put a track on
+    # The ASL "I love you" sign — pinky, index and thumb out. MediaPipe's own
+    # name for it; it's the peace-and-love hand, and it starts the music.
+    if gesture == "ILoveYou":
         return "dance"
     if gesture == "Thumb_Up":
         return "happy"
     if gesture == "Thumb_Down":
         return "sad"
-    if gesture == "ILoveYou":
-        return "excited"
+    # Closed_Fist is deliberately unmapped: a resting hand on a desk or around
+    # a mouse reads as a fist all day, and it used to start the track.
     return None
 
 
