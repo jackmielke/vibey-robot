@@ -237,7 +237,29 @@ TOOLS = [
             "required": ["note"],
         },
     },
+    {
+        "type": "function",
+        "name": "go_to_sleep",
+        "description": (
+            "Stop listening and close the live session. Use whenever someone says "
+            "go to sleep, that's all, we're done, goodbye, that'll be all, or you "
+            "can go. Do not ask them to confirm and do not announce it beforehand — "
+            "call this FIRST, then say goodbye in four words or fewer. "
+            "\"Okay, see you later.\" \"Night.\" Nothing about sleeping, "
+            "microphones or sessions closing. They know. Never read the tool's "
+            "result out loud."),
+        "parameters": {"type": "object", "properties": {}},
+    },
 ]
+
+# Set by `go_to_sleep`. `run()` polls it alongside the dashboard toggle, so the
+# conversation can end itself without anybody reaching for the laptop — which is
+# the whole point of a robot you talk to from across a room.
+SLEEP_REQUESTED = threading.Event()
+# When it was asked. The goodbye is spoken AFTER the tool returns, so a loop that
+# stopped the moment the flag went up would cut the robot off mid-word — which
+# reads as a crash rather than as a farewell.
+SLEEP_REQUESTED_AT = 0.0
 
 
 def _tool_move(args: dict) -> str:
@@ -281,6 +303,17 @@ def _tool_remember(args: dict) -> str:
     return f"remembered: {note}" if note else "nothing to remember"
 
 
+def _tool_sleep() -> str:
+    """Ask the loop to wind up once the goodbye has been spoken."""
+    global SLEEP_REQUESTED_AT
+    SLEEP_REQUESTED_AT = time.time()
+    SLEEP_REQUESTED.set()
+    # Deliberately nothing worth saying out loud. A sentence here gets read back:
+    # the model treats a tool result as material, so an explanation of what is
+    # about to happen becomes a second announcement of it.
+    return "ok"
+
+
 def _dispatch_tool(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
@@ -295,6 +328,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_check(args)
         if name == "remember":
             return _tool_remember(args)
+        if name == "go_to_sleep":
+            return _tool_sleep()
         return f"unknown tool {name!r}"
     except Exception as e:  # noqa: BLE001
         print(f"[openai-rt] tool {name} failed: {e}", flush=True)
@@ -465,6 +500,10 @@ class RealtimeSession:
                 }))
             except Exception:
                 return
+
+    def is_speaking(self) -> bool:
+        """A reply is being generated or is still coming out of the speaker."""
+        return self._response_active or time.time() < self._speaking_until
 
     def _on_barge_in(self):
         """User started talking — abandon the in-flight reply and hush."""
@@ -680,9 +719,31 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
     if not API_KEY:
         (log or print)("[openai-rt] OPENAI_API_KEY not set — cannot start")
         return
-    should_run = should_run or (lambda: True)
+    caller_should_run = should_run or (lambda: True)
+    SLEEP_REQUESTED.clear()
     stop = stop_event or threading.Event()
     session = RealtimeSession(on_user_text, on_agent_text, log)
+
+    # The conversation can end itself.
+    #
+    # Wrapping the caller's toggle rather than replacing it: the dashboard switch
+    # still works, and "go to sleep" becomes a second, equal way to stop — said
+    # from across the room, which is the only way that matters for a robot.
+    #
+    # And it hangs on until the farewell has actually been said. The tool result
+    # comes back before the model has spoken a word about it, so "stop now" would
+    # close the socket during the pause before "see you later". It waits for the
+    # speaking to START (up to six seconds) and then for it to finish.
+    def should_run_now() -> bool:
+        if not caller_should_run():
+            return False
+        if not SLEEP_REQUESTED.is_set():
+            return True
+        if session.is_speaking():
+            return True
+        return time.time() - SLEEP_REQUESTED_AT < 6.0
+
+    should_run = should_run_now
     try:
         asyncio.run(session.run_async(should_run, stop))
     except KeyboardInterrupt:
@@ -692,6 +753,8 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         # separate thread and this event is the only thing that tells it to
         # stop once the loop it feeds is gone.
         stop.set()
+        if SLEEP_REQUESTED.is_set():
+            (log or print)("[openai-rt] asked to sleep — session closed")
 
 
 if __name__ == "__main__":
