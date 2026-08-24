@@ -72,7 +72,10 @@ from reachy_voice import REACHY_URL, load_env, play_sound, upload_sound
 load_env()
 
 API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime").strip()
+# gpt-realtime-2.1, not gpt-realtime. Same GA schema, newer weights — this is the
+# model FlowState (the Mac voice app in ~/dev/vibe-voice) has been running against
+# for weeks, and its docs/API-CONTRACT.md is the live-probed reference for both.
+MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1").strip()
 VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "marin").strip()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
 GATE_ON_SPEAK = os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() == "1"
@@ -80,6 +83,26 @@ GATE_ON_SPEAK = os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() == "1"
 MIC_SR = 16000    # what reachy_robot_mic.py serves
 RT_SR = 24000     # what the Realtime API's pcm16 format expects, both ways
 WS_URL = f"wss://api.openai.com/v1/realtime?model={MODEL}"
+
+# Minted per connection; None means "use the account key", which is what happens with
+# no network or an older account. Never fatal: a robot that will not speak because a
+# token endpoint was slow is worse than one speaking with the key it already had.
+def _ephemeral_token():
+    if not API_KEY:
+        return None
+    body = json.dumps({"session": {"type": "realtime", "model": MODEL}}).encode()
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/realtime/client_secrets",
+        data=body,
+        headers={"Authorization": f"Bearer {API_KEY}",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as r:
+            return json.loads(r.read()).get("value")
+    except Exception as e:  # noqa: BLE001
+        print(f"[openai-rt] ephemeral mint failed ({e}) — using the standard key",
+              flush=True)
+        return None
 
 DEFAULT_INSTRUCTIONS = (
     "You are Vibey, a small expressive desk robot in Jack's living room, "
@@ -411,7 +434,10 @@ class RealtimeSession:
                     "input": {
                         "format": {"type": "audio/pcm", "rate": RT_SR},
                         "turn_detection": turn,
-                        "transcription": {"model": "whisper-1"},
+                        # whisper-1 is the old default and noticeably worse at names,
+                        # which for a robot that greets people by face is the one thing
+                        # it must get right.
+                        "transcription": {"model": "gpt-4o-mini-transcribe"},
                     },
                     "output": {
                         "format": {"type": "audio/pcm", "rate": RT_SR},
@@ -611,7 +637,15 @@ class RealtimeSession:
             target=_mic_pump, args=(loop, queue, stop), daemon=True)
         pump.start()
 
-        headers = {"Authorization": f"Bearer {API_KEY}"}  # GA shape: no beta header
+        # An ephemeral key on the wire, not the account key.
+        #
+        # A realtime session is a WebSocket held open for as long as somebody is
+        # talking, and the robot is a device in a room other people walk into. Minting
+        # a short-lived `ek_` means the thing on the socket cannot be reused if it ever
+        # leaks. Falls back to the standard key rather than refusing to talk — see
+        # FlowState's docs/API-CONTRACT.md, which is where this endpoint is written
+        # down after /v1/realtime/sessions turned out to be a 404.
+        headers = {"Authorization": f"Bearer {_ephemeral_token() or API_KEY}"}
         while should_run() and not stop.is_set():
             try:
                 self.log(f"connecting to OpenAI Realtime ({MODEL}, voice={VOICE}) …")
