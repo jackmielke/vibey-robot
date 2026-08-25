@@ -78,6 +78,18 @@ load_env()
 
 REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/")
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
+
+
+def _realtime_has_the_floor() -> bool:
+    """True when the OpenAI realtime engine is holding the conversation, or the
+    robot is asleep. Either way this service must not speak: two minds answering
+    in two voices is what it sounded like from the room."""
+    try:
+        with urllib.request.urlopen("http://localhost:8772/state", timeout=2) as r:
+            st = json.loads(r.read())
+        return bool(st.get("openai") or st.get("asleep"))
+    except Exception:
+        return False
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 MATCH_TOLERANCE = float(os.environ.get("MATCH_TOLERANCE", "0.58"))
@@ -663,6 +675,15 @@ def _maybe_start_conversation(any_face: bool) -> None:
             st = json.loads(r.read())
         if st.get("muted") or st.get("speaking"):
             return
+        # Not while the realtime engine has the conversation.
+        #
+        # This service greets and prompts through ElevenLabs while the realtime
+        # engine speaks in its own voice, and they do not know about each other —
+        # so the robot answered in two different voices, from two different minds,
+        # sometimes at once. Whoever is holding the conversation should be the only
+        # one talking in it.
+        if st.get("openai") or st.get("asleep"):
+            return
         transcript = st.get("transcript") or []
         last_chat = (transcript[-1]["ts"] / 1000) if transcript else 0
         if now - last_chat < STARTER_AFTER_S:
@@ -843,7 +864,8 @@ class _MemHandler(BaseHTTPRequestHandler):
                 if live:
                     try:
                         from reachy_voice import say as _say
-                        _say(f"Nice to meet you, {name}. I'll remember you.")
+                        if not _realtime_has_the_floor():
+                            _say(f"Nice to meet you, {name}. I'll remember you.")
                     except Exception:
                         pass
                 self._json({"ok": True, "face_id": face_id, "name": name})
