@@ -362,6 +362,10 @@ SLEEP_REQUESTED_AT = 0.0
 # different assistant.
 FATAL_REASON: dict = {"why": None}
 
+# The session currently holding the conversation, so reachy_chat.py can pass a
+# sighting into it. None when the realtime engine is not running.
+LIVE_SESSION = {"session": None}
+
 
 def _tool_move(args: dict) -> str:
     move = str(args.get("move", "")).strip().lower()
@@ -749,6 +753,21 @@ class RealtimeSession:
         except Exception as e:  # noqa: BLE001
             self.log(f"failed to return tool result: {e}")
 
+    def nudge(self, text: str) -> None:
+        """Something happened in the room that Vibey should mention itself.
+
+        Same channel as a finished coding job, because it is the same idea: news
+        arriving from outside the conversation that the robot should raise in its
+        own voice, rather than a second system speaking over it.
+        """
+        loop, q = self._loop, self._announce_q
+        if loop is None or q is None:
+            return
+        try:
+            loop.call_soon_threadsafe(q.put_nowait, {"nudge": text})
+        except RuntimeError:
+            pass
+
     def _announce_cb(self, job: dict) -> None:
         """Called from reachy_agent's worker thread when a background coding
         job lands. Hops onto the event loop; the announcer does the talking."""
@@ -776,6 +795,19 @@ class RealtimeSession:
                 if not self._response_active and time.time() >= self._speaking_until:
                     break
                 await asyncio.sleep(0.1)
+            if job.get("nudge"):
+                nudge = job["nudge"]
+                try:
+                    await ws.send(json.dumps({
+                        "type": "conversation.item.create",
+                        "item": {"type": "message", "role": "user",
+                                 "content": [{"type": "input_text", "text": nudge}]},
+                    }))
+                    await ws.send(json.dumps({"type": "response.create"}))
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"nudge failed: {e}")
+                continue
+
             spoken = (job.get("spoken") or "").strip() or "I finished that one."
             ok = job.get("state") == "done"
             nudge = (
@@ -893,6 +925,9 @@ class RealtimeSession:
                         max_size=16 * 1024 * 1024) as ws:
                     await ws.send(json.dumps(self._session_update()))
                     self.log("connected — full-duplex, just talk")
+                    # A connection that worked clears whatever the last one failed
+                    # with, so a topped-up account is noticed immediately.
+                    FATAL_REASON["why"] = None
                     sender = asyncio.ensure_future(
                         self._sender(ws, queue, should_run, stop))
                     announcer = asyncio.ensure_future(
@@ -931,6 +966,7 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
     SLEEP_REQUESTED.clear()
     stop = stop_event or threading.Event()
     session = RealtimeSession(on_user_text, on_agent_text, log)
+    LIVE_SESSION["session"] = session
 
     # The conversation can end itself.
     #
@@ -949,7 +985,13 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
             return True
         if session.is_speaking():
             return True
-        return time.time() - SLEEP_REQUESTED_AT < 6.0
+        # Six seconds was the ceiling for "the goodbye has not started yet", and
+        # it was also the floor for how long sleeping took when the goodbye was
+        # short — the loop simply waited the whole thing out. Two is enough: a
+        # four-word farewell begins well inside it, and once it is speaking the
+        # test above holds the session open for as long as the goodbye actually
+        # takes.
+        return time.time() - SLEEP_REQUESTED_AT < 2.0
 
     should_run = should_run_now
     try:
@@ -964,6 +1006,7 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         # separate thread and this event is the only thing that tells it to
         # stop once the loop it feeds is gone.
         stop.set()
+        LIVE_SESSION["session"] = None
         if SLEEP_REQUESTED.is_set():
             (log or print)("[openai-rt] asked to sleep — session closed")
 

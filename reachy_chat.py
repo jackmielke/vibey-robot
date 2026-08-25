@@ -159,6 +159,9 @@ STATE = {
     # down and no socket open until somebody claps twice or says "hey vibey" —
     # see reachy_wake.py. Waking should never require walking to a laptop.
     "asleep": True,
+    # Why the realtime engine last gave up, if it did. Cleared on the next
+    # successful connection, so it is a note rather than a latch.
+    "openai_error": None,
     "mode": "starting",
     "model": MODEL,
     "muted": False,
@@ -1039,6 +1042,29 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "vibe": STATE["vibe"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/sighting"):
+            # Somebody appeared in front of the camera. Handed to whichever brain
+            # is holding the conversation so IT says something, in its own voice,
+            # in context — rather than a second service announcing it over the top
+            # with a canned line.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                text = (body.get("text") or "").strip()
+                if not text:
+                    raise ValueError("text required")
+                import reachy_openai_realtime as _rt
+                sess = _rt.LIVE_SESSION.get("session")
+                if sess is not None and STATE["openai"]:
+                    sess.nudge(text)
+                    self._json({"ok": True, "delivered": "realtime"})
+                else:
+                    # No live session to tell. Say nothing rather than falling
+                    # back to a different voice — an unprompted line from a brain
+                    # nobody is talking to is the thing being replaced here.
+                    self._json({"ok": True, "delivered": "none"})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/wake"):
             # Wake by hand. The wake phrase needs a person in the room to test —
             # the robot cannot hear its own speaker — so there has to be a way in
@@ -1738,7 +1764,15 @@ def main():
                     # anywhere to explain it.
                     _rt.FATAL_REASON["why"] = None
                     STATE["openai"] = False
-                    STATE["openai_available"] = False
+                    # NOT `openai_available = False`.
+                    #
+                    # Latching it off meant topping up the account changed nothing:
+                    # the flag stayed false until the process was restarted, so the
+                    # engine was never asked to try again and the robot went on
+                    # insisting it had no voice hours after it did. A failure that
+                    # can be fixed from a billing page must not need a restart to
+                    # be noticed.
+                    STATE["openai_error"] = why
                     print(f"[chat] realtime unavailable: {why}", flush=True)
                     try:
                         _speak_line("I have lost my usual voice — there is no credit "

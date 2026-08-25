@@ -80,6 +80,24 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
 
 
+def _tell_the_conversation(line: str) -> bool:
+    """Push a sighting into the live conversation. True if it was taken.
+
+    The point is that Vibey mentions it, in its own voice, in the middle of
+    whatever is being said — not that a second system reads out a fixed sentence
+    in a different accent while the first one is mid-reply.
+    """
+    try:
+        body = json.dumps({"text": f"[Nobody said this out loud. {line}]"}).encode()
+        req = urllib.request.Request("http://localhost:8772/sighting", data=body,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return json.loads(r.read() or b"{}").get("delivered") == "realtime"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _realtime_has_the_floor() -> bool:
     """True when the OpenAI realtime engine is holding the conversation, or the
     robot is asleep. Either way this service must not speak: two minds answering
@@ -92,7 +110,19 @@ def _realtime_has_the_floor() -> bool:
         return False
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-MATCH_TOLERANCE = float(os.environ.get("MATCH_TOLERANCE", "0.58"))
+# 0.50, not 0.58. Measured against every sample in the database, using the live
+# rule (nearest sample across everyone):
+#
+#   tol 0.50 -> 94% correct, 0% misidentified, 6% "someone new"
+#   tol 0.58 -> 95% correct, 2% MISIDENTIFIED, 3% "someone new"
+#
+# One extra percent of recognition is not worth calling somebody by the wrong
+# name. In a room full of people those two failures are not comparable: being
+# asked your name again is nothing, and being greeted as somebody else is the
+# thing everyone remembers. The gap in the data is real — same-person distances
+# sit at a median of 0.44 and different-person distances start at 0.535 — so
+# 0.50 lands inside it rather than on top of it.
+MATCH_TOLERANCE = float(os.environ.get("MATCH_TOLERANCE", "0.50"))
 LEARN_TOLERANCE = float(os.environ.get("LEARN_TOLERANCE", "0.45"))
 MAX_SAMPLES = int(os.environ.get("MAX_SAMPLES", "8"))
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "1.2"))
@@ -109,7 +139,12 @@ MAX_FACES = int(os.environ.get("MAX_FACES", "4"))
 # background specks and faces-on-a-TV-across-the-room without blocking organic
 # enrollment of someone actually talking to the robot. Blur is the primary
 # junk filter (a sharp interaction-distance face measures ~140+ variance).
-MIN_FACE_PX = int(os.environ.get("MIN_FACE_PX", "32"))
+# 70, which is what this file's own documentation has always claimed. The code
+# said 32, and a 32-pixel face is a handful of blurred pixels — the embedding
+# from one is nearly meaningless, and banking it as a sample poisons that
+# person's identity for every future match. Enrol from good looks at somebody or
+# do not enrol.
+MIN_FACE_PX = int(os.environ.get("MIN_FACE_PX", "70"))
 MIN_BLUR_VAR = float(os.environ.get("MIN_BLUR_VAR", "45"))
 
 GREET_COOLDOWN = 600.0    # don't re-greet a named person within this window (10 min)
@@ -699,6 +734,13 @@ def _maybe_start_conversation(any_face: bool) -> None:
         _pe("curious")
     except Exception:
         pass
+    # Prompt the brain to open its mouth rather than reading a line at somebody.
+    # A canned opener in a different voice is the tell that there are two systems
+    # in the room; the same idea handed to the model comes out as Vibey.
+    if _tell_the_conversation(
+            "The room has gone quiet and somebody is still in front of you. "
+            "Start a conversation — one short, curious line in your own voice."):
+        return
     try:
         say(line)
     except Exception:
@@ -864,8 +906,12 @@ class _MemHandler(BaseHTTPRequestHandler):
                 if live:
                     try:
                         from reachy_voice import say as _say
-                        if not _realtime_has_the_floor():
-                            _say(f"Nice to meet you, {name}. I'll remember you.")
+                        if not _tell_the_conversation(
+                                f"You have just learned that this person is called "
+                                f"{name}. Say something warm and brief using their "
+                                f"name — do not mention saving or remembering it."):
+                            if not _realtime_has_the_floor():
+                                _say(f"Nice to meet you, {name}. I'll remember you.")
                     except Exception:
                         pass
                 self._json({"ok": True, "face_id": face_id, "name": name})
@@ -1060,12 +1106,26 @@ def run():
         # up together each get acknowledged instead of only the first.
         for fid, name in to_greet:
             if name == "__new__":
-                say("Hi there, I don't think we've met. I'll remember your face.")
+                line = ("Somebody you have never seen before just appeared in front "
+                        "of you. Say hello, ask their name, and when they tell you, "
+                        "call remember_face.")
+                spoken = "Hi there, I don't think we've met. I'll remember your face."
             elif name:
-                say(f"Hey {name}, good to see you.")
+                line = (f"{name}, who you already know, just walked into view. "
+                        f"Greet them by name, warmly and briefly.")
+                spoken = f"Hey {name}, good to see you."
             else:
-                say("I recognize you! I don't know your name yet — "
-                    "you can tell me on the dashboard.")
+                line = ("Somebody you recognise but have no name for just appeared. "
+                        "Say you know their face, ask what they are called, then "
+                        "call remember_face.")
+                spoken = ("I recognize you! I don't know your name yet — "
+                          "you can tell me on the dashboard.")
+
+            # Hand it to whichever brain is holding the conversation, so the robot
+            # reacts in its own voice instead of a second service talking over it
+            # with a canned line. Only speak it here if nobody took it.
+            if not _tell_the_conversation(line):
+                say(spoken)
 
 
 if __name__ == "__main__":
