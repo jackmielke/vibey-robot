@@ -22,6 +22,7 @@ than a design.
 from __future__ import annotations
 
 import io
+import json
 import math
 import os
 import struct
@@ -111,9 +112,31 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
 WAKE_VOLUME = int(os.environ.get("VIBEY_VOLUME", "100"))
 
 
-def set_volume(level: int, log=print):
+# What the daemon last told us the volume is, so we can avoid setting it to the
+# value it already has.
+_last_volume = {"level": None}
+
+
+def set_volume(level: int, log=print, force: bool = False):
+    """Set the speaker volume, and only when it actually needs setting.
+
+    The daemon plays a test whistle on every volume change and pauses audio
+    around it, so setting it to the value it already holds costs a whistle and a
+    gap for nothing. Waking used to do exactly that every single time.
+    """
+    level = max(0, min(100, int(level)))
     try:
-        _post("/api/volume/set", {"volume": max(0, min(100, int(level)))})
+        if not force:
+            with urllib.request.urlopen(f"{REACHY_URL}/api/volume/current",
+                                        timeout=4) as r:
+                current = json.loads(r.read() or b"{}").get("volume")
+            _last_volume["level"] = current
+            # A couple of points either way is not worth a whistle: the daemon
+            # rounds, so asking for 100 and reading back 92 is normal.
+            if current is not None and abs(int(current) - level) <= 8:
+                return
+        _post("/api/volume/set", {"volume": level})
+        _last_volume["level"] = level
     except Exception as e:  # noqa: BLE001
         log(f"[wakesleep] volume failed: {e}")
 

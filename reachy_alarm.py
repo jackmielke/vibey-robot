@@ -71,6 +71,17 @@ def _post_local(url: str, body: dict) -> None:
         pass
 
 
+def _in_conversation() -> bool:
+    """True when Vibey is awake and holding a conversation."""
+    try:
+        import urllib.request as _ur
+        with _ur.urlopen("http://localhost:8772/state", timeout=2) as r:
+            st = json.loads(r.read())
+        return not st.get("asleep", True)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _load_alarms() -> list[dict]:
     try:
         return json.loads(ALARMS_PATH.read_text())
@@ -168,7 +179,17 @@ def run() -> None:
         # Between 22:00 and 06:50, clamp anything >50 back to 45 (the alarm
         # raises volume itself when it fires).
         if (now.hour >= 22 or now.hour < 7) and time.time() - last_clamp > 60:
-            if not (now.hour == 6 and now.minute >= 50):
+            # Not while somebody is talking to it.
+            #
+            # The clamp exists so an alarm cannot go off at full volume in the
+            # middle of the night. It is not meant to fight a person who is awake
+            # and having a conversation — which is exactly what it did: the volume
+            # was set to 100 on waking and quietly pulled back to 45 a minute
+            # later, over and over, with the only evidence a line in a log nobody
+            # was reading.
+            if _in_conversation():
+                last_clamp = time.time()
+            elif not (now.hour == 6 and now.minute >= 50):
                 last_clamp = time.time()
                 try:
                     import urllib.request as _ur
