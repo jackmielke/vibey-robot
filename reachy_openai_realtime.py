@@ -74,10 +74,14 @@ from reachy_voice import REACHY_URL, load_env, play_sound, upload_sound
 load_env()
 
 API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-# gpt-realtime-2.1, not gpt-realtime. Same GA schema, newer weights — this is the
-# model FlowState (the Mac voice app in ~/dev/vibe-voice) has been running against
-# for weeks, and its docs/API-CONTRACT.md is the live-probed reference for both.
-MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1").strip()
+# The MINI, deliberately. Same GA schema, same generation, same ten voices —
+# verified: `gpt-realtime-2.1-mini` accepts a session with `ballad` exactly as the
+# full model does. What it has less of is reasoning, and a desk robot holding a
+# conversation and calling five tools does not need the expensive kind. The full
+# model is one line away if a conversation ever turns out to want it.
+#
+# FlowState's docs/API-CONTRACT.md is the live-probed reference for the schema.
+MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini").strip()
 VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "marin").strip()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
 GATE_ON_SPEAK = os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() == "1"
