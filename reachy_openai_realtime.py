@@ -53,6 +53,7 @@ Env (.env):
 
 from __future__ import annotations
 
+import array
 import asyncio
 import base64
 import io
@@ -304,6 +305,24 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "set_volume",
+        "description": (
+            "Change how loudly you speak. Use it whenever somebody says they "
+            "cannot hear you, asks you to speak up, or tells you to be quieter — "
+            "and just do it, do not ask what number they want. 'Louder' means go "
+            "up by about twenty; 'much louder' means go to a hundred. Say "
+            "something brief afterwards so they can judge the new level."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "volume": {"type": "integer",
+                           "description": "0 to 100. A hundred is normal for a room."},
+            },
+            "required": ["volume"],
+        },
+    },
+    {
+        "type": "function",
         "name": "who_is_here",
         "description": (
             "Who you can see right now, by name, from your own camera. Use it when "
@@ -444,6 +463,20 @@ def _tool_vibe(args: dict) -> str:
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://localhost:8773").rstrip("/")
 
 
+def _tool_volume(args: dict) -> str:
+    """Vibey turning itself up. Asked for out loud, so answered out loud."""
+    try:
+        want = max(0, min(100, int(float(args.get("volume", 100)))))
+    except (TypeError, ValueError):
+        return "I need a number between 0 and 100."
+    try:
+        import reachy_wakesleep
+        reachy_wakesleep.set_volume(want, log=lambda m: print(m, flush=True))
+        return f"volume {want}"
+    except Exception as e:  # noqa: BLE001
+        return f"I couldn't change my volume — {e}"
+
+
 def _tool_who() -> str:
     """Who is in front of the camera, by name.
 
@@ -515,6 +548,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_remember(args)
         if name == "vibe_check":
             return _tool_vibe(args)
+        if name == "set_volume":
+            return _tool_volume(args)
         if name == "who_is_here":
             return _tool_who()
         if name == "remember_face":
@@ -567,14 +602,44 @@ def _stop_sound() -> None:
         print(f"[openai-rt] stop_sound failed: {e}", flush=True)
 
 
+# How close to full scale a reply is lifted before playing, and the most it may be
+# lifted by. OpenAI's realtime audio is not peak-normalised, so on a small speaker
+# across a room it is simply quiet whatever the system volume says. The cap
+# matters: without it a nearly-silent clip gets multiplied until the room tone is
+# deafening.
+PLAY_TARGET_PEAK = float(os.environ.get("OPENAI_RT_TARGET_PEAK", "0.92"))
+PLAY_MAX_GAIN = float(os.environ.get("OPENAI_RT_MAX_GAIN", "4.0"))
+
+
+def _normalise(pcm: bytes) -> bytes:
+    """Lift a clip toward full scale, without ever clipping it."""
+    n = len(pcm) // 2
+    if n == 0:
+        return pcm
+    samples = array.array("h")
+    samples.frombytes(pcm[: n * 2])
+    peak = max((abs(v) for v in samples), default=0)
+    if peak == 0:
+        return pcm
+    gain = min(PLAY_MAX_GAIN, (PLAY_TARGET_PEAK * 32767.0) / peak)
+    if gain <= 1.05:
+        return pcm                      # already loud enough; leave it alone
+    for i, v in enumerate(samples):
+        scaled = int(v * gain)
+        samples[i] = 32767 if scaled > 32767 else (-32767 if scaled < -32767 else scaled)
+    return samples.tobytes()
+
+
 def _play_pcm_on_robot(pcm24: bytes) -> float:
     """Upload a 24kHz PCM16 buffer as a WAV and play it on Vibey's speaker.
     Returns the clip duration in seconds (so the caller can gate the mic)."""
+    duration = len(pcm24) / 2 / RT_SR
+    pcm24 = _normalise(pcm24)
     wav = _wav_from_pcm16(pcm24, RT_SR)
     name = f"oai_{uuid.uuid4().hex[:8]}.wav"
     upload_sound(wav, name)
     play_sound(name)
-    return len(pcm24) / 2 / RT_SR
+    return duration
 
 
 # --------------------------------------------------------------------------- #
