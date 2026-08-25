@@ -155,6 +155,10 @@ def _current_people_names() -> list[str]:
 
 # Shared state the dashboard reads/writes over the control API.
 STATE = {
+    # Asleep is the resting state, not an error state. Vibey sits with its head
+    # down and no socket open until somebody claps twice or says "hey vibey" —
+    # see reachy_wake.py. Waking should never require walking to a laptop.
+    "asleep": True,
     "mode": "starting",
     "model": MODEL,
     "muted": False,
@@ -1035,6 +1039,22 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "vibe": STATE["vibe"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/wake"):
+            # Wake by hand. The wake phrase needs a person in the room to test —
+            # the robot cannot hear its own speaker — so there has to be a way in
+            # that does not depend on it, both for the dashboard and for a demo
+            # where the room is loud.
+            try:
+                _wake_now("manual")
+                self._json({"ok": True, "asleep": STATE["asleep"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/sleep"):
+            try:
+                _sleep_now()
+                self._json({"ok": True, "asleep": STATE["asleep"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/openaimode"):
             # OpenAI Realtime full-duplex mode. Turning it ON just flips the
             # flag; the main loop notices and hands the mic/speaker to the
@@ -1607,6 +1627,38 @@ def _run_openai_realtime() -> None:
               flush=True)
 
 
+def _wake_now(reason: str = "wake") -> None:
+    """Called from the wake listener. Stirs the body, then opens the session."""
+    if not STATE["asleep"]:
+        return
+    print(f"[chat] waking ({reason})", flush=True)
+    STATE["asleep"] = False
+    try:
+        import reachy_wakesleep
+        reachy_wakesleep.wake(log=lambda m: print(m, flush=True))
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] wake body failed: {e}", flush=True)
+    # Straight into the realtime engine — the mode Vibey is actually good in.
+    if STATE["openai_available"]:
+        STATE["openai"] = True
+    threading.Thread(target=_mode_antennas, daemon=True).start()
+
+
+def _sleep_now() -> None:
+    """Head down, falling notes, socket closed."""
+    if STATE["asleep"]:
+        return
+    print("[chat] going to sleep", flush=True)
+    STATE["openai"] = False
+    STATE["asleep"] = True
+    try:
+        import reachy_wakesleep
+        reachy_wakesleep.sleep(log=lambda m: print(m, flush=True))
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] sleep body failed: {e}", flush=True)
+    threading.Thread(target=_mode_antennas, daemon=True).start()
+
+
 def main():
     _start_ctrl_server()
     global BRAIN
@@ -1619,7 +1671,29 @@ def main():
           f"at {OPENCLAW_BIN}", flush=True)
     STATE["mic_threshold"] = SPEECH_RMS
     threading.Thread(target=_mode_antennas, daemon=True).start()
-    _speak_line("Vibey here. Talk to me!")
+    # Listening for its own name, and for two claps, on the robot's own
+    # microphone. Runs for the whole life of the process: it is what turns a
+    # sleeping robot back on, so it must outlive every session.
+    try:
+        import reachy_wake
+        _waker = reachy_wake.WakeListener(
+            on_wake=_wake_now,
+            should_listen=lambda: STATE["asleep"],
+            log=lambda m: print(m, flush=True))
+        _waker.start()
+        print("[chat] asleep — clap twice or say 'hey vibey'", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] wake listener unavailable ({e}) — starting awake", flush=True)
+        STATE["asleep"] = False
+
+    if STATE["asleep"]:
+        try:
+            import reachy_wakesleep
+            reachy_wakesleep.sleep(log=lambda m: print(m, flush=True))
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        _speak_line("Vibey here. Talk to me!")
     muted_until = time.time() + 3.0   # let the greeting finish
 
     if MIC_SOURCE == "robot":
@@ -1638,10 +1712,26 @@ def main():
     silence_s = segment_s = 0.0
 
     while True:
+        if STATE["asleep"]:
+            # Nothing to do but wait to be woken. The wake listener has its own
+            # connection to the microphone, so this loop can simply idle.
+            time.sleep(0.2)
+            continue
+
         if STATE["openai"]:
             # Selected OpenAI Realtime mode — hand off the mic/speaker entirely
             # until it's toggled back off, then reset our VAD state and resume.
             _run_openai_realtime()
+            # The engine returns for two reasons: the dashboard toggle went off,
+            # or somebody said "go to sleep" to it. Only the second should put the
+            # body down — otherwise turning the toggle off from a laptop would also
+            # trigger an animation nobody asked for.
+            try:
+                import reachy_openai_realtime as _rt
+                if _rt.SLEEP_REQUESTED.is_set():
+                    _sleep_now()
+            except Exception:  # noqa: BLE001
+                pass
             pre_roll.clear(); buf = []; in_speech = False
             silence_s = segment_s = 0.0
             muted_until = time.time() + 1.0
