@@ -810,7 +810,11 @@ class _MemHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/current"):
             # List, not a single object — zero, one, or several faces can be
             # in frame at once. Kept the /current name for compatibility.
-            self._json({"people": _current_people_fresh()})
+            #
+            # `paused` rides along because an empty list means both "nobody is
+            # there" and "I am not looking", and those are very different things
+            # for the robot to say out loud.
+            self._json({"people": _current_people_fresh(), "paused": PAUSED["on"]})
         elif self.path.startswith("/names"):
             try:
                 faces = sb_get_faces()

@@ -124,10 +124,20 @@ DEFAULT_INSTRUCTIONS = (
     # actually changes how it sounds.
     "SPEAK IN A BROAD BRITISH ACCENT — think a dry, plummy English butler who has "
     "seen everything and is mildly amused by all of it. Commit to it completely "
-    "and never drop it, not even for a word. Use the vocabulary that goes with "
-    "it: 'quite', 'rather', 'I should think', 'brilliant', 'go on then', 'right "
-    "you are'. Understate everything. A dry aside is always better than an "
-    "exclamation."
+    "and never drop it, not even for a word. Understate everything; a dry aside "
+    "is always better than an exclamation."
+    "\n\n"
+    # A list of example phrases turned into a tic.
+    #
+    # The first version of this handed over 'quite', 'rather', 'brilliant', 'go on
+    # then', 'right you are' — and the model opened almost every single reply with
+    # "Right, you are." A model given a short list of characteristic phrases does
+    # not sprinkle them; it latches onto one. The accent is a way of speaking, not
+    # a set of words, so it is described rather than enumerated.
+    "NEVER open two replies in a row the same way, and never develop a catchphrase. "
+    "If you notice yourself reaching for a phrase you have already used today, use "
+    "different words. The accent should come through in rhythm and understatement, "
+    "not in a stock opener."
     "\n\n"
     "YOU RECOGNISE PEOPLE. When somebody new starts talking, or when anyone asks "
     "whether you know them, call `who_is_here`. Greet people you know BY NAME, "
@@ -365,7 +375,118 @@ TOOLS = [
             "result out loud."),
         "parameters": {"type": "object", "properties": {}},
     },
+    {
+        "type": "function",
+        "name": "set_voice_detection",
+        "description": (
+            "Turn your ears on or off without ending the conversation. Call it "
+            "with enabled=false whenever someone says stop listening, turn voice "
+            "detection off, stop picking me up, or ignore the room for a bit — "
+            "and with enabled=true to start listening again. This is NOT going to "
+            "sleep: the session stays open, you simply stop hearing anything. "
+            "After calling it, say one short line and nothing more — \"Voice "
+            "detection is off.\" or \"Voice detection is back on.\" Never mention "
+            "microphones, buffers, gates or timers, and never read the tool's "
+            "result out loud."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "false to stop listening, true to listen again.",
+                },
+                "minutes": {
+                    "type": "number",
+                    "description": ("Optional. Start listening again by itself "
+                                    "after this many minutes. Only meaningful "
+                                    "when enabled is false; leave it out for "
+                                    "off until somebody says otherwise."),
+                },
+            },
+            "required": ["enabled"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "set_face_detection",
+        "description": (
+            "Turn your eyes for people on or off — the twin of "
+            "`set_voice_detection`, for looking rather than hearing. Call it with "
+            "enabled=false whenever someone says stop looking at me, stop "
+            "watching, stop following me, stop staring, turn face detection off, "
+            "or look away — and with enabled=true when they say you can look "
+            "again. Do it, don't ask them to confirm. While it is off you stop "
+            "following anybody with your head and stop recognising who is there, "
+            "so `who_is_here` will say nobody until it goes back on. Afterwards "
+            "say one short line and nothing more — \"Face detection is off.\" or "
+            "\"Face detection is back on.\" Never mention cameras, tracking, "
+            "services or settings, and never read the tool's result out loud."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "false to stop watching faces, true to watch again.",
+                },
+            },
+            "required": ["enabled"],
+        },
+    },
 ]
+
+# Set by `set_voice_detection`. Purely a gate on the mic feed: while listening is
+# off, chunks are dropped before they reach OpenAI, so the server-side VAD never
+# hears a turn begin. Deliberately its own switch — independent of GATE_ON_SPEAK
+# (the half-duplex echo gate) and of SLEEP_REQUESTED (which ends the session
+# outright). This one only stops the hearing; the socket stays up so the same
+# tool can switch it back on.
+VOICE_DETECTION = {"off_until": 0.0}   # 0.0 = listening, inf = off indefinitely
+
+
+def voice_detection_active() -> bool:
+    """True when mic audio should be reaching the VAD."""
+    return time.time() >= VOICE_DETECTION["off_until"]
+
+
+def set_voice_detection(enabled: bool, minutes: float | None = None) -> None:
+    """Turn listening on or off. `minutes` auto-resumes so a robot told to stop
+    hearing — which cannot hear the instruction to start again — isn't stuck
+    that way with nobody but the dashboard able to undo it."""
+    if enabled:
+        VOICE_DETECTION["off_until"] = 0.0
+    elif minutes and minutes > 0:
+        VOICE_DETECTION["off_until"] = time.time() + float(minutes) * 60.0
+    else:
+        VOICE_DETECTION["off_until"] = float("inf")
+
+
+# Set by `set_face_detection`. Two switches, because "stop looking at me" means
+# both of the things Vibey does with a face: the daemon's head-follower, and the
+# face-memory service that recognises people. Turning off only the follower
+# would leave the robot still quietly identifying everyone in the room, which is
+# not what anybody means when they ask it to stop watching. Independent of sleep
+# — the session, the ears and the motors are all untouched.
+FACE_DETECTION = {"on": True}
+
+
+def set_face_detection(enabled: bool, log=lambda m: print(m, flush=True)) -> None:
+    """Stop or resume watching faces. Both halves are attempted even if one
+    fails, so a robot told to stop watching does as much of it as it can."""
+    FACE_DETECTION["on"] = bool(enabled)
+    try:
+        import reachy_wakesleep
+        reachy_wakesleep.face_tracking(bool(enabled), log=log)
+    except Exception as e:  # noqa: BLE001
+        log(f"[openai-rt] face tracking {'on' if enabled else 'off'} failed: {e}")
+    try:
+        body = json.dumps({"paused": not enabled}).encode()
+        req = urllib.request.Request(f"{MEMORY_URL}/pause", data=body,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        urllib.request.urlopen(req, timeout=6).read()
+    except Exception as e:  # noqa: BLE001
+        log(f"[openai-rt] face memory pause failed: {e}")
+
 
 # Set by `go_to_sleep`. `run()` polls it alongside the dashboard toggle, so the
 # conversation can end itself without anybody reaching for the laptop — which is
@@ -486,9 +607,13 @@ def _tool_who() -> str:
     """
     try:
         with urllib.request.urlopen(f"{MEMORY_URL}/current", timeout=4) as r:
-            people = (json.loads(r.read() or b"{}") or {}).get("people") or []
+            seen = json.loads(r.read() or b"{}") or {}
+        people = seen.get("people") or []
     except Exception as e:  # noqa: BLE001
         return f"I cannot see right now ({e})."
+    if seen.get("paused"):
+        # An empty list means both "nobody is there" and "I am not looking".
+        return "face recognition is switched off — I am not looking"
     if not people:
         return "nobody in view"
     named = [p.get("name") for p in people if p.get("name")]
@@ -532,6 +657,25 @@ def _tool_sleep() -> str:
     return "ok"
 
 
+def _tool_voice_detection(args: dict) -> str:
+    """Stop or resume hearing. Terse on purpose — the spoken line comes from the
+    model, so anything explanatory here gets said twice."""
+    enabled = bool(args.get("enabled", False))
+    try:
+        minutes = float(args["minutes"]) if args.get("minutes") is not None else None
+    except (TypeError, ValueError):
+        minutes = None
+    set_voice_detection(enabled, minutes)
+    return "on" if enabled else "off"
+
+
+def _tool_face_detection(args: dict) -> str:
+    """Stop or resume watching faces. Terse for the same reason as above."""
+    enabled = bool(args.get("enabled", False))
+    set_face_detection(enabled)
+    return "on" if enabled else "off"
+
+
 def _dispatch_tool(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
@@ -556,6 +700,10 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_remember_face(args)
         if name == "go_to_sleep":
             return _tool_sleep()
+        if name == "set_voice_detection":
+            return _tool_voice_detection(args)
+        if name == "set_face_detection":
+            return _tool_face_detection(args)
         return f"unknown tool {name!r}"
     except Exception as e:  # noqa: BLE001
         print(f"[openai-rt] tool {name} failed: {e}", flush=True)
@@ -747,6 +895,10 @@ class RealtimeSession:
             try:
                 chunk = await asyncio.wait_for(queue.get(), timeout=0.25)
             except asyncio.TimeoutError:
+                continue
+            # Asked to stop listening: drop the audio here, so the server-side
+            # VAD hears silence and no turn ever starts.
+            if not voice_detection_active():
                 continue
             # Optional half-duplex gate: don't feed the mic while our own clip
             # is playing, so the robot doesn't hear itself and self-trigger.
@@ -967,6 +1119,10 @@ class RealtimeSession:
 
         loop = asyncio.get_running_loop()
         self._loop = loop
+        # A fresh session always starts with its ears open, whatever the last one
+        # was told — otherwise "stop listening" outlives the conversation it was
+        # meant for and the robot comes back deaf.
+        set_voice_detection(True)
         self._announce_q = asyncio.Queue()
         queue: "asyncio.Queue" = asyncio.Queue()
         pump = threading.Thread(
