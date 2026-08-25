@@ -130,9 +130,26 @@ def face_tracking(on: bool, weight: float = 1.0, log=print):
         log(f"[wakesleep] tracking failed: {e}")
 
 
+def motors(enabled: bool, log=print):
+    """Torque on or off.
+
+    THIS is why Vibey would not move. Going to sleep leaves the motors disabled —
+    correctly, a sleeping robot should not be holding its own head up — and
+    nothing turned them back on. Every move after that returned 200 with a job id
+    and did nothing at all, which is the worst way for a thing to fail: the API
+    says yes and the body never twitches.
+    """
+    try:
+        _post(f"/api/motors/set_mode/{'enabled' if enabled else 'disabled'}")
+    except Exception as e:  # noqa: BLE001
+        log(f"[wakesleep] motors {'on' if enabled else 'off'} failed: {e}")
+
+
 def wake(log=print):
-    """Stir, look up, and make the sound of arriving."""
+    """Torque on, stir, look up, and make the sound of arriving."""
     log("[wakesleep] waking")
+    # First of all, or nothing below moves anything.
+    motors(True, log)
     set_volume(WAKE_VOLUME, log)
     _upload_and_play("vibey_wake.wav", _tone(WAKE_NOTES), log)
     try:

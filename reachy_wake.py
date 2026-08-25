@@ -34,6 +34,7 @@ Run standalone to watch it without waking anything:
 
 from __future__ import annotations
 
+import difflib
 import math
 import os
 import re
@@ -205,12 +206,44 @@ WAKE_VARIANTS = [
 # mic RMS than the room did. It needs a person in the room, or nothing.
 
 
+# How close a stretch of transcript has to be to count. 0.80 catches what the
+# recogniser ACTUALLY produced for "hey vibey" in the room — "hey, if I be" — and
+# leaves every other line it produced that evening under 0.50.
+WAKE_THRESHOLD = 0.78
+
+_WAKE_TARGETS = ("heyvibey", "heyvibe", "hivibey")
+
+
+def wake_score(text: str) -> float:
+    """How much a transcript sounds like the wake phrase, 0..1.
+
+    A list of spellings is not enough. `tiny.en` heard "hey vibey" as "hey, if I
+    be" — which no variant list would ever contain — so this compares the SHAPE of
+    the words instead, sliding a window over the transcript with the letters run
+    together.
+
+    Windows may only start on an "h". That one constraint is what separates "hey
+    vibey" from "talking about Vibey": the first scores 1.00 and the second 0.00,
+    because the name on its own is somebody discussing the robot, not addressing
+    it.
+    """
+    s = re.sub(r"\s+", "", normalise(text))
+    best = 0.0
+    for i, ch in enumerate(s):
+        if ch != "h":
+            continue
+        for target in _WAKE_TARGETS:
+            w = len(target)
+            for span in (w - 2, w - 1, w, w + 1, w + 2):
+                seg = s[i:i + span]
+                if len(seg) < 5:
+                    continue
+                best = max(best, difflib.SequenceMatcher(None, seg, target).ratio())
+    return best
+
+
 def matches_wake(text: str, variants=None) -> bool:
-    hay = " " + " ".join(normalise(text).split()) + " "
-    for v in (variants or WAKE_VARIANTS):
-        if " " + v + " " in hay:
-            return True
-    return False
+    return wake_score(text) >= WAKE_THRESHOLD
 
 
 def peaks(pcm: bytes, sub=SUB_FRAME):
@@ -247,6 +280,7 @@ class WakeListener(threading.Thread):
         self.samples_seen = 0
         self.last_heard = ""
         self.last_rms = 0.0
+        self.last_score = 0.0
         self._pcm_for_phrase = bytearray()
         self._model = None
 
@@ -257,8 +291,12 @@ class WakeListener(threading.Thread):
         robot that is only ever clapped at should not pay for it."""
         if self._model is None:
             from faster_whisper import WhisperModel
-            self._model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
-            self.log("[wake] whisper ready (tiny.en)")
+            # base.en, not tiny.en. tiny is what turned "hey vibey" into "hey, if
+            # I be" — the fuzzy matcher rescues that, but a model that hears the
+            # name is better than a matcher that forgives it not being heard.
+            name = os.environ.get("VIBEY_WAKE_MODEL", "base.en")
+            self._model = WhisperModel(name, device="cpu", compute_type="int8")
+            self.log(f"[wake] whisper ready ({name})")
         return self._model
 
     # Whether a window is worth transcribing, as RMS.
@@ -287,9 +325,14 @@ class WakeListener(threading.Thread):
                                "bye", "thank you very much", ""}:
             return False
         if text:
+            score = wake_score(text)
             self.last_heard = text
-            self.log(f"[wake] heard {text!r}")
-        return matches_wake(text)
+            self.last_score = score
+            # The score, always. "It heard me and did nothing" and "it never heard
+            # me" look identical in a log that only prints the words.
+            self.log(f"[wake] heard {text!r} (wake score {score:.2f})")
+            return score >= WAKE_THRESHOLD
+        return False
 
     # --- the loop --------------------------------------------------------
 

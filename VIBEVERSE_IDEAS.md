@@ -60,3 +60,19 @@ Make the avatar a *window*, not a puppet.
 - Proximity/enter/leave events (the doorbell + knock-knock cases).
 - An `emote` action distinct from `say` (so animations don't clutter chat).
 - Object interaction verbs: `use`, `pickup`, `place`.
+
+## Music (Jack, 2026-08-24)
+
+Vibey should be able to play music — Spotify, or just a few good songs kept on
+the robot. "Some nice vibey songs." It is a social robot in a room with people;
+music is most of what makes a room feel like something.
+
+Worth knowing before starting: the firmware already ships an app called
+`reachy_mini_radio` (see `GET /api/apps/list-available`), and apps are started
+with `POST /api/apps/start-app/{name}`. That may be the whole feature, or at
+least the speaker path, without writing an audio pipeline.
+
+The other route is the one already proven here: upload a file with
+`/api/media/sounds/upload` and play it by name with `/api/media/play_sound` —
+which is how the wake and sleep chimes work. Uploading a few MP3s and giving the
+model a `play_music` tool would take an afternoon and needs no Spotify account.
