@@ -1728,7 +1728,25 @@ def main():
             # trigger an animation nobody asked for.
             try:
                 import reachy_openai_realtime as _rt
-                if _rt.SLEEP_REQUESTED.is_set():
+                why = _rt.FATAL_REASON.get("why")
+                if why:
+                    # It fell back to another brain, in another voice. Say so.
+                    #
+                    # Silently becoming a different assistant is the worst version
+                    # of this: the dashboard still reads "Realtime OpenAI", the
+                    # robot answers in a voice nobody chose, and there is nothing
+                    # anywhere to explain it.
+                    _rt.FATAL_REASON["why"] = None
+                    STATE["openai"] = False
+                    STATE["openai_available"] = False
+                    print(f"[chat] realtime unavailable: {why}", flush=True)
+                    try:
+                        _speak_line("I have lost my usual voice — there is no credit "
+                                    "left on the OpenAI account. I am still here, "
+                                    "just not quite myself.")
+                    except Exception:  # noqa: BLE001
+                        pass
+                elif _rt.SLEEP_REQUESTED.is_set():
                     _sleep_now()
             except Exception:  # noqa: BLE001
                 pass

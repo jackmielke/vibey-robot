@@ -315,6 +315,11 @@ SLEEP_REQUESTED = threading.Event()
 # reads as a crash rather than as a farewell.
 SLEEP_REQUESTED_AT = 0.0
 
+# Why the engine gave up, when it gave up for a reason retrying cannot fix.
+# Read by reachy_chat.py so the robot can say it rather than silently becoming a
+# different assistant.
+FATAL_REASON: dict = {"why": None}
+
 
 def _tool_move(args: dict) -> str:
     move = str(args.get("move", "")).strip().lower()
@@ -520,6 +525,9 @@ class RealtimeSession:
         self.log = log or (lambda m: print(f"[openai-rt] {m}", flush=True))
         self._resp_pcm = bytearray()      # accumulates the current reply's audio
         self._cancelled = False           # current reply got barged-in
+        # Set when the failure is one that retrying cannot fix. See the error
+        # handler — the loop stops and the caller says so out loud.
+        self.fatal: str | None = None
         self._speaking_until = 0.0        # wall-clock when our clip finishes
         self._loop = None                 # set once we're running
         self._announce_q = None           # finished background jobs, to announce
@@ -752,7 +760,17 @@ class RealtimeSession:
                     self.on_agent_text(txt)
 
             elif t == "error":
-                self.log(f"server error: {msg.get('error')}")
+                err = msg.get("error") or {}
+                self.log(f"server error: {err}")
+                # Some errors will never come right by trying again. No credit is
+                # the obvious one, and a bad key the other; retrying either every
+                # three seconds forever is how the dashboard ends up saying
+                # "Realtime OpenAI" while the robot answers in a different voice
+                # from a different brain, with nothing anywhere saying why.
+                if err.get("code") in ("credit_balance_exhausted", "insufficient_quota",
+                                       "invalid_api_key", "account_deactivated"):
+                    self.fatal = (err.get("message")
+                                  or "OpenAI refused the connection.")
 
     async def run_async(self, should_run, stop):
         import websockets
@@ -774,7 +792,7 @@ class RealtimeSession:
         # FlowState's docs/API-CONTRACT.md, which is where this endpoint is written
         # down after /v1/realtime/sessions turned out to be a 404.
         headers = {"Authorization": f"Bearer {_ephemeral_token() or API_KEY}"}
-        while should_run() and not stop.is_set():
+        while should_run() and not stop.is_set() and not self.fatal:
             try:
                 self.log(f"connecting to OpenAI Realtime ({MODEL}, voice={VOICE}) …")
                 async with websockets.connect(
@@ -793,6 +811,14 @@ class RealtimeSession:
                         announcer.cancel()
             except Exception as e:  # noqa: BLE001
                 if not should_run() or stop.is_set():
+                    break
+                text = str(e)
+                if any(k in text for k in ("insufficient_quota",
+                                           "credit_balance_exhausted",
+                                           "invalid_api_key")):
+                    self.fatal = ("OpenAI has no credit left on this account."
+                                  if "credit" in text or "quota" in text
+                                  else "OpenAI rejected the API key.")
                     break
                 self.log(f"connection error ({e}); retrying in 3s")
                 await asyncio.sleep(3)
@@ -835,6 +861,9 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
     should_run = should_run_now
     try:
         asyncio.run(session.run_async(should_run, stop))
+        if session.fatal:
+            (log or print)(f"[openai-rt] giving up: {session.fatal}")
+            FATAL_REASON["why"] = session.fatal
     except KeyboardInterrupt:
         _stop_sound()
     finally:
