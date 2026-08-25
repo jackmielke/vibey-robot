@@ -88,3 +88,26 @@ Worth pairing with software: if it is wearing something, it should know. A line
 in SKILLS.md ("you are wearing a gold chain, you are quietly proud of it") costs
 nothing and gives it something to be vain about — and a British butler being
 vain about a chain is funnier than either on its own.
+
+### What the shipped radio app actually is (checked 2026-08-25)
+
+`reachy_mini_radio` is a full Reachy Mini python app — `main.py` at 19 kB, plus an
+antenna-button handler and a station selector. It streams three French web radios:
+
+    FIP        http://icecast.radiofrance.fr/fip-hifi.aac
+    FIP Rock   http://icecast.radiofrance.fr/fiprock-hifi.aac
+    FIP JAZZ   http://icecast.radiofrance.fr/fipjazz-hifi.aac
+
+So it is NOT a free win. It is an app, and an app takes the robot: starting it
+would hand the body to something that is not Vibey, and the conversation stops.
+Three French stations is also not "some nice vibey songs".
+
+The better route is the one already proven by the wake and sleep chimes: upload a
+file with `/api/media/sounds/upload`, play it by name with `/api/media/play_sound`,
+and give the model a `play_music` tool listing what is on the robot. Vibey keeps
+the body, keeps talking, and can duck or stop the music when somebody speaks —
+none of which is possible if a separate app owns the robot.
+
+Those stream URLs are still worth having: a `play_radio` tool could fetch a few
+seconds of a stream, transcode, and play it the same way, if a station is ever
+wanted.
