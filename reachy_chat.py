@@ -1654,20 +1654,39 @@ def _run_openai_realtime() -> None:
 
 
 def _wake_now(reason: str = "wake") -> None:
-    """Called from the wake listener. Stirs the body, then opens the session."""
+    """Called from the wake listener. Hands the conversation over, then stirs.
+
+    ORDER MATTERS, and getting it wrong produced the strangest bug of the night.
+    Waking used to set `asleep = False`, then do the body — volume, upload a
+    chime, play the wake animation, up to several seconds of blocking HTTP — and
+    only then hand the conversation to the realtime engine.
+
+    For that whole window the robot was awake with no brain assigned, so the main
+    loop fell through to the old whisper-and-Claude path and answered in the
+    ElevenLabs voice. From the room: clap, a chime, and then a completely
+    different voice saying "Hi Jack, good to see you" while the head was still
+    moving. The realtime engine then connected on top of it.
+
+    So the handover happens first, in one step, and the body catches up on a
+    thread.
+    """
     if not STATE["asleep"]:
         return
     print(f"[chat] waking ({reason})", flush=True)
+    # Both flags together, before anything slow. The main loop must never see
+    # "awake, but nobody is holding the conversation".
+    STATE["openai"] = bool(STATE["openai_available"])
     STATE["asleep"] = False
-    try:
-        import reachy_wakesleep
-        reachy_wakesleep.wake(log=lambda m: print(m, flush=True))
-    except Exception as e:  # noqa: BLE001
-        print(f"[chat] wake body failed: {e}", flush=True)
-    # Straight into the realtime engine — the mode Vibey is actually good in.
-    if STATE["openai_available"]:
-        STATE["openai"] = True
-    threading.Thread(target=_mode_antennas, daemon=True).start()
+
+    def _body():
+        try:
+            import reachy_wakesleep
+            reachy_wakesleep.wake(log=lambda m: print(m, flush=True))
+        except Exception as e:  # noqa: BLE001
+            print(f"[chat] wake body failed: {e}", flush=True)
+        threading.Thread(target=_mode_antennas, daemon=True).start()
+
+    threading.Thread(target=_body, daemon=True).start()
 
 
 def _sleep_now() -> None:

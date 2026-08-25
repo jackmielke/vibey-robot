@@ -25,6 +25,7 @@ import io
 import math
 import os
 import struct
+import time
 import urllib.request
 import wave
 
@@ -116,12 +117,17 @@ def set_volume(level: int, log=print):
         log(f"[wakesleep] volume failed: {e}")
 
 
-def face_tracking(on: bool, weight: float = 1.0, log=print):
+def face_tracking(on: bool, weight: float = 0.6, log=print):
     """Follow whoever is in front of it.
 
     This is the thing that makes Vibey feel awake rather than merely switched on —
     it looks up when somebody walks in. Off while asleep, so a sleeping robot is
     not quietly moving its head at people.
+
+    Weight 0.6 rather than 1.0: at full strength the head snaps to every detection
+    and fights any gesture the model plays, which reads as twitchy rather than
+    attentive. Following somebody is meant to look like interest, not like a
+    servo.
     """
     try:
         if on:
@@ -158,8 +164,14 @@ def wake(log=print):
         _post("/api/move/play/wake_up", timeout=15)
     except Exception as e:  # noqa: BLE001
         log(f"[wakesleep] wake_up move failed: {e}")
-    # After the animation, not before: wake_up drives the head itself, and turning
-    # tracking on first means the two fight over it for the length of the move.
+    # After the animation, and after a beat.
+    #
+    # `wake_up` returns as soon as the move is QUEUED, not when it has finished
+    # playing, so enabling tracking on the next line put a face-follower and an
+    # animation on the same head at the same time. Together with whatever gesture
+    # the model fires on its first turn, that is three things driving one neck —
+    # which from the room looks like the robot spasming.
+    time.sleep(1.6)
     face_tracking(True, log=log)
 
 
