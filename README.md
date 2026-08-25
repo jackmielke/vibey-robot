@@ -30,7 +30,11 @@ a real terminal's mic permission).
 | —    | `reachy_bridge.py`   | Optional: handsfree gestures → robot body (`BRIDGE=1`) |
 
 Supporting modules: `reachy_voice.py` (ElevenLabs TTS), `reachy_emotes.py`
-(synthesized chirps + dances), `reachy_sfx.py` (sci-fi soundboard).
+(synthesized chirps + dances), `reachy_sfx.py` (sci-fi soundboard),
+`reachy_vibe.py` (the `vibe_check` voice tool — scores the *conversation* 1-100
+with an uncertainty band; sensitive-topic and health inference are filtered in
+code, and saving to Supabase needs both `VIBE_LOG=1` and a spoken yes. Its
+docstring has the schema and the privacy notes).
 
 ## The three brains
 

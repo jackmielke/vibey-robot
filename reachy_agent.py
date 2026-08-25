@@ -119,51 +119,108 @@ def _spoken_tail(reply: str) -> str:
     return tail
 
 
+def _describe(event: dict) -> str:
+    """One short human phrase for one Claude Code event, or "" to ignore it.
+
+    Written for the ear, not the eye. This ends up spoken out loud by a robot in
+    the middle of a conversation, so "editing reachy_wake" beats
+    "Edit(file_path=/Users/.../reachy_wake.py)" — the path is noise and the tool
+    name is jargon.
+    """
+    if event.get("type") != "assistant":
+        return ""
+    for block in event.get("message", {}).get("content", []) or []:
+        if block.get("type") != "tool_use":
+            continue
+        name = block.get("name", "")
+        inp = block.get("input", {}) or {}
+        target = inp.get("file_path") or inp.get("path") or ""
+        short = os.path.basename(target).removesuffix(".py") if target else ""
+        if name in ("Edit", "Write", "NotebookEdit"):
+            return f"editing {short}" if short else "editing a file"
+        if name == "Read":
+            return f"reading {short}" if short else "reading the code"
+        if name in ("Grep", "Glob"):
+            return "searching the code"
+        if name == "Bash":
+            cmd = (inp.get("command") or "").strip()
+            if "test" in cmd or "pytest" in cmd:
+                return "running the tests"
+            if cmd.startswith("git commit"):
+                return "committing"
+            if cmd.startswith("git"):
+                return "checking git"
+            return "running a command"
+        if name == "TodoWrite":
+            return ""          # bookkeeping, not progress
+        return name.lower()
+    return ""
+
+
 def _run_job(job_id: str, task: str, on_done) -> None:
     job = JOBS[job_id]
     log_path = RUNS_DIR / f"{job_id}.log"
     prompt = f"{BRIEFING}\n\nTASK FROM JACK (spoken out loud, transcribed):\n{task}\n"
 
+    # Streamed, not captured at the end.
+    #
+    # `subprocess.run` with a plain `-p` hands back everything at once, minutes
+    # later, which is why Vibey could only ever say how many seconds had passed
+    # when asked what it was doing. `stream-json` gives an event per step, so the
+    # answer can be "editing the wake listener" instead.
     cmd = [CLAUDE_BIN, "-p", prompt,
+           "--output-format", "stream-json", "--verbose",
            "--permission-mode", PERMISSION_MODE,
            "--model", AGENT_MODEL]
+    reply, err, ok = "", "", False
     try:
-        proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
-                              timeout=AGENT_TIMEOUT)
-        reply = (proc.stdout or "").strip()
-        err = (proc.stderr or "").strip()
-        ok = proc.returncode == 0
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "w") as log:
+            log.write(f"# job {job_id}\n# task: {task}\n# git {job['sha']}\n\n")
+            proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, bufsize=1)
+            deadline = time.time() + AGENT_TIMEOUT
+            for line in proc.stdout:
+                log.write(line)
+                if time.time() > deadline:
+                    proc.kill()
+                    raise subprocess.TimeoutExpired(cmd, AGENT_TIMEOUT)
+                try:
+                    event = json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                phrase = _describe(event)
+                if phrase:
+                    with _LOCK:
+                        job["steps"] = (job.get("steps", []) + [phrase])[-8:]
+                        job["step"] = phrase
+                if event.get("type") == "result":
+                    reply = (event.get("result") or "").strip()
+                    ok = not event.get("is_error")
+            proc.wait(timeout=30)
+            err = (proc.stderr.read() or "").strip()
+            if proc.returncode != 0 and not reply:
+                ok = False
         with _LOCK:
             job["state"] = "done" if ok else "failed"
             job["reply"] = reply
             job["error"] = "" if ok else (err or f"exit {proc.returncode}")
             job["spoken"] = (_spoken_tail(reply) if ok
                              else "That didn't work — something went wrong on my end.")
+            job["log"] = str(log_path)
     except subprocess.TimeoutExpired:
         with _LOCK:
             job["state"] = "failed"
             job["error"] = f"timed out after {AGENT_TIMEOUT:.0f}s"
-            job["spoken"] = "I ran out of time on that one."
-        reply, err = "", job["error"]
+            job["spoken"] = "That one took too long, so I stopped it."
     except Exception as e:  # noqa: BLE001
         with _LOCK:
             job["state"] = "failed"
             job["error"] = str(e)
-            job["spoken"] = "I couldn't start that — my coding agent didn't come up."
-        reply, err = "", str(e)
+            job["spoken"] = "That didn't work — something went wrong on my end."
 
     with _LOCK:
         job["finished"] = time.time()
-
-    try:
-        RUNS_DIR.mkdir(exist_ok=True)
-        log_path.write_text(
-            f"# job {job_id}\n# task: {task}\n# started at git {job['sha']}\n"
-            f"# state: {job['state']}\n\n{reply}\n\n--- stderr ---\n{err}\n")
-        with _LOCK:
-            job["log"] = str(log_path)
-    except Exception:  # noqa: BLE001
-        pass
 
     print(f"[agent] job {job_id} {job['state']} "
           f"({job['finished'] - job['started']:.0f}s): {job.get('spoken','')}",
@@ -186,7 +243,8 @@ def dispatch(task: str, on_done=None) -> dict:
     job_id = uuid.uuid4().hex[:8]
     job = {"id": job_id, "state": "running", "task": task,
            "started": time.time(), "finished": None, "sha": _git_sha(),
-           "reply": "", "error": "", "spoken": "", "log": ""}
+           "reply": "", "error": "", "spoken": "", "log": "",
+           "steps": [], "step": ""}
     with _LOCK:
         JOBS[job_id] = job
     threading.Thread(target=_run_job, args=(job_id, task, on_done),
@@ -208,8 +266,20 @@ def status(job_id: str | None = None) -> dict:
         snap = dict(job)
     if snap["state"] == "running":
         secs = time.time() - snap["started"]
-        snap["spoken"] = (f"Still working on it — about {secs:.0f} seconds in.")
+        step = snap.get("step")
+        # What it is doing beats how long it has been doing it. "About forty
+        # seconds in" is true and tells nobody anything.
+        snap["spoken"] = (f"{step.capitalize()} right now, about {secs:.0f} seconds in."
+                          if step else
+                          f"Just getting started — about {secs:.0f} seconds in.")
     return snap
+
+
+def running_jobs() -> list:
+    """Every job still going, newest first. More than one can run at a time."""
+    with _LOCK:
+        live = [dict(j) for j in JOBS.values() if j["state"] == "running"]
+    return sorted(live, key=lambda j: j["started"], reverse=True)
 
 
 def undo_hint(job_id: str) -> str:

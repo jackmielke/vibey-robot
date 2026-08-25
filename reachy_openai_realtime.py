@@ -21,6 +21,7 @@ Tools (see TOOLS below) let the conversation reach the body and the codebase:
 
     move / dance          instant — motion fires while they keep talking
     remember              instant — appends to SKILLS.md, reloaded next connect
+    vibe_check            instant — scores the conversation 1-100 (reachy_vibe.py)
     improve_yourself      minutes — hands a coding task to the Claude CLI
                           (reachy_agent.py) editing THIS repo in the background
     check_progress        how that job is going
@@ -67,6 +68,7 @@ import numpy as np
 
 import reachy_agent
 import reachy_emotes
+import reachy_vibe
 from reachy_voice import REACHY_URL, load_env, play_sound, upload_sound
 
 load_env()
@@ -134,7 +136,9 @@ DEFAULT_INSTRUCTIONS = (
     "to a real coding agent editing your source in the background — it takes "
     "minutes, so say something brief like 'on it' and keep the conversation "
     "going. Never wait in silence. You'll be told the moment it finishes. Use "
-    "`check_progress` only if someone actually asks how it's going."
+    "`check_progress` only if someone actually asks how it's going. You CAN have "
+    "several jobs running at once — if someone asks for three things, dispatch "
+    "three and say so; do not make them wait for the first to land."
     "\n\n"
     "For small preferences that don't need code — how someone likes to be "
     "addressed, a fact about the room, a habit to keep — call `remember` "
@@ -250,6 +254,45 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "vibe_check",
+        "description": (
+            "Score the vibe of THIS conversation 1-100, with a label and an "
+            "honest uncertainty band. Only when someone asks for a vibe check. "
+            "You rate what you have actually heard — pace, warmth, laughing, "
+            "whether they're asking things back. It reads the room, never the "
+            "person: never guess at anyone's identity, background, or state of "
+            "mind, and say the number is about the chat, not about them. "
+            "Read the returned 'say' line back more or less as written. "
+            "Saving is OFF unless you pass log AND consent: ask out loud first "
+            "(\"want me to save that one?\") and only set consent true after "
+            "they say yes in that breath."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "energy": {"type": "number",
+                           "description": "0-10: pace, volume, liveliness."},
+                "warmth": {"type": "number",
+                           "description": "0-10: friendliness of the exchange."},
+                "humor": {"type": "number",
+                          "description": "0-10: jokes and laughing."},
+                "engagement": {"type": "number",
+                               "description": "0-10: questions back, follow-ups."},
+                "turns": {"type": "integer",
+                          "description": "How many back-and-forths you're judging "
+                                         "from. Drives the confidence."},
+                "notes": {"type": "string",
+                          "description": "Up to a dozen words on WHY, about the "
+                                         "conversation only. No personal traits."},
+                "log": {"type": "boolean",
+                        "description": "Try to save it. Needs consent too."},
+                "consent": {"type": "boolean",
+                            "description": "They said yes to saving it, just now."},
+            },
+            "required": ["energy"],
+        },
+    },
+    {
+        "type": "function",
         "name": "go_to_sleep",
         "description": (
             "Stop listening and close the live session. Use whenever someone says "
@@ -303,6 +346,20 @@ def _tool_improve(args: dict, announce) -> str:
 
 
 def _tool_check(args: dict) -> str:
+    """What the coding agent is doing — all of it, not just the newest job.
+
+    More than one can run at once, and Vibey does start more than one: asked for
+    two improvements in a conversation, it dispatched both. Reporting only the
+    most recent made the other one invisible, so it looked like the first request
+    had been dropped.
+    """
+    live = reachy_agent.running_jobs()
+    if live:
+        if len(live) == 1:
+            j = live[0]
+            return f"job {j['id']}: {j.get('spoken', 'running')}"
+        parts = [f"{j['id']} is {j.get('step') or 'getting started'}" for j in live]
+        return f"{len(live)} jobs running — " + "; ".join(parts)
     snap = reachy_agent.status()
     if snap["state"] == "none":
         return "no jobs yet"
@@ -312,6 +369,25 @@ def _tool_check(args: dict) -> str:
 def _tool_remember(args: dict) -> str:
     note = reachy_agent.remember(str(args.get("note", "")))
     return f"remembered: {note}" if note else "nothing to remember"
+
+
+def _tool_vibe(args: dict) -> str:
+    """The number and the caveats. Everything sensitive is filtered inside
+    reachy_vibe, not trusted to the prompt above."""
+    r = reachy_vibe.vibe_check(
+        energy=args.get("energy"), warmth=args.get("warmth"),
+        humor=args.get("humor"), engagement=args.get("engagement"),
+        notes=str(args.get("notes", "")), turns=int(args.get("turns") or 0),
+        log=bool(args.get("log")), consent=bool(args.get("consent")))
+    parts = [r.get("say", r.get("error", "no vibe"))]
+    if r.get("notes_dropped"):
+        parts.append(r["notes_dropped"])
+    if args.get("log") and "score" in r:
+        # Only worth a word when they asked for it saved, and only ever a word:
+        # anonymous IDs and HTTP statuses are not things to read to a room.
+        parts.append("Saved it." if r.get("logged")
+                     else f"Didn't save it — {r.get('log_status', 'no reason')}.")
+    return " ".join(parts)
 
 
 def _tool_sleep() -> str:
@@ -339,6 +415,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_check(args)
         if name == "remember":
             return _tool_remember(args)
+        if name == "vibe_check":
+            return _tool_vibe(args)
         if name == "go_to_sleep":
             return _tool_sleep()
         return f"unknown tool {name!r}"
