@@ -128,6 +128,13 @@ DEFAULT_INSTRUCTIONS = (
     "you are'. Understate everything. A dry aside is always better than an "
     "exclamation."
     "\n\n"
+    "YOU RECOGNISE PEOPLE. When somebody new starts talking, or when anyone asks "
+    "whether you know them, call `who_is_here`. Greet people you know BY NAME, "
+    "the moment you see them — that is the whole trick, and it is worth more than "
+    "anything clever you could say. If you see somebody you do not know, ask for "
+    "their name, then call `remember_face` so you have it next time. Do not "
+    "announce that you are saving it; just use it from then on."
+    "\n\n"
     "You have a BODY and you should use it. Call `move` freely and often — wave "
     "back when someone waves or says hi, nod instead of saying 'yes', tilt "
     "curious when you're asked something odd. Moving is cheap and it is most of "
@@ -297,6 +304,37 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "who_is_here",
+        "description": (
+            "Who you can see right now, by name, from your own camera. Use it when "
+            "somebody asks if you know them, when you want to greet a person by "
+            "name, or when you are not sure who you are talking to. Returns "
+            "'someone I don't know yet' for a face you have never been introduced "
+            "to — when that happens, ASK for their name and then call "
+            "`remember_face`. Instant."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
+        "name": "remember_face",
+        "description": (
+            "Learn the name of the person you are looking at, so you recognise "
+            "them next time. Use it right after somebody tells you their name. "
+            "Only works when exactly ONE person is in front of you — if there are "
+            "several, say so and ask them to take turns. Instant."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The name they gave you, spelled as they said it.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "type": "function",
         "name": "go_to_sleep",
         "description": (
             "Stop listening and close the live session. Use whenever someone says "
@@ -399,6 +437,53 @@ def _tool_vibe(args: dict) -> str:
     return " ".join(parts)
 
 
+MEMORY_URL = os.environ.get("MEMORY_URL", "http://localhost:8773").rstrip("/")
+
+
+def _tool_who() -> str:
+    """Who is in front of the camera, by name.
+
+    The face memory service has known this all along; the voice simply could not
+    reach it. Recognising people is most of what makes a robot feel social, and it
+    was sitting one HTTP call away from the brain that talks to them.
+    """
+    try:
+        with urllib.request.urlopen(f"{MEMORY_URL}/current", timeout=4) as r:
+            people = (json.loads(r.read() or b"{}") or {}).get("people") or []
+    except Exception as e:  # noqa: BLE001
+        return f"I cannot see right now ({e})."
+    if not people:
+        return "nobody in view"
+    named = [p.get("name") for p in people if p.get("name")]
+    unknown = len(people) - len(named)
+    if named and not unknown:
+        return "I can see " + ", ".join(named)
+    if named:
+        return (f"I can see {', '.join(named)}, and {unknown} "
+                f"{'person' if unknown == 1 else 'people'} I don't know yet")
+    return (f"{len(people)} {'person' if len(people) == 1 else 'people'} "
+            "I don't know yet — ask their name")
+
+
+def _tool_remember_face(args: dict) -> str:
+    name = " ".join(str(args.get("name", "")).split()).strip()
+    if not name:
+        return "I need a name to go with the face."
+    try:
+        body = json.dumps({"name": name}).encode()
+        req = urllib.request.Request(f"{MEMORY_URL}/name", data=body,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            json.loads(r.read() or b"{}")
+        return f"saved — I'll know {name} next time"
+    except Exception as e:  # noqa: BLE001
+        # The service refuses when it cannot tell which face to attach the name
+        # to, which is the common case in a room: several people at once.
+        return (f"I couldn't save that — {e}. If more than one person is in "
+                "front of me, ask them to take turns.")
+
+
 def _tool_sleep() -> str:
     """Ask the loop to wind up once the goodbye has been spoken."""
     global SLEEP_REQUESTED_AT
@@ -426,6 +511,10 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_remember(args)
         if name == "vibe_check":
             return _tool_vibe(args)
+        if name == "who_is_here":
+            return _tool_who()
+        if name == "remember_face":
+            return _tool_remember_face(args)
         if name == "go_to_sleep":
             return _tool_sleep()
         return f"unknown tool {name!r}"

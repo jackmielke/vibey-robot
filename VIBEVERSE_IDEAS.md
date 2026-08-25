@@ -76,3 +76,15 @@ The other route is the one already proven here: upload a file with
 `/api/media/sounds/upload` and play it by name with `/api/media/play_sound` —
 which is how the wake and sleep chimes work. Uploading a few MP3s and giving the
 model a `play_music` tool would take an afternoon and needs no Spotify account.
+
+## Give it something to wear (Jack, 2026-08-24)
+
+A chain, a hat, something from Long Journey. Not a joke feature: the robot is
+being carried into a room full of people, and an object with an outfit reads as
+somebody rather than as a device. It also gives everyone a first thing to say to
+it, which is the hardest moment in any demo.
+
+Worth pairing with software: if it is wearing something, it should know. A line
+in SKILLS.md ("you are wearing a gold chain, you are quietly proud of it") costs
+nothing and gives it something to be vain about — and a British butler being
+vain about a chain is funnier than either on its own.
