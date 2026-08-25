@@ -93,8 +93,79 @@ _LOCK = threading.Lock()
 
 
 def available() -> bool:
-    """True if we can actually shell out to a coding agent."""
+    """True if the binary is on disk. NOT the same as "it will answer" — see
+    reachability() for the question that actually matters before speaking."""
     return bool(shutil.which(CLAUDE_BIN) or os.path.isfile(CLAUDE_BIN))
+
+
+# --------------------------------------------------------------------------- #
+# Reachability — "can I even try?", kept separate from "did it work?"
+#
+# available() only ever asked whether the file existed, and an expired
+# `claude login` leaves the file exactly where it was. So dispatch() started a
+# job, the voice said "on it", and minutes later the run died with a shrug —
+# Vibey had claimed to be doing work that never began. Being UNABLE TO ATTEMPT
+# and having attempted and failed are different facts and the robot has to be
+# able to tell someone which one happened.
+#
+#   ready       a probe reached the CLI and it answered — safe to promise
+#   no-binary   nothing to run
+#   no-auth     the binary is there and refuses to work (usually logged out)
+#   unknown     nobody has checked yet — honest answer is "trying", not "doing"
+#
+# The probe costs seconds, and a voice turn cannot afford seconds, so it runs on
+# a background thread and callers read the last known answer. Stale-but-labelled
+# beats fresh-but-blocking; "unknown" is a real state, not a failure.
+# --------------------------------------------------------------------------- #
+REACH: dict = {"state": "unknown", "checked": 0.0, "detail": ""}
+PROBE_MAX_AGE = 300.0
+_probing = threading.Event()
+
+_SPOKEN_REACH = {
+    "no-binary": "I can't reach my coding agent — it isn't installed here.",
+    "no-auth": "I can't reach my coding agent — its login has expired.",
+}
+
+
+def _probe() -> None:
+    """Ask the CLI to say one word. The only proof that counts."""
+    try:
+        if not available():
+            state, detail = "no-binary", f"claude CLI not found at {CLAUDE_BIN}"
+        else:
+            r = subprocess.run([CLAUDE_BIN, "-p", "--model", "haiku", "Say OK"],
+                               cwd=REPO, capture_output=True, text=True,
+                               timeout=60)
+            if r.returncode == 0 and "OK" in (r.stdout or "").upper():
+                state, detail = "ready", ""
+            else:
+                state = "no-auth"
+                detail = (r.stderr or r.stdout
+                          or f"exit {r.returncode}").strip()[:200]
+    except Exception as e:  # noqa: BLE001
+        state, detail = "no-auth", str(e)[:200]
+    with _LOCK:
+        REACH.update(state=state, checked=time.time(), detail=detail)
+    _probing.clear()
+    print(f"[agent] reachability: {state} {detail}", flush=True)
+
+
+def reachability(refresh: bool = True) -> dict:
+    """Last known answer to "can I reach the coding agent?", never blocking.
+
+    Adds two booleans the callers actually reason with:
+      can_attempt  starting a job is not already known to be pointless
+      verified     we have proof, so a promise is safe to make out loud
+    """
+    with _LOCK:
+        snap = dict(REACH)
+    if refresh and not _probing.is_set() \
+            and time.time() - snap["checked"] > PROBE_MAX_AGE:
+        _probing.set()
+        threading.Thread(target=_probe, daemon=True).start()
+    snap["can_attempt"] = snap["state"] in ("ready", "unknown")
+    snap["verified"] = snap["state"] == "ready"
+    return snap
 
 
 def _git_sha() -> str:
@@ -162,12 +233,17 @@ def _run_job(job_id: str, task: str, on_done) -> None:
     log_path = RUNS_DIR / f"{job_id}.log"
     prompt = f"{BRIEFING}\n\nTASK FROM JACK (spoken out loud, transcribed):\n{task}\n"
 
-    # Streamed, not captured at the end.
+    # Streamed to a FILE, and read back from it — not through a pipe.
     #
-    # `subprocess.run` with a plain `-p` hands back everything at once, minutes
-    # later, which is why Vibey could only ever say how many seconds had passed
-    # when asked what it was doing. `stream-json` gives an event per step, so the
-    # answer can be "editing the wake listener" instead.
+    # A pipe ties the agent's life to this process. `start_wonder.sh` kills
+    # reachy_chat.py on every restart, the reader thread goes with it, and the
+    # orphaned `claude` blocks on a pipe nobody is draining and dies part-way
+    # through. Three jobs in a row were lost that way tonight: large logs, no
+    # result, and Vibey cheerfully reporting that it had started them.
+    #
+    # Writing to the file directly, in its own session, means a job survives the
+    # voice service restarting underneath it. The steps are read by tailing the
+    # same file, so live progress still works.
     cmd = [CLAUDE_BIN, "-p", prompt,
            "--output-format", "stream-json", "--verbose",
            "--permission-mode", PERMISSION_MODE,
@@ -177,14 +253,30 @@ def _run_job(job_id: str, task: str, on_done) -> None:
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w") as log:
             log.write(f"# job {job_id}\n# task: {task}\n# git {job['sha']}\n\n")
-            proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, bufsize=1)
-            deadline = time.time() + AGENT_TIMEOUT
-            for line in proc.stdout:
-                log.write(line)
-                if time.time() > deadline:
-                    proc.kill()
-                    raise subprocess.TimeoutExpired(cmd, AGENT_TIMEOUT)
+            log.flush()
+            proc = subprocess.Popen(
+                # stderr into the SAME file, not a pipe. A pipe nobody drains
+                # fills up and blocks the child part-way through a long job — and
+                # this reader only drains stdout, so a chatty run deadlocked and
+                # then failed at whatever point the buffer filled. One file, read
+                # by tailing, no buffers to starve.
+                cmd, cwd=REPO, stdout=log, stderr=subprocess.STDOUT, text=True,
+                # Its own process group, so a pkill aimed at the voice service
+                # does not take the coding agent with it.
+                start_new_session=True)
+
+        deadline = time.time() + AGENT_TIMEOUT
+        seen = 0
+        while True:
+            done = proc.poll() is not None
+            try:
+                with open(log_path) as f:
+                    f.seek(seen)
+                    chunk = f.read()
+                    seen = f.tell()
+            except OSError:
+                chunk = ""
+            for line in chunk.splitlines():
                 try:
                     event = json.loads(line)
                 except Exception:  # noqa: BLE001
@@ -197,10 +289,14 @@ def _run_job(job_id: str, task: str, on_done) -> None:
                 if event.get("type") == "result":
                     reply = (event.get("result") or "").strip()
                     ok = not event.get("is_error")
-            proc.wait(timeout=30)
-            err = (proc.stderr.read() or "").strip()
-            if proc.returncode != 0 and not reply:
-                ok = False
+            if done:
+                break
+            if time.time() > deadline:
+                proc.kill()
+                raise subprocess.TimeoutExpired(cmd, AGENT_TIMEOUT)
+            time.sleep(0.5)
+
+        err = ""            # stderr is in the log now, not a pipe
         with _LOCK:
             job["state"] = "done" if ok else "failed"
             job["reply"] = reply
@@ -221,6 +317,11 @@ def _run_job(job_id: str, task: str, on_done) -> None:
 
     with _LOCK:
         job["finished"] = time.time()
+        # A run that died may have died because the CLI stopped answering, so
+        # stop trusting the cached "ready" — the next person to ask gets a fresh
+        # probe rather than a promise built on a stale one.
+        if job["state"] == "failed":
+            REACH["checked"] = 0.0
 
     print(f"[agent] job {job_id} {job['state']} "
           f"({job['finished'] - job['started']:.0f}s): {job.get('spoken','')}",
@@ -236,15 +337,20 @@ def _run_job(job_id: str, task: str, on_done) -> None:
 def dispatch(task: str, on_done=None) -> dict:
     """Kick off a coding agent in the background. Returns immediately with the
     job record — the caller (a voice turn) must not block on this."""
-    if not available():
-        return {"id": None, "state": "failed",
-                "error": f"claude CLI not found at {CLAUDE_BIN}",
-                "spoken": "I can't reach my coding agent right now."}
+    reach = reachability()
+    if not reach["can_attempt"]:
+        # "unavailable", not "failed": nothing was started, nothing changed, and
+        # the caller must be able to say that instead of apologising for a run
+        # that never existed.
+        return {"id": None, "state": "unavailable", "reach": reach["state"],
+                "error": reach["detail"] or reach["state"],
+                "spoken": _SPOKEN_REACH.get(reach["state"],
+                                            "I can't reach my coding agent.")}
     job_id = uuid.uuid4().hex[:8]
     job = {"id": job_id, "state": "running", "task": task,
            "started": time.time(), "finished": None, "sha": _git_sha(),
            "reply": "", "error": "", "spoken": "", "log": "",
-           "steps": [], "step": ""}
+           "steps": [], "step": "", "verified": reach["verified"]}
     with _LOCK:
         JOBS[job_id] = job
     threading.Thread(target=_run_job, args=(job_id, task, on_done),

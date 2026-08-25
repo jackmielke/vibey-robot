@@ -529,11 +529,23 @@ def _tool_improve(args: dict, announce) -> str:
     if not task:
         return "no task given"
     job = reachy_agent.dispatch(task, on_done=announce)
+    if job.get("state") == "unavailable":
+        # The distinction the model has to hear: nothing was started. "On it" is
+        # a lie here, and an apology for a failed run is a different lie.
+        return (f"COULD NOT ATTEMPT — nothing was started and nothing changed. "
+                f"Say so plainly, in your own words: {job.get('spoken')} "
+                f"Do NOT say you are on it, and do not promise to report back.")
     if not job.get("id"):
         return f"could not start: {job.get('error', 'unknown')}"
-    return (f"started job {job['id']}. It runs in the background for minutes. "
-            f"Say something short and CARRY ON with the conversation — you will "
-            f"be told when it finishes.")
+    started = (f"started job {job['id']}. It runs in the background for minutes. "
+               f"Say something short and CARRY ON with the conversation — you "
+               f"will be told when it finishes.")
+    if not job.get("verified"):
+        # Started, but nobody has yet proved the coding agent answers. Hedge the
+        # promise rather than the work — the job really is running.
+        started += (" I have not confirmed the coding agent is reachable, so say "
+                    "you are TRYING it, not that it is definitely underway.")
+    return started
 
 
 def _tool_check(args: dict) -> str:
