@@ -103,10 +103,10 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
 
 # How loud Vibey talks. The daemon boots at 70, which is fine in a quiet room and
 # not enough in a room with people in it — and a social robot is, by definition,
-# never in the quiet room. 95 rather than 100: a small speaker at its absolute
+# never in the quiet room. 90 rather than 100: a small speaker at its absolute
 # ceiling distorts, and a robot that is loud and crackly is worse than one that is
 # slightly quieter and clear.
-WAKE_VOLUME = int(os.environ.get("VIBEY_VOLUME", "95"))
+WAKE_VOLUME = int(os.environ.get("VIBEY_VOLUME", "90"))
 
 
 def set_volume(level: int, log=print):
