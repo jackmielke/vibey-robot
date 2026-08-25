@@ -101,19 +101,54 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
         log(f"[wakesleep] sound {name} failed: {e}")
 
 
+# How loud Vibey talks. The daemon boots at 70, which is fine in a quiet room and
+# not enough in a room with people in it — and a social robot is, by definition,
+# never in the quiet room.
+WAKE_VOLUME = int(os.environ.get("VIBEY_VOLUME", "100"))
+
+
+def set_volume(level: int, log=print):
+    try:
+        _post("/api/volume/set", {"volume": max(0, min(100, int(level)))})
+    except Exception as e:  # noqa: BLE001
+        log(f"[wakesleep] volume failed: {e}")
+
+
+def face_tracking(on: bool, weight: float = 1.0, log=print):
+    """Follow whoever is in front of it.
+
+    This is the thing that makes Vibey feel awake rather than merely switched on —
+    it looks up when somebody walks in. Off while asleep, so a sleeping robot is
+    not quietly moving its head at people.
+    """
+    try:
+        if on:
+            _post("/api/media/tracking/enable", {"weight": weight})
+        else:
+            _post("/api/media/tracking/disable")
+    except Exception as e:  # noqa: BLE001
+        log(f"[wakesleep] tracking failed: {e}")
+
+
 def wake(log=print):
-    """Stir, and make the sound of arriving."""
+    """Stir, look up, and make the sound of arriving."""
     log("[wakesleep] waking")
+    set_volume(WAKE_VOLUME, log)
     _upload_and_play("vibey_wake.wav", _tone(WAKE_NOTES), log)
     try:
         _post("/api/move/play/wake_up", timeout=15)
     except Exception as e:  # noqa: BLE001
         log(f"[wakesleep] wake_up move failed: {e}")
+    # After the animation, not before: wake_up drives the head itself, and turning
+    # tracking on first means the two fight over it for the length of the move.
+    face_tracking(True, log=log)
 
 
 def sleep(log=print):
-    """Head down, and the same notes falling."""
+    """Head down, eyes off, and the same notes falling."""
     log("[wakesleep] going to sleep")
+    # First, or it keeps chasing faces while trying to lie down.
+    face_tracking(False, log=log)
     _upload_and_play("vibey_sleep.wav", _tone(SLEEP_NOTES, level=0.22), log)
     try:
         _post("/api/move/play/goto_sleep", timeout=15)
