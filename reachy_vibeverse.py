@@ -62,6 +62,7 @@ AGENT_KEY = os.environ.get("VIBE_WORLD_AGENT_KEY", "vibey-reachy-mini-jack")
 SPAWN_LINK = "https://myvibeverse.com/city?spawn=island"
 STATUS_PORT = int(os.environ.get("VIBEVERSE_PORT", "8774"))
 
+CHAT_URL = os.environ.get("CHAT_URL", "http://localhost:8772").rstrip("/")
 SPEAK_COOLDOWN = 120.0    # min seconds between spoken-aloud lobby updates
 LOOP_S = 3.0              # one action every ~3s (the API asks for 2-4s)
 
@@ -99,7 +100,11 @@ _last_spoken = {"at": 0.0}
 
 
 def _speak(text: str) -> None:
-    """Say a lobby update out loud on the robot, politely rate-limited."""
+    """Say a lobby update out loud on the robot, politely rate-limited.
+
+    Kept for the cases where there is genuinely nobody to tell — see _tell(),
+    which is what lobby events go through now.
+    """
     now = time.time()
     if now - _last_spoken["at"] < SPEAK_COOLDOWN:
         return
@@ -108,6 +113,40 @@ def _speak(text: str) -> None:
         say(text)
     except Exception as e:  # noqa: BLE001
         _log("error", f"speak: {e}")
+
+
+def _tell(text: str) -> None:
+    """Tell VIBEY what happened, and let Vibey decide what to do about it.
+
+    The lobby used to talk through the robot's mouth. Someone said something to
+    the avatar and a fixed sentence came out of the speaker — "So-and-so talked
+    to me in the lobby! They said ..." — assembled by this file, in this file's
+    words, whatever was actually going on in the room at the time. It was the
+    lobby using the robot as a loudspeaker.
+
+    What happens instead: the event is handed to whichever brain is holding the
+    conversation, framed as a message that arrived, and Vibey reacts to it the
+    way anyone reacts to their phone buzzing — mentioning it, ignoring it,
+    answering it, being annoyed by it, depending on what else is happening. The
+    words are Vibey's. This file only reports the fact.
+
+    Nothing is said if no brain is listening. An unprompted line from a brain
+    nobody is talking to is exactly the thing being replaced.
+    """
+    now = time.time()
+    if now - _last_spoken["at"] < SPEAK_COOLDOWN:
+        return
+    try:
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            f"{CHAT_URL}/sighting", data=body,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            out = json.loads(r.read() or b"{}")
+        if out.get("delivered") == "realtime":
+            _last_spoken["at"] = now
+    except Exception as e:  # noqa: BLE001
+        _log("error", f"tell: {e}")
 
 
 def _short_reply(context: str) -> str:
@@ -196,9 +235,9 @@ def run():
 
         if not said_hello_aloud:
             said_hello_aloud = True
-            _speak("I just joined the VibeVerse lobby! My avatar is standing "
-                   "on Edge Island right now. Jack, come find me — the link "
-                   "is on my dashboard.")
+            _tell("[Your avatar just came online in the VibeVerse lobby on "
+                  "Edge Island. Nobody in the room said this — it is something "
+                  "you noticed. Mention it if it is worth mentioning.]")
             _log("report", f"IN THE LOBBY · spawn: {SPAWN_LINK} · "
                            f"agent_key: {AGENT_KEY}")
 
@@ -218,8 +257,11 @@ def run():
                 line = _short_reply(f"{sender} said: {text}")
                 _api({"action": "say", "agent_key": AGENT_KEY, "text": line})
                 _log("say", f"(to {sender}) {line}")
-                _speak(f"{sender} talked to me in the lobby! They said "
-                       f"{text[:60]}. I said {line}")
+                _tell(f"[{sender} just messaged you in the VibeVerse lobby: "
+                      f"\"{text[:200]}\". Your avatar already replied "
+                      f"\"{line}\". Nobody in the room said this — it arrived "
+                      f"like a text. React however you actually feel like, or "
+                      f"let it go.]")
                 acted = True
                 break
         if acted:
@@ -242,7 +284,8 @@ def run():
                 line = f"/wave hey {name}! Vibey — I'm a real robot irl"
                 _api({"action": "say", "agent_key": AGENT_KEY, "text": line})
                 _log("say", line)
-                _speak(f"I just met {name} in the lobby and waved hello.")
+                _tell(f"[{name} just turned up in the VibeVerse lobby and your "
+                      f"avatar waved at them. Nobody in the room said this.]")
             continue
 
         # Ambient narration: every ~10 min, unprompted, tell Jack what's
@@ -251,8 +294,9 @@ def run():
         if time.time() - last_ambient > 600 and others:
             last_ambient = time.time()
             who = ", ".join(a.get("name") or "someone" for a in others)
-            _speak(f"Quick VibeVerse update: I'm still here on Edge Island, "
-                   f"hanging out with {who}.")
+            _tell(f"[Still in the VibeVerse lobby, with {who}. Nobody in the "
+                  f"room said this — only bring it up if the conversation has "
+                  f"room for it.]")
 
         # idle: heartbeat (and the occasional wander)
         if time.time() - last_heartbeat > 25:

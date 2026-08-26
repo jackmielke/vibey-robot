@@ -558,6 +558,27 @@ def _handle(chat_id: int, text: str) -> None:
         _power(chat_id, wake=True)
         return
 
+    # A text that arrives DURING a conversation is a text, not a new
+    # conversation.
+    #
+    # /ask spins up a separate turn: it answers from a different context, and
+    # the room hears an answer to a question nobody in it asked. When a realtime
+    # session is live, the message is handed to that session instead, framed as
+    # what it is — something that arrived on the phone — so Vibey brings it up
+    # in the conversation already happening, in the voice already talking.
+    st = _get_json(f"{CHAT_URL}/state") or {}
+    if st.get("openai") and not st.get("asleep"):
+        try:
+            out = _post_json(f"{CHAT_URL}/sighting", {
+                "text": f"[Jack just texted you: \"{text[:400]}\". Nobody in "
+                        f"the room said this out loud. Answer him in the "
+                        f"conversation.]"}, timeout=20)
+            if (out or {}).get("delivered") == "realtime":
+                _send(chat_id, "🗣️ told him out loud — listen in.")
+                return
+        except Exception:  # noqa: BLE001 — fall through to the text brain
+            pass
+
     # normal chat → active brain; reply is also spoken in the room
     try:
         out = _post_json(f"{CHAT_URL}/ask", {"text": text})
