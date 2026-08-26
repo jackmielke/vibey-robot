@@ -435,6 +435,20 @@ def _handle(chat_id: int, text: str) -> None:
             with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
                 jpeg = r.read()
             _send_photo(chat_id, jpeg, "what I'm seeing right now 👁️")
+        except urllib.error.HTTPError as e:
+            # The camera now refuses to pass off an old frame as a photo, so
+            # this is the honest branch rather than the broken one. Say which
+            # kind of nothing it is: a wedged capture loop and a dark room look
+            # identical in a photo, and only one of them is worth restarting.
+            detail = ""
+            try:
+                info = json.loads(e.read() or b"{}")
+                if info.get("age") is not None:
+                    detail = f" — last frame was {info['age']:.0f}s ago"
+            except Exception:  # noqa: BLE001
+                pass
+            _send(chat_id, f"📷 my eyes aren't giving me anything fresh{detail}. "
+                           "I'll try to get them back — ask again in a minute.")
         except Exception as e:  # noqa: BLE001
             _send(chat_id, f"camera's not answering ({e})")
         return

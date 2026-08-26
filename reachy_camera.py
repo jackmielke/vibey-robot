@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -70,11 +71,21 @@ _frame_lock = threading.Condition()
 _latest_jpeg: bytes | None = None
 _frame_seq = 0
 _connected = False
+# When the newest frame arrived. Without this the server cannot tell a photo
+# from a memory: /frame.jpg served whatever it last managed to capture, with no
+# indication of when, so a request during a six-hour outage returned a
+# six-hour-old picture of the room and looked like it had worked.
+_frame_at = 0.0
+# How old a frame may be and still be called a photo.
+STALE_AFTER = 10.0
+# And how long without a frame before this process should be considered broken
+# rather than slow. Longer, because a brief WebRTC renegotiation is normal.
+DEAD_AFTER = 45.0
 
 
 def _capture_loop():
     """Connect (with retry) and continuously publish the newest JPEG frame."""
-    global _latest_jpeg, _frame_seq, _connected
+    global _latest_jpeg, _frame_seq, _connected, _frame_at
     while True:
         try:
             print(f"[camera] connecting to {REACHY_HOST} …", flush=True)
@@ -93,6 +104,7 @@ def _capture_loop():
                 misses = 0
                 with _frame_lock:
                     _latest_jpeg = jpg
+                    _frame_at = time.time()
                     _frame_seq += 1
                     _frame_lock.notify_all()
         except Exception as e:  # noqa: BLE001 - keep retrying forever
@@ -111,8 +123,21 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/frame"):
             self._snapshot()
         elif self.path.startswith("/status"):
-            body = b'{"connected": %s}' % (b"true" if _connected else b"false")
-            self.send_response(200)
+            age = (time.time() - _frame_at) if _frame_at else None
+            dead = age is None or age > DEAD_AFTER
+            body = json.dumps({
+                "connected": _connected,
+                "age": round(age, 1) if age is not None else None,
+                "streaming": not dead,
+            }).encode()
+            # 503, not 200-with-a-sad-field.
+            #
+            # The watchdog's health check is "did this return JSON", so a
+            # process wedged inside a WebRTC connect — no frames for six hours,
+            # one core pinned — answered 200 and was left alone all day. A
+            # service that cannot do the one thing it exists for has to say so
+            # in the status line, where the supervisor is actually looking.
+            self.send_response(503 if dead else 200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
@@ -123,10 +148,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _snapshot(self):
         with _frame_lock:
-            jpg = _latest_jpeg
-        if not jpg:
+            jpg, at = _latest_jpeg, _frame_at
+        age = (time.time() - at) if at else None
+        # A stale frame is not a photo. Refuse it and say how old it was, so the
+        # caller can tell the difference between "the room is dark" and "the
+        # camera stopped talking to us at three o'clock".
+        if not jpg or age is None or age > STALE_AFTER:
             self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": "no fresh frame",
+                "age": round(age, 1) if age is not None else None,
+            }).encode())
             return
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
