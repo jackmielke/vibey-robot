@@ -134,6 +134,20 @@ DEFAULT_INSTRUCTIONS = (
     # "Right, you are." A model given a short list of characteristic phrases does
     # not sprinkle them; it latches onto one. The accent is a way of speaking, not
     # a set of words, so it is described rather than enumerated.
+    # Offering the text line, casually.
+    #
+    # The consent machinery is deliberately strict — the person opts in from their
+    # own phone and Jack approves them — but strictness at the door does not have
+    # to sound like a form. Nobody in the room is going to guess this exists, so
+    # the robot mentions it the way a person would mention their number.
+    "You can also send people short texts on Telegram, and people in the room "
+    "will not know that unless you say so. When it comes up naturally — someone "
+    "wants reminding, wants to hear from you later, or asks whether you can reach "
+    "them — offer it lightly, in a sentence, the way you would hand someone your "
+    "number. Call `list_message_contacts` for who you can already reach and the "
+    "exact way a new person opts in. Never push it, never offer it twice to the "
+    "same person, and drop it immediately if they are not interested."
+    "\n\n"
     "NEVER open two replies in a row the same way, and never develop a catchphrase. "
     "If you notice yourself reaching for a phrase you have already used today, use "
     "different words. The accent should come through in rhythm and understatement, "
@@ -458,6 +472,48 @@ TOOLS = [
             "required": ["enabled"],
         },
     },
+    {
+        "type": "function",
+        "name": "list_message_contacts",
+        "description": (
+            "Who you're allowed to send a Telegram text to, and how someone new "
+            "opts in. Call this when anyone asks who you can text, or before "
+            "promising to pass a message on."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
+        "name": "send_text_message",
+        "description": (
+            "Send one short Telegram text to a person who has opted in to "
+            "hearing from you. Two steps, always: call it first with "
+            "confirmed=false, read the recipient and the exact wording back to "
+            "the room, and only call again with confirmed=true after they say "
+            "yes. Never invent a recipient, never guess who someone meant, and "
+            "never send anything private or sensitive — the message goes to a "
+            "real phone. You send as yourself, a robot; you never write as if "
+            "you were the person asking."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {
+                    "type": "string",
+                    "description": "Nickname from `list_message_contacts`.",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The text itself, one or two sentences.",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": (
+                        "true only after the person in the room heard the "
+                        "wording read back and said yes."),
+                },
+            },
+            "required": ["to", "message"],
+        },
+    },
 ]
 
 # Set by `set_voice_detection`. Purely a gate on the mic feed: while listening is
@@ -722,6 +778,32 @@ def _tool_face_detection(args: dict) -> str:
     return "on" if enabled else "off"
 
 
+def _tool_contacts() -> str:
+    import reachy_telegram
+    return reachy_telegram.optin_help()
+
+
+def _tool_send_message(args: dict) -> str:
+    """Text a human on Telegram.
+
+    Consent lives in reachy_telegram — the recipient opted in themselves and
+    Jack approved them, so there is no way to reach a stranger from here. What
+    this adds is the spoken confirmation, because a misheard sentence is much
+    cheaper to catch before it lands on somebody's phone than after.
+    """
+    import reachy_telegram
+    to = str(args.get("to") or "").strip()
+    message = " ".join(str(args.get("message") or "").split())
+    if not to or not message:
+        return "I need both a name and something to say."
+    if to.lower() not in reachy_telegram.contact_names():
+        return reachy_telegram.optin_help(f"I can't text {to} yet. ")
+    if not bool(args.get("confirmed")):
+        return (f"Not sent. Read it back first — to {to}: \"{message}\" — and "
+                "if they say yes, call me again with confirmed true.")
+    return reachy_telegram.send_to_contact(to, message)
+
+
 def _dispatch_tool(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
@@ -752,6 +834,10 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_voice_detection(args)
         if name == "set_face_detection":
             return _tool_face_detection(args)
+        if name == "list_message_contacts":
+            return _tool_contacts()
+        if name == "send_text_message":
+            return _tool_send_message(args)
         return f"unknown tool {name!r}"
     except Exception as e:  # noqa: BLE001
         print(f"[openai-rt] tool {name} failed: {e}", flush=True)

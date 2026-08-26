@@ -61,10 +61,12 @@ SERVICES = {
     "robot_mic": ("http://localhost:8775/status",  "reachy_robot_mic.py", "reachy_env/bin/python3", "/tmp/reachy_robot_mic.log"),
     "memory":    ("http://localhost:8773/current", "reachy_memory.py",    "reachy_env/bin/python3", "/tmp/reachy_memory.log"),
     "vibeverse": ("http://localhost:8774/status",  "reachy_vibeverse.py", "python3",                "/tmp/vibeverse.log"),
-    # DISABLED 2026-08-25: this bridge polls the SAME bot token as the Vibey Claw
-    # OpenClaw gateway (@jack_mielke_bot) -> Telegram 409 Conflict, both die.
-    # Re-enable once reachy_telegram.py has its own bot token in .env.
-    # "telegram":  (None,                            "reachy_telegram.py",  "python3",                "/tmp/telegram.log"),
+    # Re-enabled 2026-08-26. It no longer reads TELEGRAM_BOT_TOKEN at all: it
+    # wants TELEGRAM_VIBEY_TOKEN, refuses to fall back to the shared one, and
+    # exits on the spot if getMe comes back as @jack_mielke_bot. Without its own
+    # token it prints why and returns, so the watchdog finds it dead and gives
+    # up on it after MAX_RESTARTS rather than resurrecting a 409 forever.
+    "telegram":  (None,                            "reachy_telegram.py",  "python3",                "/tmp/telegram.log"),
     "alarm":     (None,                            "reachy_alarm.py",     "python3",                "/tmp/reachy_alarm.log"),
 }
 

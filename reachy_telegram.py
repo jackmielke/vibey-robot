@@ -11,6 +11,10 @@ A stdlib-only Telegram bridge:
 - /status sends a one-line health check of the whole stack.
 - VibeVerse happenings (joins, mentions, greetings) are pushed to you as they
   happen, from the avatar's status feed.
+- Vibey can also text OUT, to people who opted in: the person messages the bot
+  and replies YES, the owner runs `/allow <id> <nickname>`, and from then on the
+  voice brain's `send_text_message` tool can reach them by nickname. See
+  `send_to_contact` below. Anyone can reply STOP to be forgotten.
 
 Pairing: the FIRST person to message the bot becomes the owner (saved to
 .telegram_state.json); everyone else gets a polite brush-off. Delete that
@@ -34,8 +38,23 @@ from reachy_voice import load_env, say
 
 load_env()
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+# Vibey's OWN bot token, never the OpenClaw one.
+#
+# Telegram allows exactly one long-poller per token. Pointed at
+# TELEGRAM_BOT_TOKEN this polled the same @jack_mielke_bot as the Vibey Claw
+# OpenClaw gateway, both sides got 409 Conflict, and both died — which is why
+# this file has been switched off in the watchdog since 2026-08-25.
+#
+# So it reads its own variable and refuses to fall back. Falling back is the
+# behaviour that caused the outage: the shared token is always present in .env,
+# so a fallback silently re-creates the conflict every time someone starts this
+# without thinking about it. Absent its own token, this service does nothing at
+# all, loudly.
+TOKEN = os.environ.get("TELEGRAM_VIBEY_TOKEN", "").strip()
 API = f"https://api.telegram.org/bot{TOKEN}"
+# Filled in by run() from getMe, so the opt-in instructions name the bot people
+# actually have to message rather than a handle written down months ago.
+BOT_HANDLE = os.environ.get("TELEGRAM_VIBEY_HANDLE", "").strip().lstrip("@")
 CHAT_URL = os.environ.get("CHAT_URL", "http://localhost:8772").rstrip("/")
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
 VERSE_URL = os.environ.get("VERSE_URL", "http://localhost:8774").rstrip("/")
@@ -158,6 +177,129 @@ def _get_json(url: str, timeout: float = 6.0):
         return None
 
 
+# --------------------------------------------------------------------------- #
+# Outbound: Vibey texting a human who asked to be textable.
+#
+# Telegram already enforces half of consent — a bot cannot open a chat, the
+# person has to message @vibey_ai_bot first. We add the other half: they say
+# YES, and the owner approves them with a nickname. So nobody gets texted by a
+# robot just because someone in the room said their name out loud.
+#
+# Stored per contact: a chat id, a nickname, an approval time, and send
+# timestamps for rate limiting. Never the message text, never a phone number.
+# --------------------------------------------------------------------------- #
+CONTACTS_PATH = Path(__file__).parent / ".telegram_contacts.json"
+MSG_MAX_CHARS = 600
+MSG_PER_HOUR = 6
+MSG_SIGNATURE = "\n\n— sent by Vibey 🤖, Jack's desk robot. Reply STOP to stop."
+
+
+def _contacts() -> dict:
+    try:
+        d = json.loads(CONTACTS_PATH.read_text())
+    except Exception:
+        d = {}
+    d.setdefault("contacts", {})
+    d.setdefault("pending", {})
+    return d
+
+
+def _save_contacts(d: dict) -> None:
+    CONTACTS_PATH.write_text(json.dumps(d, indent=2))
+
+
+def contact_names() -> list:
+    """Nicknames Vibey is allowed to text, for the voice brain to offer."""
+    return sorted(_contacts()["contacts"])
+
+
+def optin_help(prefix: str = "") -> str:
+    """The fallback: what to do when the person isn't linked yet."""
+    names = contact_names()
+    who = ("I can text: " + ", ".join(names) + "."
+           if names else "Nobody has opted in yet.")
+    handle = f"@{BOT_HANDLE}" if BOT_HANDLE else "my Telegram bot"
+    return (f"{prefix}{who} To add someone, they message {handle} on "
+            "Telegram themselves and reply YES — I can't open a chat with a "
+            "stranger and I won't try. Then Jack approves them from his Telegram.")
+
+
+def send_to_contact(name: str, text: str) -> str:
+    """Send one short text to an approved contact. Returns a sayable result."""
+    body = " ".join(str(text or "").split())
+    if not body:
+        return "There's nothing to send."
+    if not TOKEN:
+        return "I'm not linked to Telegram at all, so I can't text anyone yet."
+    slug = str(name or "").strip().lower()
+    d = _contacts()
+    entry = d["contacts"].get(slug)
+    if not entry:
+        return optin_help(f"I don't have anyone called {name} to text. ")
+    now = time.time()
+    recent = [t for t in entry.get("sent", []) if now - t < 3600]
+    if len(recent) >= MSG_PER_HOUR:
+        return (f"I've already sent {slug} {MSG_PER_HOUR} messages this hour, "
+                "so I'm holding off rather than pestering them.")
+    trimmed = body[:MSG_MAX_CHARS]
+    try:
+        _tg("sendMessage", {"chat_id": entry["chat_id"],
+                            "text": trimmed + MSG_SIGNATURE}, timeout=15)
+    except Exception as e:  # noqa: BLE001 — blocked, deleted account, no network
+        return f"That didn't go through — {e}"
+    entry["sent"] = recent + [now]
+    _save_contacts(d)
+    print(f"[tg] sent {len(trimmed)} chars to {slug}", flush=True)  # never the text
+    return (f"Sent to {slug}."
+            + (" I trimmed it to fit." if len(body) > MSG_MAX_CHARS else ""))
+
+
+def _handle_guest(chat_id: int, msg: dict) -> None:
+    """Anyone who isn't the owner. They can only ever opt in or opt out here —
+    guests never reach the brain, and their words are never forwarded."""
+    low = (msg.get("text") or "").strip().lower().strip("/ !.")
+    d = _contacts()
+    mine = [s for s, e in d["contacts"].items() if e.get("chat_id") == chat_id]
+    owner = _state().get("owner")
+    if low in ("stop", "unsubscribe", "forget me"):
+        for s in mine:
+            d["contacts"].pop(s, None)
+        d["pending"].pop(str(chat_id), None)
+        _save_contacts(d)
+        _send(chat_id, "Done — I won't message you again. 🤖")
+        if owner and mine:
+            _send(owner, f"📵 {mine[0]} opted out of my messages.")
+        return
+    if mine:
+        _send(chat_id, "I'm Vibey, Jack's desk robot. I only send messages "
+                       "here, I don't chat. Reply STOP any time to opt out.")
+        return
+    name = (msg["chat"].get("first_name") or msg["chat"].get("username")
+            or "someone")
+    pend = d["pending"].get(str(chat_id)) or {"name": name}
+    if low in ("yes", "y", "yes please", "i consent", "start yes"):
+        pend["consented"] = True
+        d["pending"][str(chat_id)] = pend
+        _save_contacts(d)
+        _send(chat_id, "Thank you — noted. Jack approves it too, and then I may "
+                       "occasionally text you. Reply STOP any time.")
+        if owner:
+            _send(owner, f"✅ {name} consented to being texted by me.\n"
+                         f"Approve with:  /allow {chat_id} <nickname>")
+        return
+    d["pending"][str(chat_id)] = pend
+    _save_contacts(d)
+    if pend.get("consented"):
+        _send(chat_id, "You've already said yes — I'm waiting on Jack to "
+                       "approve it. Reply STOP to withdraw.")
+        return
+    _send(chat_id,
+          "👋 I'm Vibey, a desk robot belonging to Jack. I'm a bot, not a "
+          "person, and I don't chat here.\n\nIf you're happy for Jack's robot "
+          "to send you the occasional short message, reply YES. Ignore this and "
+          "nothing happens. You can reply STOP at any time.")
+
+
 def _handle(chat_id: int, text: str) -> None:
     text = text.strip()
     low = text.lower()
@@ -173,7 +315,52 @@ def _handle(chat_id: int, text: str) -> None:
               "/alarm 07:30 [daily] — wake-up show (/alarm off clears)\n"
               "/sleep, /wake — power the robot down or up\n"
               "/voicenotes on|off — replies as voice messages too\n"
+              "/contacts — who I'm allowed to text (and how to add someone)\n"
               "/verse — what's happening in my VibeVerse lobby")
+        return
+    if low.startswith("/contacts"):
+        d = _contacts()
+        lines = [f"· {s}" for s in sorted(d["contacts"])] or ["· nobody yet"]
+        body = "📇 I'm allowed to text:\n" + "\n".join(lines)
+        waiting = [f"· {p.get('name', '?')} → /allow {cid} <nickname>"
+                   for cid, p in d["pending"].items() if p.get("consented")]
+        if waiting:
+            body += "\n\nsaid yes, waiting on you:\n" + "\n".join(waiting)
+        body += ("\n\nTo add someone: they message me here and reply YES, then "
+                 "you /allow them. /forget <nickname> unlinks them.")
+        _send(chat_id, body)
+        return
+    if low.startswith("/allow"):
+        parts = text.split()
+        if len(parts) < 3 or not parts[1].lstrip("-").isdigit():
+            _send(chat_id, "usage: /allow <id> <nickname> — see /contacts")
+            return
+        cid, nick = parts[1], parts[2].lower()
+        d = _contacts()
+        pend = d["pending"].get(cid)
+        if not pend or not pend.get("consented"):
+            _send(chat_id, "They haven't said yes to me yet, so I won't add "
+                           "them. Ask them to message me and reply YES.")
+            return
+        # The first name was only ever held to tell you who was asking.
+        d["contacts"][nick] = {"chat_id": int(cid), "approved": time.time(),
+                               "sent": []}
+        d["pending"].pop(cid, None)
+        _save_contacts(d)
+        _send(chat_id, f"👍 I can now text {nick}.")
+        _send(int(cid), "Approved — Jack's robot may text you now. "
+                        "Reply STOP any time.")
+        return
+    if low.startswith("/forget"):
+        parts = text.split()
+        d = _contacts()
+        entry = d["contacts"].pop(parts[1].lower(), None) if len(parts) > 1 else None
+        if not entry:
+            _send(chat_id, "usage: /forget <nickname> — see /contacts")
+            return
+        _save_contacts(d)
+        _send(chat_id, f"forgot {parts[1].lower()}")
+        _send(entry["chat_id"], "Jack unlinked you — I won't message you again.")
         return
     if low == "/photo":
         try:
@@ -314,11 +501,23 @@ def _verse_watcher() -> None:
 
 
 def run() -> None:
+    global BOT_HANDLE
     if not TOKEN:
-        print("[tg] TELEGRAM_BOT_TOKEN not set", flush=True)
+        print("[tg] TELEGRAM_VIBEY_TOKEN not set — Vibey needs its OWN bot, "
+              "separate from the OpenClaw gateway's. Create one with @BotFather "
+              "and put the token in .env as TELEGRAM_VIBEY_TOKEN.", flush=True)
         return
     me = _tg("getMe", {}, timeout=15)
-    print(f"[tg] up as @{me['result']['username']}", flush=True)
+    BOT_HANDLE = me["result"]["username"]
+    # The check that keeps the 409 from coming back. If this ever ends up
+    # holding the gateway's bot again, it says so and stops rather than
+    # fighting it for updates and taking both down.
+    if BOT_HANDLE == "jack_mielke_bot":
+        print("[tg] REFUSING to start: TELEGRAM_VIBEY_TOKEN is the OpenClaw "
+              "gateway's bot (@jack_mielke_bot). Two pollers on one token is "
+              "the 409 that killed both. Vibey needs its own bot.", flush=True)
+        return
+    print(f"[tg] up as @{BOT_HANDLE}", flush=True)
     threading.Thread(target=_verse_watcher, daemon=True).start()
 
     offset = 0
@@ -344,7 +543,9 @@ def run() -> None:
                 print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
                 _send(chat_id, "👋 paired! You're my human now.")
             if chat_id != st.get("owner"):
-                _send(chat_id, "I only chat with my human, sorry! 🤖")
+                # Not the owner: the only conversation on offer is consent.
+                threading.Thread(target=_handle_guest, args=(chat_id, msg),
+                                 daemon=True).start()
                 continue
             print(f"[tg] <- {msg['text'][:80]!r}", flush=True)
             threading.Thread(target=_handle, args=(chat_id, msg["text"]),

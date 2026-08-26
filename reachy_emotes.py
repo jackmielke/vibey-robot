@@ -44,7 +44,9 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("
 NEUTRAL = {"x": 0.0, "y": 0.0, "z": 0.0, "roll": 0.0, "pitch": 0.0, "yaw": 0.0}
 
 EMOTIONS = ["happy", "excited", "curious", "sad", "smug", "thinking", "victory",
-            "wave", "nod", "shake", "wave_left", "wave_right", "peace"]
+            "wave", "nod", "shake", "wave_left", "wave_right", "peace",
+            "smile", "tilt_left", "tilt_right", "tilt_left_big",
+            "tilt_right_big", "dance"]
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +132,13 @@ def _chirp(emotion: str) -> bytes:
         s = _sweep(660, 880, .12, .5) + _silence(.04) + _sweep(880, 1100, .16, .5)
     elif emotion == "nod":        # short affirmative blip
         s = _sweep(520, 700, .1, .45)
+    elif emotion == "smile":      # soft warm major third, quiet
+        s = _sweep(587, 587, .13, .32) + _sweep(740, 740, .22, .3)
+    elif emotion.startswith("tilt"):
+        # a small questioning lilt; the big versions get a wider, louder bend
+        big = emotion.endswith("_big")
+        s = _sweep(620, 780 if big else 700, .18 if big else .12,
+                   .45 if big else .3, vibrato=14 if big else 0)
     elif emotion == "shake":      # descending "nuh-uh"
         s = _sweep(500, 380, .11, .45) + _silence(.05) + _sweep(420, 300, .13, .45)
     else:                        # smug — two low deadpan blips
@@ -278,6 +287,56 @@ def _do_peace():
     _goto(NEUTRAL, _ANT(0.0, 0.0), 0.4)
 
 
+def _do_smile():
+    """A warm smile — the calm cousin of `happy`.
+
+    Where happy wiggles, this one just beams: the head lifts and settles into
+    a soft tilt while both antennas curve up together and HOLD there, with one
+    small pleased bob. Slow and steady, so it reads as friendly rather than
+    excited, and it's short enough to fire under a positive sentence."""
+    _goto(_pose(pitch=-0.12, z=0.008), _ANT(0.95, -0.95), 0.45); time.sleep(0.5)
+    _goto(_pose(roll=0.10, pitch=-0.14), _ANT(1.1, -1.1), 0.3); time.sleep(0.38)
+    _goto(_pose(roll=0.08, pitch=-0.10), _ANT(0.9, -0.9), 0.22); time.sleep(0.28)
+    _goto(_pose(roll=0.10, pitch=-0.14), _ANT(1.1, -1.1), 0.22); time.sleep(0.45)
+    _goto(NEUTRAL, _ANT(0.25, -0.25), 0.5)
+
+
+def _tilt(side: str, big: bool):
+    """Head tilt toward one side. Positive roll leans toward Vibey's RIGHT,
+    matching the lean in `_wave_one`, so left/right stay consistent everywhere.
+
+    Subtle: a quick lean-and-hold you can drop under a sentence without
+    stealing attention. Big: a deep floppy tilt with a pitch drop and the
+    antennas spilling the same way, held long enough to read as a bit."""
+    sign = 1.0 if side == "right" else -1.0
+    roll = 0.5 if big else 0.18
+    pitch = -0.12 if big else -0.05
+    # antennas flop the same direction as the tilt (in phase), like hair
+    ant = _ANT(sign * (1.1 if big else 0.5), sign * (1.1 if big else 0.5))
+    _goto(_pose(roll=sign * roll, pitch=pitch), ant, 0.45 if big else 0.3)
+    time.sleep(0.6 if big else 0.38)
+    if big:
+        # one extra lean, deeper, so the exaggerated version has a punchline
+        _goto(_pose(roll=sign * 0.6, pitch=-0.16), ant, 0.25); time.sleep(0.55)
+    _goto(NEUTRAL, _ANT(0.0, 0.0), 0.45 if big else 0.35)
+
+
+def _do_tilt_left():
+    _tilt("left", big=False)
+
+
+def _do_tilt_right():
+    _tilt("right", big=False)
+
+
+def _do_tilt_left_big():
+    _tilt("left", big=True)
+
+
+def _do_tilt_right_big():
+    _tilt("right", big=True)
+
+
 def _do_nod():
     for _ in range(2):
         _goto(_pose(pitch=0.22), [0.5, -0.5], 0.18); time.sleep(0.2)
@@ -296,7 +355,14 @@ _MOVES = {"happy": _do_happy, "excited": _do_excited, "curious": _do_curious,
           "sad": _do_sad, "smug": _do_smug, "thinking": _do_thinking,
           "victory": _do_victory, "wave": _do_wave, "nod": _do_nod,
           "shake": _do_shake, "wave_left": _do_wave_left,
-          "wave_right": _do_wave_right, "peace": _do_peace}
+          "wave_right": _do_wave_right, "peace": _do_peace,
+          "smile": _do_smile,
+          "tilt_left": _do_tilt_left, "tilt_right": _do_tilt_right,
+          "tilt_left_big": _do_tilt_left_big,
+          "tilt_right_big": _do_tilt_right_big,
+          # dance is defined further down; the lambda defers the lookup so the
+          # name is callable from the voice brain like any other emote.
+          "dance": lambda: dance()}
 
 
 def play(emotion: str, sound: bool = False) -> bool:
@@ -306,7 +372,8 @@ def play(emotion: str, sound: bool = False) -> bool:
         return False
 
     def _run():
-        if sound and _ensure_sound(emotion):
+        # dance brings its own backing beat — a chirp here would cut it off
+        if sound and emotion != "dance" and _ensure_sound(emotion):
             _post("/api/media/play_sound", {"file": _sound_name(emotion)})
         try:
             move()
