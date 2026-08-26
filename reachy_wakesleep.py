@@ -109,7 +109,12 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
 # enough. The distortion worry that argued for 90 is handled better upstream —
 # replies are lifted toward full scale before playback now, so the speaker is
 # being fed a strong signal rather than being asked to make a weak one loud.
-WAKE_VOLUME = int(os.environ.get("VIBEY_VOLUME", "100"))
+# 85, not 100.
+#
+# Full volume is startling in a room somebody is sitting in, and every wake is a
+# wake in a room somebody is sitting in — that is what woke it. Loud enough to
+# hear from the kitchen, quiet enough not to be an event.
+WAKE_VOLUME = max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "85"))))
 
 
 # What the daemon last told us the volume is, so we can avoid setting it to the

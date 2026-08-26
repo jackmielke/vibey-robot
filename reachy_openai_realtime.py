@@ -68,6 +68,7 @@ import wave
 import numpy as np
 
 import reachy_agent
+import reachy_cost
 import reachy_emotes
 import reachy_vibe
 from reachy_voice import REACHY_URL, load_env, play_sound, upload_sound
@@ -474,6 +475,16 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "check_my_cost",
+        "description": (
+            "What you have cost Jack in OpenAI credits today and in the last "
+            "hour. Call this whenever he asks about cost, credits, spend, or "
+            "the bill — it is read from your own conversations, so it is "
+            "current to this sentence."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
         "name": "list_message_contacts",
         "description": (
             "Who you're allowed to send a Telegram text to, and how someone new "
@@ -778,6 +789,10 @@ def _tool_face_detection(args: dict) -> str:
     return "on" if enabled else "off"
 
 
+def _tool_cost() -> str:
+    return reachy_cost.spoken()
+
+
 def _tool_contacts() -> str:
     import reachy_telegram
     return reachy_telegram.optin_help()
@@ -832,6 +847,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_sleep()
         if name == "set_voice_detection":
             return _tool_voice_detection(args)
+        if name == "check_my_cost":
+            return _tool_cost()
         if name == "set_face_detection":
             return _tool_face_detection(args)
         if name == "list_message_contacts":
@@ -976,6 +993,7 @@ class RealtimeSession:
         self._loop = None                 # set once we're running
         self._announce_q = None           # finished background jobs, to announce
         self._response_active = False     # a reply is being generated right now
+        self._last_turn_at = time.time()  # for the idle timer
 
     def _session_update(self) -> dict:
         # GA Realtime schema (gpt-realtime): session.type="realtime", audio
@@ -1222,6 +1240,13 @@ class RealtimeSession:
                        "response.done"):
                 if t == "response.done":
                     self._response_active = False
+                    # Read the meter off the conversation itself. The account's
+                    # usage API needs an admin key the robot does not have, but
+                    # every completed turn reports what it cost.
+                    usage = ((msg.get("response") or {}).get("usage") or {})
+                    if usage:
+                        reachy_cost.record(usage)
+                    self._last_turn_at = time.time()
                 await self._flush_reply(loop)
 
             # --- transcripts, for the dashboard log ---

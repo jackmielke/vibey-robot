@@ -37,6 +37,7 @@ import os
 import re
 import subprocess
 import threading
+import datetime
 import time
 import urllib.request
 import wave
@@ -959,6 +960,11 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/state"):
             self._json({**STATE, "ears_closed": EARS_CLOSED["on"],
                        "mic_source": MIC_SOURCE, "transcript": list(TRANSCRIPT)})
+        elif self.path.startswith("/cost"):
+            import reachy_cost
+            self._json({**reachy_cost.summary(),
+                        "spoken": reachy_cost.spoken(),
+                        "idle_sleep_minutes": IDLE_SLEEP_S / 60})
         elif self.path.startswith("/vibelog"):
             self._json({"events": _vibe_thoughts()})
         else:
@@ -1704,8 +1710,51 @@ def _sleep_now() -> None:
     threading.Thread(target=_mode_antennas, daemon=True).start()
 
 
+# How long the room can stay quiet before the robot puts itself to bed.
+IDLE_SLEEP_S = float(os.environ.get("VIBEY_IDLE_SLEEP_S", 900))
+
+
+def _idle_watcher() -> None:
+    """Put the robot to sleep when nobody has said anything for a while.
+
+    An open realtime session is billed for the audio flowing through it, not for
+    the interesting parts, so a session left open overnight costs real money to
+    listen to an empty room — on the order of twenty dollars by morning. Nothing
+    in the stack noticed: it woke on a word and slept only when asked, and the
+    asking is the step a person forgets on their way to bed.
+
+    Silence is measured from the transcript rather than from the socket, because
+    the socket is busy the whole time. Audio keeps flowing, VAD keeps firing on
+    the fridge and the street; what stops is anybody saying anything. A turn
+    landing in TRANSCRIPT is the only reliable evidence that a conversation is
+    still happening.
+    """
+    while True:
+        time.sleep(30)
+        try:
+            if STATE["asleep"] or not STATE["openai"]:
+                continue
+            last = TRANSCRIPT[-1]["ts"] / 1000 if TRANSCRIPT else 0
+            quiet = time.time() - last
+            # A shorter fuse overnight. Nobody is coming back to the room at
+            # three in the morning, so a wake word misfiring on the television
+            # should cost five minutes of empty room rather than fifteen — and
+            # the hours nobody is awake to notice are exactly the hours a
+            # forgotten session runs longest.
+            hour = datetime.datetime.now().hour
+            limit = IDLE_SLEEP_S / 3 if (hour >= 23 or hour < 7) else IDLE_SLEEP_S
+            if quiet < limit:
+                continue
+            print(f"[chat] {quiet / 60:.0f} min of quiet — sleeping to stop "
+                  f"burning credits", flush=True)
+            _sleep_now()
+        except Exception as e:  # noqa: BLE001 — never let the sitter die
+            print(f"[chat] idle watcher: {e}", flush=True)
+
+
 def main():
     _start_ctrl_server()
+    threading.Thread(target=_idle_watcher, daemon=True).start()
     global BRAIN
     brain = Brain()
     BRAIN = brain

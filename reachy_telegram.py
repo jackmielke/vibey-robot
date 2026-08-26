@@ -384,6 +384,7 @@ def _handle(chat_id: int, text: str) -> None:
               "/jobs — what Claude Code is doing\n"
               "/voicenotes on|off — replies as voice messages too\n"
               "/contacts — who I'm allowed to text (and how to add someone)\n"
+              "/cost — what I've cost you today\n"
               "/verse — what's happening in my VibeVerse lobby")
         return
     if low.startswith("/contacts"):
@@ -527,6 +528,18 @@ def _handle(chat_id: int, text: str) -> None:
         except Exception as e:  # noqa: BLE001
             _send(chat_id, f"timelapse failed ({e})")
         return
+    if low in ("/cost", "/credits", "/spend"):
+        c = _get_json(f"{CHAT_URL}/cost") or {}
+        if not c:
+            _send(chat_id, "can't read the meter — is the chat service up?")
+            return
+        _send(chat_id,
+              f"💸 ${c.get('today', 0):.2f} today over {c.get('today_turns', 0)} turns\n"
+              f"· last hour: ${c.get('hour', 0):.2f}\n"
+              f"· last 7 days: ${c.get('week', 0):.2f}\n"
+              f"I put myself to sleep after {c.get('idle_sleep_minutes', 15):.0f} "
+              f"min of quiet.")
+        return
     if low == "/status":
         lines = []
         for name, url in SERVICES.items():
@@ -604,6 +617,32 @@ def _handle(chat_id: int, text: str) -> None:
         _send(chat_id, f"brain hiccup ({e}) — is the chat service up?")
 
 
+def _sleep_watcher() -> None:
+    """Tell the owner when the robot puts itself to bed, and what it cost.
+
+    An auto-sleep that happens silently is indistinguishable from a crash, and
+    the difference matters at two in the morning when the thing you are worried
+    about is the bill.
+    """
+    was_asleep = None
+    while True:
+        time.sleep(30)
+        owner = _state().get("owner")
+        st = _get_json(f"{CHAT_URL}/state")
+        if not owner or st is None:
+            continue
+        now_asleep = bool(st.get("asleep"))
+        if was_asleep is None:
+            was_asleep = now_asleep
+            continue
+        if now_asleep and not was_asleep:
+            c = _get_json(f"{CHAT_URL}/cost") or {}
+            _send(owner, f"😴 nobody said anything for a while, so I've gone to "
+                         f"sleep. ${c.get('today', 0):.2f} today. "
+                         f"Text me to wake me.")
+        was_asleep = now_asleep
+
+
 def _verse_watcher() -> None:
     """Forward new notable VibeVerse events to the owner as they happen."""
     seen_ts = 0
@@ -647,6 +686,7 @@ def run() -> None:
         return
     print(f"[tg] up as @{BOT_HANDLE}", flush=True)
     threading.Thread(target=_verse_watcher, daemon=True).start()
+    threading.Thread(target=_sleep_watcher, daemon=True).start()
 
     offset = 0
     while True:
