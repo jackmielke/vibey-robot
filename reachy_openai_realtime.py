@@ -333,6 +333,32 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "what_time_is_it",
+        "description": (
+            "The actual time from your own clock. Use it whenever anybody asks "
+            "the time, how late it is, or what time it is somewhere "
+            "else — never guess, you have no sense of time without this. Pass a "
+            "city or zone name for elsewhere ('Tokyo', 'Asia/Tokyo'). If they "
+            "tell you where you live now, or say to remember a zone, pass that "
+            "zone with remember=true. The result is already phrased for saying "
+            "out loud — say it as it comes back, do not turn it into digits. "
+            "Instant."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "description": "City or IANA zone. Omit for where you are.",
+                },
+                "remember": {
+                    "type": "boolean",
+                    "description": "Make that zone your default from now on.",
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
         "name": "who_is_here",
         "description": (
             "Who you can see right now, by name, from your own camera. Use it when "
@@ -610,6 +636,14 @@ def _tool_volume(args: dict) -> str:
         return f"I couldn't change my volume — {e}"
 
 
+def _tool_time(args: dict) -> str:
+    """The clock, phrased for a speaker. reachy_clock never raises, so whatever
+    comes back here is already sayable."""
+    import reachy_clock
+    zone = str(args.get("timezone") or "").strip() or None
+    return reachy_clock.time_report(zone, remember=bool(args.get("remember")))
+
+
 def _tool_who() -> str:
     """Who is in front of the camera, by name.
 
@@ -706,6 +740,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_vibe(args)
         if name == "set_volume":
             return _tool_volume(args)
+        if name == "what_time_is_it":
+            return _tool_time(args)
         if name == "who_is_here":
             return _tool_who()
         if name == "remember_face":
@@ -1149,9 +1185,22 @@ class RealtimeSession:
         # leaks. Falls back to the standard key rather than refusing to talk — see
         # FlowState's docs/API-CONTRACT.md, which is where this endpoint is written
         # down after /v1/realtime/sessions turned out to be a 404.
-        headers = {"Authorization": f"Bearer {_ephemeral_token() or API_KEY}"}
+        attempt = 0
         while should_run() and not stop.is_set() and not self.fatal:
             try:
+                # Minted per CONNECTION, not per run.
+                #
+                # An ephemeral key lives about ten minutes. Minting it once above the
+                # loop meant the first connection worked and every reconnection after
+                # it presented a corpse: "Ephemeral token expired", close code 3000,
+                # retry in three seconds, forever. Two hundred and eighty-seven times
+                # in one afternoon, while the robot sat there apparently awake and
+                # unable to say why it would not speak.
+                #
+                # The retry loop exists precisely because connections drop. A
+                # credential minted outside it is a credential that is fresh only for
+                # the one attempt that needed it least.
+                headers = {"Authorization": f"Bearer {_ephemeral_token() or API_KEY}"}
                 self.log(f"connecting to OpenAI Realtime ({MODEL}, voice={VOICE}) …")
                 async with websockets.connect(
                         WS_URL, additional_headers=headers,
@@ -1181,8 +1230,14 @@ class RealtimeSession:
                                   if "credit" in text or "quota" in text
                                   else "OpenAI rejected the API key.")
                     break
-                self.log(f"connection error ({e}); retrying in 3s")
-                await asyncio.sleep(3)
+                # And back off. Three seconds forever turns a broken credential into
+                # a thousand requests an hour and a log too long to read.
+                attempt += 1
+                wait = min(3 * (2 ** min(attempt - 1, 5)), 90)
+                self.log(f"connection error ({e}); retrying in {wait}s")
+                await asyncio.sleep(wait)
+            else:
+                attempt = 0
         _stop_sound()
         self.log("stopped")
 
