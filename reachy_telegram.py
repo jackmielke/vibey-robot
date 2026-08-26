@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -300,6 +301,71 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
           "nothing happens. You can reply STOP at any time.")
 
 
+# Phrases, not keywords.
+#
+# A bare \bawake\b matched "how awake are the neighbours", and the price of a
+# false positive is the robot standing up and opening a paid realtime session
+# because of a passing remark. Every alternative here is addressed AT it.
+_WAKE_INTENT = re.compile(
+    r"(wake up|wakey|you awake|are you awake|you up\b|are you up\b|"
+    r"you there\b|get up\b|^good morning|morning vibey|come back|"
+    r"turn (yourself )?on\b|switch (yourself )?on\b|boot up|"
+    r"rise and shine|^wake\b|^awake\b)")
+
+
+def _asleep() -> bool:
+    st = _get_json(f"{CHAT_URL}/state") or {}
+    return bool(st.get("asleep"))
+
+
+def _power(chat_id: int, wake: bool) -> None:
+    """Wake or sleep the whole robot.
+
+    Posts to the CHAT service, not the viewer's /power. /power drives the motors
+    and nothing else, so /wake used to leave the robot sitting up with its eyes
+    open and no conversation running — awake in the only sense that does not
+    matter. The chat endpoint is the one that enables motors, plays the chime and
+    opens the realtime session.
+    """
+    try:
+        _post_json(f"{CHAT_URL}/wake" if wake else f"{CHAT_URL}/sleep",
+                   {}, timeout=30)
+    except Exception as e:  # noqa: BLE001
+        _send(chat_id, f"couldn't {'wake' if wake else 'sleep'} ({e})")
+        return
+    _send(chat_id, "🌅 waking up — give me a few seconds, then just talk."
+          if wake else "😴 going to sleep.")
+
+
+def _dispatch_code(chat_id: int, task: str) -> None:
+    """Hand a task to Claude Code and report back here when it lands."""
+    import reachy_agent
+
+    def done(job: dict) -> None:
+        # Runs on the agent's worker thread. A send that throws here would kill
+        # that thread silently, so it never gets to.
+        try:
+            _send(chat_id, "🛠️ " + reachy_agent._describe(job))
+        except Exception as e:  # noqa: BLE001
+            print(f"[tg] job report failed: {e}", flush=True)
+
+    job = reachy_agent.dispatch(task, on_done=done)
+    # dispatch() distinguishes "could not attempt" from "failed", and the
+    # difference matters more over text than out loud: nothing was started and
+    # nothing changed, so promising to report back would be a lie you would only
+    # discover hours later when no message arrived.
+    if job.get("state") == "unavailable" or not job.get("id"):
+        _send(chat_id, "couldn't start it — "
+                       + (job.get("spoken") or job.get("error")
+                          or "Claude Code is unreachable from here."))
+        return
+    caveat = ("" if job.get("verified")
+              else "\n(I haven't confirmed the agent is reachable, so this may "
+                   "not get anywhere.)")
+    _send(chat_id, f"🛠️ on it — job {job['id']}. It runs for a few minutes; "
+                   f"I'll text you when it lands.{caveat}")
+
+
 def _handle(chat_id: int, text: str) -> None:
     text = text.strip()
     low = text.lower()
@@ -313,7 +379,9 @@ def _handle(chat_id: int, text: str) -> None:
               "/timelapse — today so far, one frame a minute\n"
               "/status — stack health\n"
               "/alarm 07:30 [daily] — wake-up show (/alarm off clears)\n"
-              "/sleep, /wake — power the robot down or up\n"
+              "/sleep, /wake — or just say \"you awake?\" and I'll get up\n"
+              "/code <task> — set Claude Code on this repo, I'll report back\n"
+              "/jobs — what Claude Code is doing\n"
               "/voicenotes on|off — replies as voice messages too\n"
               "/contacts — who I'm allowed to text (and how to add someone)\n"
               "/verse — what's happening in my VibeVerse lobby")
@@ -410,12 +478,26 @@ def _handle(chat_id: int, text: str) -> None:
         _send(chat_id, f"wake-up show set for {hhmm} ({repeat})")
         return
     if low in ("/sleep", "/wake"):
-        try:
-            _post_json("http://localhost:8770/power",
-                       {"off": low == "/sleep"}, timeout=10)
-            _send(chat_id, "going to sleep" if low == "/sleep" else "waking up")
-        except Exception as e:  # noqa: BLE001
-            _send(chat_id, f"power toggle failed ({e})")
+        _power(chat_id, wake=low == "/wake")
+        return
+    if low.startswith("/code") or low.startswith("/claude"):
+        task = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+        if not task:
+            _send(chat_id, "usage: /code <what you want changed>")
+            return
+        _dispatch_code(chat_id, task)
+        return
+    if low in ("/jobs", "/job"):
+        import reachy_agent
+        live = reachy_agent.running_jobs()
+        if live:
+            _send(chat_id, "🛠️ running:\n" + "\n".join(
+                f"· {j.get('id', '?')} — {str(j.get('task', ''))[:70]}"
+                if isinstance(j, dict) else f"· {j}" for j in live))
+            return
+        snap = reachy_agent.status() or {}
+        _send(chat_id, "🛠️ " + (reachy_agent._describe(snap) if snap.get("id")
+                                 else "nothing running."))
         return
     if low.startswith("/timelapse"):
         _send(chat_id, "🎞️ assembling the day's timelapse…")
@@ -465,6 +547,17 @@ def _handle(chat_id: int, text: str) -> None:
         except Exception as e:  # noqa: BLE001
             _send(chat_id, f"couldn't speak ({e})")
         return
+    # "wake up" is a thing you say, not a command you remember.
+    #
+    # /wake existed, but nobody asleep in another country types a slash command —
+    # they type "you awake?". And the robot cannot answer that itself: while it
+    # is asleep the realtime session is closed, so there is no brain listening to
+    # notice it was asked. The text has to be understood here, before it is
+    # forwarded to a brain that is not running.
+    if _asleep() and _WAKE_INTENT.search(low):
+        _power(chat_id, wake=True)
+        return
+
     # normal chat → active brain; reply is also spoken in the room
     try:
         out = _post_json(f"{CHAT_URL}/ask", {"text": text})
