@@ -172,7 +172,13 @@ STATE = {
     "fast_available": bool(os.environ.get("ELEVEN_AGENT_ID")),
     "vibe": False,
     "vibe_available": False,  # set at startup if the openclaw CLI is found
-    "openai": False,          # OpenAI Realtime full-duplex mode (reachy_openai_realtime.py)
+    # OpenAI Realtime full-duplex mode (reachy_openai_realtime.py). ON by
+    # default whenever a key is configured: it is the voice Vibey is supposed to
+    # have, and defaulting to the Claude CLI brain meant a restart quietly
+    # demoted it to the ElevenLabs voice with nothing on the dashboard to say
+    # why. Set OPENAI_MODE=0 in .env to start on the CLI brain instead.
+    "openai": (os.environ.get("OPENAI_MODE", "1").strip() == "1"
+               and bool(os.environ.get("OPENAI_API_KEY", "").strip())),
     "openai_available": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
     "think_aloud": False,     # when True, Vibey narrates their thinking before each reply
     "mic_level": 0.0,         # smoothed RMS — dashboard meter for "can it hear me?"

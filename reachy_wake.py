@@ -228,6 +228,16 @@ def wake_score(text: str) -> float:
     it.
     """
     s = re.sub(r"\s+", "", normalise(text))
+    # "wake up", said plainly, wakes it.
+    #
+    # The shape-matching below only ever fires on windows starting with "h",
+    # because it is built to recognise "hey vibey" and to ignore people merely
+    # talking ABOUT Vibey. That is right for the name and wrong for this: told
+    # "go to sleep", the obvious way back is "wake up", and it scored 0.00 while
+    # the robot sat there with its head down. Somebody saying "wake up" in a room
+    # with a sleeping robot means the robot.
+    if "wakeup" in s:
+        return 1.0
     best = 0.0
     for i, ch in enumerate(s):
         if ch != "h":

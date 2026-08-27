@@ -584,6 +584,13 @@ def set_face_detection(enabled: bool, log=lambda m: print(m, flush=True)) -> Non
 # Set by `go_to_sleep`. `run()` polls it alongside the dashboard toggle, so the
 # conversation can end itself without anybody reaching for the laptop — which is
 # the whole point of a robot you talk to from across a room.
+# Wind the conversation up after this long with nobody talking. An open realtime
+# session bills for the audio flowing through it, and an empty room still streams
+# mic audio — so a robot left awake overnight is a bill, not a feature. Ending it
+# is not a shutdown: the clap/"hey vibey" wake listener keeps running, so the way
+# back in is the same as always. Set IDLE_SLEEP_MIN=0 to disable.
+IDLE_SLEEP_S = float(os.environ.get("IDLE_SLEEP_MIN", "30")) * 60
+
 SLEEP_REQUESTED = threading.Event()
 # When it was asked. The goodbye is spoken AFTER the tool returns, so a loop that
 # stopped the moment the flag went up would cut the robot off mid-word — which
@@ -1207,6 +1214,15 @@ class RealtimeSession:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=0.4)
             except asyncio.TimeoutError:
+                # Nothing arrived for 400ms — the natural place to ask how
+                # long the room has been quiet. Never mid-reply: cutting the
+                # robot off in the middle of a sentence reads as a crash rather
+                # than as a goodbye.
+                if (IDLE_SLEEP_S > 0 and not self._response_active
+                        and time.time() - self._last_turn_at > IDLE_SLEEP_S):
+                    self.log(f"idle {IDLE_SLEEP_S / 60:g}m — winding up")
+                    _tool_sleep()
+                    return
                 continue
             except Exception:
                 return  # socket closed or errored — let run_async reconnect/exit
@@ -1218,6 +1234,10 @@ class RealtimeSession:
 
             # --- user started talking → barge-in ---
             if t == "input_audio_buffer.speech_started":
+                # Someone talking is activity even if the turn never completes —
+                # otherwise a half-heard mumble mid-conversation still counts
+                # toward the idle timer.
+                self._last_turn_at = time.time()
                 self._on_barge_in()
 
             # --- a new reply begins ---

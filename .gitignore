@@ -11,3 +11,5 @@ captures/
 agent_runs/
 .venv-gestures/
 models/
+.env.bak.*
+.cost.json

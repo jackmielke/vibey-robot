@@ -1,0 +1,109 @@
+#!/bin/zsh
+# vibey — the on button for the Reachy Mini stack in ~/dev/vibey-robot.
+#   vibey              start services, enable motors, wake the robot, open dashboard
+#   vibey stop         put the robot to sleep and stop everything
+#   vibey status       is the robot alive? which services are up?
+#   vibey wake|sleep   just the robot's body, leave the Mac services alone
+#   vibey wifi                     show current network + known networks
+#   vibey wifi scan                list nearby networks
+#   vibey wifi join "SSID" "pass"  join a network (robot reboots its link)
+#   vibey wifi forget "SSID"
+#   vibey wifi hotspot             fall back to the robot's own AP if it's lost
+#   vibey fix          robot moves return 200 but the body is frozen → daemon restart
+#   vibey logs         tail every service log at once
+REPO=~/dev/vibey-robot
+cd "$REPO" || exit 1
+URL=$(grep '^REACHY_URL=' .env | cut -d= -f2-)
+
+# Wake through the chat service, not the robot's REST API directly.
+# reachy_chat.py's /wake hands the conversation to the OpenAI Realtime engine
+# BEFORE it moves the body — do it the other way round and there is a multi-
+# second window where the robot is awake with no brain assigned, so it falls
+# through to the Claude CLI path and greets you in the old ElevenLabs voice.
+# That is exactly the "wrong voice" symptom. Raw REST is only the fallback for
+# when the chat service is down.
+wake() {
+  curl -s -m 8 -X POST -H 'Content-Type: application/json' \
+       -d '{"openai":true}' http://localhost:8772/openaimode >/dev/null 2>&1
+  if curl -s -m 25 -X POST http://localhost:8772/wake >/dev/null 2>&1; then
+    echo "🤖 awake — brain: $(curl -s -m 4 http://localhost:8772/state \
+      | python3 -c 'import json,sys;d=json.load(sys.stdin);print("OpenAI Realtime" if d["openai"] else d["mode"])')"
+  else
+    echo "⚠️  chat service (:8772) not answering — waking the body only"
+    curl -s -m 8 -X POST "$URL/api/motors/set_mode/enabled" >/dev/null
+    curl -s -m 20 -X POST "$URL/api/move/play/wake_up" >/dev/null
+  fi
+  # Then check the body actually came up. The wake animation and the realtime
+  # engine's connect race each other on one neck, and the loser leaves the robot
+  # talking to you with its head down and its motors off — awake voice, asleep
+  # body. Cheaper to assert it than to explain it.
+  sleep 3
+  if [[ "$(curl -s -m 4 "$URL/api/motors/status")" != *enabled* ]]; then
+    echo "   …motors were still off, re-waking the body"
+    curl -s -m 8 -X POST "$URL/api/motors/set_mode/enabled" >/dev/null
+    curl -s -m 20 -X POST "$URL/api/move/play/wake_up" >/dev/null
+  fi
+  curl -s -m 8 -X POST -H 'Content-Type: application/json' -d '{"weight":0.6}' \
+       "$URL/api/media/tracking/enable" >/dev/null   # look at whoever's there
+}
+sleep_robot() {
+  curl -s -m 25 -X POST http://localhost:8772/sleep >/dev/null 2>&1 || {
+    curl -s -m 20 -X POST "$URL/api/move/play/goto_sleep" >/dev/null
+    sleep 2
+    curl -s -m 8 -X POST "$URL/api/motors/set_mode/disabled" >/dev/null
+  }
+  echo "😴 asleep"
+}
+
+case "$1" in
+  stop)   sleep_robot; ./start_wonder.sh stop ;;
+  wake)   wake ;;
+  sleep)  sleep_robot ;;
+  logs)   tail -f /tmp/reachy_*.log /tmp/vibeverse.log /tmp/telegram.log ;;
+  status)
+    printf 'robot  %s  ' "$URL"
+    curl -s -m 4 "$URL/api/daemon/status" >/dev/null \
+      && echo "✅ reachable" || { echo "❌ unreachable (power? Wi-Fi? try: vibey wifi hotspot)"; }
+    echo "  motors: $(curl -s -m 4 $URL/api/motors/status | sed -E 's/.*"mode":"([a-z_]+)".*/\1/')"
+    echo "  brain:  $(curl -s -m 4 http://localhost:8772/state \
+      | python3 -c 'import json,sys;d=json.load(sys.stdin);print(("OpenAI Realtime" if d["openai"] else d["mode"]) + (" (asleep)" if d["asleep"] else ""))' 2>/dev/null || echo "chat service down")"
+    echo "  wifi:   $(curl -s -m 4 $URL/wifi/status | sed -E 's/.*"connected_network":"?([^",}]*)"?.*/\1/')"
+    for svc in "8770 dashboard" "8771 camera" "8772 chat" "8773 memory" "8774 vibeverse" "8775 robot-mic"; do
+      port=${svc%% *}; name=${svc##* }
+      lsof -ti tcp:$port >/dev/null 2>&1 && echo "  ✅ $name (:$port)" || echo "  ❌ $name (:$port)"
+    done
+    ;;
+  fix)
+    # The robot's daemon wedges every so often: /api/move/* still returns 200
+    # with a job id, but the body never twitches and every /api/state/* readback
+    # comes back byte-identical. (backend_status.ready is False even when healthy
+    # in this setup, so it is NOT the tell — the frozen readback is.) Restarting
+    # the daemon clears it; the restart also drops motors back to disabled, which
+    # is why the wake has to come after.
+    echo "restarting the robot daemon…"
+    curl -s -m 20 -X POST "$URL/api/daemon/restart" >/dev/null
+    for i in $(seq 1 15); do
+      sleep 4
+      curl -s -m 4 "$URL/api/daemon/status" >/dev/null 2>&1 && break
+    done
+    wake
+    ;;
+  wifi)
+    case "$2" in
+      scan)    curl -s -m 30 -X POST "$URL/wifi/scan_and_list" | python3 -m json.tool ;;
+      join)    curl -s -m 45 -X POST --get --data-urlencode "ssid=$3" --data-urlencode "password=$4" \
+                 "$URL/wifi/connect" | python3 -m json.tool
+               echo "give it ~20s, then: vibey status" ;;
+      forget)  curl -s -m 20 -X POST --get --data-urlencode "ssid=$3" "$URL/wifi/forget" ;;
+      hotspot) curl -s -m 30 -X POST "$URL/wifi/setup_hotspot"
+               echo "join the robot's AP from your Mac, then hit http://10.42.0.1:8000" ;;
+      *)       curl -s -m 8 "$URL/wifi/status" | python3 -m json.tool
+               echo "last error: $(curl -s -m 8 $URL/wifi/error)" ;;
+    esac
+    ;;
+  *)
+    ./start_wonder.sh || exit 1
+    wake
+    open http://localhost:8770
+    ;;
+esac
