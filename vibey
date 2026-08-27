@@ -14,6 +14,16 @@
 REPO=~/dev/vibey-robot
 cd "$REPO" || exit 1
 URL=$(grep '^REACHY_URL=' .env | cut -d= -f2-)
+# .env names the robot by its mDNS hostname, because its DHCP lease wanders.
+# Resolve it to an IP once, here, the way start_wonder.sh does for the services:
+# a .local lookup costs ~150ms warm and up to a full second cold, and the sleep
+# sequence alone is half a dozen sequential calls. Paying that per request is the
+# difference between a bedtime that looks deliberate and one that looks broken.
+if [[ "$URL" == *.local:* ]]; then
+  _host=${${URL#*://}%%:*}
+  _ip=$(ping -c1 -t2 "$_host" 2>/dev/null | sed -nE '1s/.*\(([0-9.]+)\).*/\1/p')
+  [[ -n "$_ip" ]] && URL="http://${_ip}:8000"
+fi
 
 # Wake through the chat service, not the robot's REST API directly.
 # reachy_chat.py's /wake hands the conversation to the OpenAI Realtime engine
