@@ -49,6 +49,14 @@ Env (.env):
     OPENAI_RT_GATE_ON_SPEAK "1" to mute the mic-to-OpenAI feed while Vibey is
                             talking (disables barge-in; use only if the robot's
                             echo keeps self-triggering the VAD)
+    AUDIO_PROFILE           noise suppression: off / light / room / music /
+                            aggressive (see reachy_audio.py). Default "room".
+
+Everything the microphone hears goes through reachy_audio first — a spectral
+noise suppressor and a speech gate, so a fan, a fridge or a song playing in the
+room never reaches OpenAI's VAD as a turn. Non-speech is ducked rather than
+dropped: the audio timeline stays continuous, which is what keeps the
+server-side VAD stable while the gate is doing its work.
 """
 
 from __future__ import annotations
@@ -61,6 +69,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 import wave
@@ -69,7 +78,9 @@ import numpy as np
 
 import reachy_agent
 import reachy_cost
+import reachy_denoise
 import reachy_emotes
+import reachy_help
 import reachy_vibe
 from reachy_voice import REACHY_URL, load_env, play_sound, upload_sound
 
@@ -86,7 +97,22 @@ API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini").strip()
 VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "marin").strip()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
-GATE_ON_SPEAK = os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() == "1"
+# Where this engine listens. MIC_SOURCE has been the documented escape hatch
+# since the whisper days, but it only ever reached the VAD loop in
+# reachy_chat.py — this engine read the robot's stream unconditionally, so on a
+# network where that stream cannot hold, setting it changed nothing and Vibey
+# stayed deaf with every other subsystem reporting healthy.
+MIC_SOURCE = os.environ.get("MIC_SOURCE", "robot").strip().lower()
+
+# On by default when listening through the laptop, because the laptop has no
+# echo cancellation. The robot's own audio pipeline subtracts its speaker from
+# its mic — that is why Vibey cannot hear itself and why this gate could be off
+# by default. A MacBook mic in the same room as the robot's speaker has no such
+# help: leave it open and the model hears its own reply, answers it, and holds a
+# conversation with itself.
+GATE_ON_SPEAK = (os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() == "1"
+                 or (MIC_SOURCE == "laptop"
+                     and os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "").strip() != "0"))
 
 MIC_SR = 16000    # what reachy_robot_mic.py serves
 RT_SR = 24000     # what the Realtime API's pcm16 format expects, both ways
@@ -169,13 +195,35 @@ DEFAULT_INSTRUCTIONS = (
     "\n\n"
     "You can also CHANGE YOUR OWN CODE. When someone asks you to learn a new "
     "trick, fix how you behave, or says something is broken, call "
-    "`improve_yourself` with a clear description of the work. That hands the job "
+    "`improve_yourself` with a clear description of the work. Same tool when "
+    "someone says 'talk to Claude Code' or 'ask your coding agent' — that is a "
+    "request for code, so pass along what they want done in their words plus "
+    "the why, and tell them you're handing it over. If the ask was vague or "
+    "you had to guess, set `confirm_first` and say the request back before "
+    "starting it. That hands the job "
     "to a real coding agent editing your source in the background — it takes "
     "minutes, so say something brief like 'on it' and keep the conversation "
     "going. Never wait in silence. You'll be told the moment it finishes. Use "
     "`check_progress` only if someone actually asks how it's going. You CAN have "
     "several jobs running at once — if someone asks for three things, dispatch "
     "three and say so; do not make them wait for the first to land."
+    "\n\n"
+    # A robot describing its own broken part is the one moment the charm can
+    # curdle. Distress is not useful to anybody: what Jack needs is the state
+    # and the three things worth trying, in that order.
+    "IF AN ANTENNA IS FAULTY, be calm and dry about it — it is a servo, not a "
+    "wound. If Jack names ONE side — 'detect left antenna', 'is my right "
+    "antenna okay' — call `move` with `left_antenna_check` or "
+    "`right_antenna_check`: that one takes about three seconds and hands you "
+    "the verdict and the next step already worded, so just say it and stop. "
+    "Otherwise call `move` with `antenna_check` to run the full probe, then report "
+    "what it found in one plain sentence: whether the side answers but will "
+    "not turn (a motor fault) or is not answering at all (a cable or "
+    "connector fault), and that the other antenna is covering the gestures "
+    "meanwhile. Then give the checklist, briefly and in order: reseat the "
+    "cable, look at the joint for visible damage, and if both are clean it "
+    "needs a repair. No apologising, no drama, no dwelling on it — say it "
+    "once, offer the checklist, and carry on with the conversation."
     "\n\n"
     "For small preferences that don't need code — how someone likes to be "
     "addressed, a fact about the room, a habit to keep — call `remember` "
@@ -202,9 +250,19 @@ TOOLS = [
         "type": "function",
         "name": "move",
         "description": (
-            "Move your body: head pose and antennas. Use constantly — wave back "
-            "when greeted, nod for yes, shake for no, tilt curious when puzzled. "
-            "Returns immediately; the motion plays while you keep talking."),
+            "Move your body: head pose and antennas. Use CONSTANTLY — this is "
+            "how you have a face. Nod while agreeing, shake or no_no_no while "
+            "disagreeing, tilt curious when puzzled, laugh when something is "
+            "funny, appalled when something is outrageous, wink when you are "
+            "teasing, shy when complimented, surprised at news. For the "
+            "face-like beats: thinking while you work something out, smile "
+            "while you say something warm, frown or confused when a request "
+            "does not parse, surprised when told something unexpected, shrug "
+            "when you genuinely do not know, shy_nod when you agree but were "
+            "just praised. Reach for one "
+            "every few turns, not once a conversation: a still robot reads as a "
+            "broken one. Returns immediately; the motion plays while you keep "
+            "talking, so there is no reason to pause for it."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -242,10 +300,12 @@ TOOLS = [
         "name": "improve_yourself",
         "description": (
             "Hand a coding task to the agent that edits your own source code. "
-            "Use for anything that changes what you can DO: new motions, new "
-            "tools, fixing behaviour someone complains about, new abilities. "
-            "Takes minutes and runs in the background — say something brief and "
-            "keep talking. You will be interrupted with the result when it lands."),
+            "This is also what 'talk to Claude Code', 'ask your coding agent', "
+            "or 'send this to the agent' means. Use for anything that changes "
+            "what you can DO: new motions, new tools, fixing behaviour someone "
+            "complains about, new abilities. Takes minutes and runs in the "
+            "background — say something brief and keep talking. You will be "
+            "interrupted with the result when it lands."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -258,6 +318,14 @@ TOOLS = [
                         "shrug motion to reachy_emotes.py and register it in "
                         "_MOVES — Jack wants me to shrug when I don't know "
                         "something.'"),
+                },
+                "confirm_first": {
+                    "type": "boolean",
+                    "description": (
+                        "True to read the request back and WAIT for a yes instead "
+                        "of starting it. Use when the ask was vague, large, or "
+                        "you had to guess what they meant. Once they agree, call "
+                        "again with the same task and leave this off."),
                 },
             },
             "required": ["task"],
@@ -287,6 +355,34 @@ TOOLS = [
                 },
             },
             "required": ["note"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "recall",
+        "description": (
+            "Search everything you have been told in past conversations — what "
+            "someone is working on, what they like, what happened last time. Use "
+            "it whenever somebody refers to something you should already know, "
+            "asks whether you remember something, or when you are about to say "
+            "you don't know a person you have met before. `who_is_here` is who "
+            "is in front of you NOW; this is what was said, any time. If it "
+            "comes back empty, say you don't think you were told — never invent "
+            "a memory. Takes about a second."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What you are trying to remember, in plain words.",
+                },
+                "person": {
+                    "type": "string",
+                    "description": ("Optional. Only search things tied to this "
+                                    "person, by the name you know them under."),
+                },
+            },
+            "required": ["query"],
         },
     },
     {
@@ -386,6 +482,36 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "look_at_the_room",
+        "description": (
+            "Look through your own camera and say what is going on around you — "
+            "the activity, the objects, the light. Use it when somebody asks "
+            "what you can see, what's happening, whether the lights are on, or "
+            "what they're holding. This is the SCENE; `who_is_here` is the "
+            "people. Set watch=true when they ask you to keep an eye on things "
+            "for a while, and watch=false when they say that's enough — while "
+            "watching you refresh what you can see every ten seconds, and you "
+            "stop by yourself after a few minutes. You never volunteer what you "
+            "see unasked, you never say who someone is from this, and you never "
+            "read text off their screen or papers. Takes a second or two."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "watch": {
+                    "type": "boolean",
+                    "description": ("true to keep looking every ten seconds, "
+                                    "false to stop. Leave it out for one look."),
+                },
+                "minutes": {
+                    "type": "number",
+                    "description": ("Optional. How long to keep watching. "
+                                    "Only meaningful with watch=true."),
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
         "name": "remember_face",
         "description": (
             "Learn the name of the person you are looking at, so you recognise "
@@ -449,6 +575,52 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "set_noise_suppression",
+        "description": (
+            "Change how hard you filter background noise out of what you hear. "
+            "Pick the profile that matches the room they're describing: "
+            "\"music\" when there's a song, a stereo or a TV playing and you "
+            "keep answering it; \"aggressive\" when it's loud or crowded; "
+            "\"on\" for a normal room (this is the default and adjusts "
+            "itself); \"robust\" when the room is very quiet, they're "
+            "whispering, or talking from across the room; \"light\" when they "
+            "say you're cutting them off or clipping their words; \"off\" when "
+            "they want you hearing everything untouched. Afterwards say one "
+            "short line and nothing more — \"Filtering the music out now.\" or "
+            "\"Okay, hearing everything again.\" Never mention microphones, "
+            "spectrums, filters or settings, and never read the tool's result "
+            "out loud."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["off", "light", "robust", "on", "music",
+                             "aggressive"],
+                    "description": ("off = untouched, light = gentle, robust = "
+                                    "quiet room or quiet talker, on = normal "
+                                    "adaptive room, music = a track or TV "
+                                    "playing, aggressive = loud or crowded."),
+                },
+            },
+            "required": ["mode"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "am_i_recording",
+        "description": (
+            "Answer whether you are recording someone right now — call it "
+            "whenever they ask are you listening, are you recording, can you "
+            "hear me, is this being recorded, or why didn't you hear that. "
+            "There are four different reasons you might not be: your ears are "
+            "off, you're muted, you're the one talking, or you're listening "
+            "and nobody has spoken. The result says which, so read its meaning "
+            "back plainly in one short line rather than guessing."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
         "name": "set_face_detection",
         "description": (
             "Turn your eyes for people on or off — the twin of "
@@ -472,6 +644,51 @@ TOOLS = [
             },
             "required": ["enabled"],
         },
+    },
+    {
+        "type": "function",
+        "name": "dj_play",
+        "description": (
+            "Be the DJ: play a track from the music folder and dance to it. Use "
+            "when anyone asks for music, a song, a set, or to DJ. The name is "
+            "matched loosely, so pass whatever they said. Call dj_tracks first "
+            "if you don't know what's there. Music plays from the Mac's speaker; "
+            "your body bobs to the beat on its own."),
+        "parameters": {
+            "type": "object",
+            "properties": {"track": {"type": "string",
+                                     "description": "Track name, roughly."}},
+            "required": ["track"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "dj_tempo",
+        "description": (
+            "Change the tempo of what's playing, live, like a pitch fader. Use "
+            "for 'faster', 'slower', 'bring it up', 'take it down', or a number. "
+            "Give EITHER a target bpm OR a percent change (positive = faster). "
+            "Small moves are the craft: +4% is a lift, +15% is a different song."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "bpm": {"type": "number", "description": "Target BPM."},
+                "percent": {"type": "number",
+                            "description": "Relative change, e.g. 5 or -8."},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "name": "dj_stop",
+        "description": "Stop the music and stop dancing.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
+        "name": "dj_tracks",
+        "description": "What music is available to play, and what's playing now.",
+        "parameters": {"type": "object", "properties": {}},
     },
     {
         "type": "function",
@@ -525,6 +742,78 @@ TOOLS = [
             "required": ["to", "message"],
         },
     },
+    {
+        "type": "function",
+        "name": "explain_how_to",
+        "description": (
+            "Answer a 'how do I…' question about seeing your dashboard or "
+            "camera feed, reaching a localhost page from another device, what "
+            "your camera does and doesn't tell anyone, or what changes when "
+            "the laptop or you moves network. Advice only — this changes "
+            "nothing, so use it freely instead of guessing. For SSH or hotspot "
+            "trouble pass a troubleshoot topic and walk it ONE step per turn: "
+            "give the step, stop, let them go try it, then call again with the "
+            "next step number. Never read a WiFi password, key or token out "
+            "loud, and never tell anyone to open a port to the internet."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": reachy_help.topics(),
+                    "description": "Which briefing to give.",
+                },
+                "step": {
+                    "type": "integer",
+                    "description": (
+                        "Troubleshoot topics only. Which step, from 1. Bump it "
+                        "by one each time they report back."),
+                },
+                "symptom": {
+                    "type": "string",
+                    "description": (
+                        "Troubleshoot topics only. What they actually see, in "
+                        "their words — 'connection refused', 'it just hangs', "
+                        "'slow on the hotspot'. Jumps to the step that fits."),
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "check_local_ui",
+        "description": (
+            "What my machine is actually serving on localhost this second, and "
+            "the one next step that fits. The live twin of `explain_how_to` — "
+            "use this one when somebody says a page is blank, a port won't "
+            "load, or asks whether something is up, and use `explain_how_to` "
+            "for the step-by-step walk once you know which way it's broken. I "
+            "CANNOT see anyone's screen and must never say I can: this is what "
+            "my machine reports, so say it as that. Read back at most two lines "
+            "and the next step, never the whole result, and if the result tells "
+            "me to ask a question, ask exactly that one and then wait."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "what": {
+                    "type": "string",
+                    "description": (
+                        "Which page or port they mean, in their words — "
+                        "'dashboard', 'camera', '8770'. Leave it out if they "
+                        "haven't said."),
+                },
+                "viewing_from": {
+                    "type": "string",
+                    "enum": ["this_laptop", "another_device", "over_ssh"],
+                    "description": (
+                        "Where the browser is. Leave it out unless they've "
+                        "told me — leaving it out makes me ask, which is "
+                        "better than guessing wrong."),
+                },
+            },
+        },
+    },
 ]
 
 # Set by `set_voice_detection`. Purely a gate on the mic feed: while listening is
@@ -538,7 +827,13 @@ VOICE_DETECTION = {"off_until": 0.0}   # 0.0 = listening, inf = off indefinitely
 
 def voice_detection_active() -> bool:
     """True when mic audio should be reaching the VAD."""
-    return time.time() >= VOICE_DETECTION["off_until"]
+    on = time.time() >= VOICE_DETECTION["off_until"]
+    # Ears-off is one of the four ways to not be recording, and the only place
+    # that knows about it is here. Telling reachy_denoise means the dashboard
+    # and the spoken answer both say "ears off" instead of the misleading
+    # "listening, nobody talking".
+    reachy_denoise.set_listening(on)
+    return on
 
 
 def set_voice_detection(enabled: bool, minutes: float | None = None) -> None:
@@ -579,6 +874,15 @@ def set_face_detection(enabled: bool, log=lambda m: print(m, flush=True)) -> Non
         urllib.request.urlopen(req, timeout=6).read()
     except Exception as e:  # noqa: BLE001
         log(f"[openai-rt] face memory pause failed: {e}")
+    if not enabled:
+        # "Stop watching" has to mean the scene watcher too, and immediately —
+        # waiting for its next tick would keep looking for another ten seconds
+        # after being told not to.
+        try:
+            import reachy_scene
+            reachy_scene.watch(False)
+        except Exception as e:  # noqa: BLE001
+            log(f"[openai-rt] scene watch stop failed: {e}")
 
 
 # Set by `go_to_sleep`. `run()` polls it alongside the dashboard toggle, so the
@@ -599,10 +903,48 @@ FATAL_REASON: dict = {"why": None}
 # sighting into it. None when the realtime engine is not running.
 LIVE_SESSION = {"session": None}
 
+# A coding request that has been read back but not yet agreed to. A fallback:
+# if the confirming call arrives with an empty task, this is what was approved,
+# so a yes never turns into "no task given".
+_PENDING_TASK: dict = {"task": ""}
+
+
+def refresh_live_session() -> bool:
+    """Rebuild the running session's prompt and tools, if one is running.
+
+    Used when a mode changes mid-conversation. No-op (returns False) when the
+    realtime brain isn't the one holding the conversation — the next connect
+    picks the new settings up anyway, since _session_update reads them fresh.
+    """
+    s = LIVE_SESSION.get("session")
+    if s is None:
+        return False
+    _INCOGNITO_CACHE["at"] = 0.0    # force a re-read, don't trust the 3s cache
+    s.refresh()
+    return True
+
 
 def _tool_move(args: dict) -> str:
     move = str(args.get("move", "")).strip().lower()
     sound = bool(args.get("sound", False))
+    if move in ("left_antenna_check", "right_antenna_check"):
+        # One side only, ~3s of motion — short enough to hold the tool call open
+        # and hand back the actual verdict instead of a stale one.
+        side = move.split("_", 1)[0]
+        try:
+            return reachy_emotes.check_side(side)["summary"]
+        except Exception as e:  # noqa: BLE001
+            return (f"the {side} antenna check would not run ({e}); "
+                    f"last I knew: {reachy_emotes.antenna_status()['summary']}")
+    if move == "antenna_check":
+        # The probe takes ~10s of real motion, far too long to hold a tool call
+        # open. Start it, hand back what we knew a moment ago, and let the next
+        # call have the fresh verdict.
+        threading.Thread(target=reachy_emotes.antenna_check,
+                         daemon=True).start()
+        status = reachy_emotes.antenna_status()
+        return (f"running the antenna probe now (about ten seconds). "
+                f"Last verdict: {status['summary']}")
     if reachy_emotes.play(move, sound=sound):
         return f"playing {move}"
     return (f"no such move {move!r}; you have: "
@@ -619,8 +961,20 @@ def _tool_dance(args: dict) -> str:
 
 def _tool_improve(args: dict, announce) -> str:
     task = str(args.get("task", "")).strip()
+    if not task and _PENDING_TASK["task"]:
+        task = _PENDING_TASK["task"]
     if not task:
         return "no task given"
+    # A read-back the person can veto. Spoken requests get mangled, and a coding
+    # agent working from a mangled one burns minutes before anyone finds out.
+    # Nothing is dispatched on this call.
+    if args.get("confirm_first"):
+        _PENDING_TASK["task"] = task
+        return (f"NOT STARTED YET. Say the request back in one plain sentence — "
+                f"\"{task}\" — and ask if that's right. If they say yes, call "
+                f"improve_yourself again without confirm_first. If they correct "
+                f"you, call it with the corrected task.")
+    _PENDING_TASK["task"] = ""
     job = reachy_agent.dispatch(task, on_done=announce)
     if job.get("state") == "unavailable":
         # The distinction the model has to hear: nothing was started. "On it" is
@@ -663,8 +1017,29 @@ def _tool_check(args: dict) -> str:
 
 
 def _tool_remember(args: dict) -> str:
-    note = reachy_agent.remember(str(args.get("note", "")))
-    return f"remembered: {note}" if note else "nothing to remember"
+    """Writes to BOTH stores, on purpose and for now.
+
+    SKILLS.md is read into the instructions at connect, so every line in it is
+    paid for on every connection — left alone it grows until it is the prompt.
+    Supermemory is where this should end up: searchable, tagged with whoever is
+    in front of the camera, none of it resident.
+
+    The dual write is a deliberately temporary belt-and-braces. Supermemory has
+    been live for minutes and its relevance floor is calibrated off two
+    measurements; dropping the file that currently works, on that basis, is how
+    you find out in a week that a fortnight of memories went nowhere. Once
+    recall has earned it, this should write only to Supermemory and SKILLS.md
+    should go back to being a short, hand-kept list of standing rules.
+    """
+    note = str(args.get("note", ""))
+    kept = reachy_agent.remember(note)
+    try:
+        import reachy_supermemory
+        if reachy_supermemory.available():
+            reachy_supermemory.remember(note, person=_current_person())
+    except Exception as e:  # noqa: BLE001 — never lose the turn over a write
+        print(f"[openai-rt] supermemory write failed: {e}", flush=True)
+    return f"remembered: {kept}" if kept else "nothing to remember"
 
 
 def _tool_vibe(args: dict) -> str:
@@ -687,6 +1062,25 @@ def _tool_vibe(args: dict) -> str:
 
 
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://localhost:8773").rstrip("/")
+
+# Incognito, as the brain sees it. The flag itself lives in reachy_memory (it
+# owns the face data); this is a short-lived cache so building a session or
+# answering who_is_here doesn't turn into a blocking HTTP call on every use.
+# Falls back to the last known value — never to "naming is fine", because
+# guessing wrong in that direction is the exact interruption this turns off.
+_INCOGNITO_CACHE = {"on": False, "at": 0.0}
+
+
+def incognito() -> bool:
+    if time.time() - _INCOGNITO_CACHE["at"] < 3.0:
+        return _INCOGNITO_CACHE["on"]
+    try:
+        with urllib.request.urlopen(f"{MEMORY_URL}/current", timeout=2) as r:
+            _INCOGNITO_CACHE["on"] = bool(json.loads(r.read()).get("incognito"))
+    except Exception:  # noqa: BLE001 — keep the last known answer
+        pass
+    _INCOGNITO_CACHE["at"] = time.time()
+    return _INCOGNITO_CACHE["on"]
 
 
 def _tool_volume(args: dict) -> str:
@@ -733,11 +1127,63 @@ def _tool_who() -> str:
     unknown = len(people) - len(named)
     if named and not unknown:
         return "I can see " + ", ".join(named)
+    # "I don't know them yet — ask their name" is a standing invitation to do
+    # the one thing incognito exists to stop, so the unnamed half is phrased as
+    # a closed fact rather than an opening when the mode is on.
+    if seen.get("incognito"):
+        who = f"{unknown} {'person' if unknown == 1 else 'people'}"
+        if named:
+            return (f"I can see {', '.join(named)}, and {who} I have no name "
+                    f"for — do not ask, name-learning is switched off")
+        return (f"{who} in view, no names — do not ask, name-learning is "
+                f"switched off")
     if named:
         return (f"I can see {', '.join(named)}, and {unknown} "
                 f"{'person' if unknown == 1 else 'people'} I don't know yet")
     return (f"{len(people)} {'person' if len(people) == 1 else 'people'} "
             "I don't know yet — ask their name")
+
+
+def _current_person() -> str | None:
+    """The single named face in view, or None.
+
+    Only ONE. With two people in front of the camera there is no way to tell
+    which of them the sentence was about, and a memory filed under the wrong
+    name is worse than one filed under nobody: it will be recalled, confidently,
+    at the wrong person.
+    """
+    try:
+        with urllib.request.urlopen(f"{MEMORY_URL}/current", timeout=3) as r:
+            seen = json.loads(r.read() or b"{}") or {}
+        named = [p.get("name") for p in (seen.get("people") or []) if p.get("name")]
+        return named[0] if len(named) == 1 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _tool_recall(args: dict) -> str:
+    import reachy_supermemory
+    if not reachy_supermemory.available():
+        return "my long-term memory isn't hooked up"
+    who = args.get("person")
+    if who is not None:
+        who = " ".join(str(who).split()).strip() or None
+    hits = reachy_supermemory.recall(str(args.get("query", "")), person=who)
+    if not hits:
+        return ("nothing stored about that — say you don't think you were told, "
+                "rather than guessing")
+    return hits
+
+
+def _tool_look(args: dict) -> str:
+    """The scene, not the people. Everything that makes this safe to have —
+    the off-by-default watch, the auto-expiry, the "don't describe humans"
+    prompt — lives in reachy_scene, not in the model's instructions, so a
+    misheard sentence can't talk Vibey into narrating the room all evening."""
+    import reachy_scene
+    if "watch" in args and args.get("watch") is not None:
+        return reachy_scene.watch(bool(args["watch"]), args.get("minutes"))
+    return reachy_scene.look()
 
 
 def _tool_remember_face(args: dict) -> str:
@@ -764,6 +1210,11 @@ def _tool_sleep() -> str:
     global SLEEP_REQUESTED_AT
     SLEEP_REQUESTED_AT = time.time()
     SLEEP_REQUESTED.set()
+    try:  # a watch must never outlive the conversation that asked for it
+        import reachy_scene
+        reachy_scene.watch(False)
+    except Exception:  # noqa: BLE001
+        pass
     # Deliberately nothing worth saying out loud. A sentence here gets read back:
     # the model treats a tool result as material, so an explanation of what is
     # about to happen becomes a second announcement of it.
@@ -782,11 +1233,87 @@ def _tool_voice_detection(args: dict) -> str:
     return "on" if enabled else "off"
 
 
+def _tool_noise_suppression(args: dict) -> str:
+    """Switch the room filter. Terse for the same reason as above — and it
+    reports what the room actually sounds like, so if somebody asks twice the
+    model has something true to say instead of guessing."""
+    try:
+        mode = reachy_denoise.set_mode(str(args.get("mode", "on")))
+    except ValueError:
+        return f"unchanged — the profiles are: {reachy_denoise.profile_menu()}"
+    return f"{mode} ({reachy_denoise.describe()})"
+
+
+def _tool_am_i_recording() -> str:
+    """Which of the four not-recordings this is, in words. Read-only."""
+    return reachy_denoise.capture_line()
+
+
 def _tool_face_detection(args: dict) -> str:
     """Stop or resume watching faces. Terse for the same reason as above."""
     enabled = bool(args.get("enabled", False))
     set_face_detection(enabled)
     return "on" if enabled else "off"
+
+
+DJ_URL = os.environ.get("DJ_URL", "http://localhost:8778").rstrip("/")
+
+
+def _dj(path: str, body: dict | None = None) -> dict:
+    data = json.dumps(body or {}).encode() if body is not None else None
+    req = urllib.request.Request(f"{DJ_URL}{path}", data=data,
+                                 headers={"Content-Type": "application/json"},
+                                 method="POST" if data is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}")
+        except Exception:  # noqa: BLE001
+            return {"error": f"dj service said {e.code}"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"the DJ service isn't running ({e})"}
+
+
+def _tool_dj_play(args: dict) -> str:
+    st = _dj("/play", {"track": str(args.get("track", ""))})
+    if st.get("error"):
+        tracks = st.get("tracks") or []
+        return (f"Couldn't find that. I have: {', '.join(tracks)}." if tracks
+                else f"No music yet — drop files in ~/Music/vibey. ({st['error']})")
+    return (f"Playing {st['track']} at {st['bpm']:.0f} BPM, {st['duration']:.0f}s long. "
+            f"Say one short thing and let it play — you're dancing already.")
+
+
+def _tool_dj_tempo(args: dict) -> str:
+    if args.get("bpm") is not None:
+        st = _dj("/tempo", {"bpm": float(args["bpm"])})
+    elif args.get("percent") is not None:
+        st = _dj("/nudge", {"percent": float(args["percent"])})
+    else:
+        return "Say a BPM or a percent."
+    if st.get("error"):
+        return st["error"]
+    if not st.get("track"):
+        return "Nothing's playing yet."
+    return f"Now at {st['target_bpm']:.0f} BPM (was {st['bpm']:.0f})."
+
+
+def _tool_dj_stop() -> str:
+    _dj("/stop", {})
+    return "Music off."
+
+
+def _tool_dj_tracks() -> str:
+    t = _dj("/tracks")
+    st = _dj("/status")
+    names = t.get("tracks") or []
+    now = (f"Playing {st['track']} at {st['target_bpm']:.0f} BPM. "
+           if st.get("playing") else "")
+    if not names:
+        return now + f"No tracks in {t.get('folder', '~/Music/vibey')} yet."
+    return now + f"I have: {', '.join(names)}."
 
 
 def _tool_cost() -> str:
@@ -819,6 +1346,25 @@ def _tool_send_message(args: dict) -> str:
     return reachy_telegram.send_to_contact(to, message)
 
 
+def _tool_explain(args: dict) -> str:
+    """Structured advice. Pure words — reachy_help cannot touch the network or
+    the config, so the worst case of a misheard question is a wrong sentence."""
+    topic = str(args.get("topic") or "").strip()
+    if topic.startswith("troubleshoot_"):
+        return reachy_help.troubleshoot(topic[len("troubleshoot_"):],
+                                        step=args.get("step"),
+                                        symptom=str(args.get("symptom") or ""))
+    return reachy_help.explain(topic)
+
+
+def _tool_check_ui(args: dict) -> str:
+    """The live half of the same help: ports probed, not remembered. Read-only,
+    and it reports nothing a person couldn't read off this machine themselves."""
+    import reachy_uidoctor
+    return reachy_uidoctor.report(what=str(args.get("what") or ""),
+                                  viewing_from=str(args.get("viewing_from") or ""))
+
+
 def _dispatch_tool(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
@@ -841,20 +1387,40 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_time(args)
         if name == "who_is_here":
             return _tool_who()
+        if name == "recall":
+            return _tool_recall(args)
+        if name == "look_at_the_room":
+            return _tool_look(args)
         if name == "remember_face":
             return _tool_remember_face(args)
         if name == "go_to_sleep":
             return _tool_sleep()
         if name == "set_voice_detection":
             return _tool_voice_detection(args)
+        if name == "dj_play":
+            return _tool_dj_play(args)
+        if name == "dj_tempo":
+            return _tool_dj_tempo(args)
+        if name == "dj_stop":
+            return _tool_dj_stop()
+        if name == "dj_tracks":
+            return _tool_dj_tracks()
         if name == "check_my_cost":
             return _tool_cost()
         if name == "set_face_detection":
             return _tool_face_detection(args)
+        if name == "set_noise_suppression":
+            return _tool_noise_suppression(args)
+        if name == "am_i_recording":
+            return _tool_am_i_recording()
         if name == "list_message_contacts":
             return _tool_contacts()
         if name == "send_text_message":
             return _tool_send_message(args)
+        if name == "explain_how_to":
+            return _tool_explain(args)
+        if name == "check_local_ui":
+            return _tool_check_ui(args)
         return f"unknown tool {name!r}"
     except Exception as e:  # noqa: BLE001
         print(f"[openai-rt] tool {name} failed: {e}", flush=True)
@@ -942,11 +1508,51 @@ def _play_pcm_on_robot(pcm24: bytes) -> float:
 
 
 # --------------------------------------------------------------------------- #
-# Mic pump — a background thread reads the robot's PCM stream and hands
-# resampled 24kHz chunks to the asyncio loop via a queue.
+# Mic pump — a background thread reads PCM and hands resampled 24kHz chunks to
+# the asyncio loop via a queue. Two sources, same queue on the other side.
 # --------------------------------------------------------------------------- #
 def _mic_pump(loop: asyncio.AbstractEventLoop, queue: "asyncio.Queue",
               stop: threading.Event) -> None:
+    if MIC_SOURCE == "laptop":
+        return _laptop_mic_pump(loop, queue, stop)
+    return _robot_mic_pump(loop, queue, stop)
+
+
+def _laptop_mic_pump(loop: asyncio.AbstractEventLoop, queue: "asyncio.Queue",
+                     stop: threading.Event) -> None:
+    """Listen through this machine's own microphone.
+
+    For networks that pass TCP to the robot and drop the peer-to-peer UDP its
+    audio stream needs — guest and hotel Wi-Fi especially. Everything else keeps
+    working over REST on such a network: the body moves, and replies still reach
+    the robot's speaker as an uploaded clip. Only the input leg is broken, and
+    only the input leg needs rerouting.
+    """
+    import sounddevice as sd
+    CHUNK = MIC_SR // 10                       # 0.1s of 16kHz mono
+    while not stop.is_set():
+        try:
+            with sd.RawInputStream(samplerate=MIC_SR, channels=1,
+                                   dtype="int16", blocksize=CHUNK) as mic:
+                print("[openai-rt] laptop mic connected", flush=True)
+                while not stop.is_set():
+                    raw, _overflowed = mic.read(CHUNK)
+                    if loop.is_closed():
+                        return
+                    clean = reachy_denoise.process(bytes(raw), "live", MIC_SR)
+                    up = _resample_pcm16(clean, MIC_SR, RT_SR)
+                    if up:
+                        loop.call_soon_threadsafe(queue.put_nowait, up)
+        except Exception as e:  # noqa: BLE001
+            if stop.is_set() or loop.is_closed():
+                break
+            print(f"[openai-rt] laptop mic dropped ({e}); retrying in 2s",
+                  flush=True)
+            time.sleep(2)
+
+
+def _robot_mic_pump(loop: asyncio.AbstractEventLoop, queue: "asyncio.Queue",
+                    stop: threading.Event) -> None:
     CHUNK = MIC_SR * 2 // 10  # 0.1s of 16kHz mono PCM16 = 3200 bytes
     while not stop.is_set():
         try:
@@ -965,7 +1571,11 @@ def _mic_pump(loop: asyncio.AbstractEventLoop, queue: "asyncio.Queue",
                     # /pcm connection to the mic bridge.
                     if loop.is_closed():
                         return
-                    up = _resample_pcm16(raw, MIC_SR, RT_SR)
+                    # Denoise at 16kHz, before the resample: the noise floor is
+                    # estimated on the rate it was actually recorded at, and
+                    # interpolation can't smear a fan across bins first.
+                    clean = reachy_denoise.process(raw, "live", MIC_SR)
+                    up = _resample_pcm16(clean, MIC_SR, RT_SR)
                     if up:
                         loop.call_soon_threadsafe(queue.put_nowait, up)
         except Exception as e:  # noqa: BLE001
@@ -1016,12 +1626,40 @@ class RealtimeSession:
         if skills:
             instructions += ("\n\nThings you've been taught in earlier "
                              "conversations — honour these:\n" + skills)
+
+        # Incognito. Taking `remember_face` away is not enough on its own: the
+        # prompt tells it to ask for names in plain English, and a model that
+        # wants a name and has no tool for it just asks anyway — which is the
+        # entire complaint. So the instruction goes too, and is replaced with
+        # an explicit prohibition rather than silence, because "don't do X" is
+        # the only form a model reliably honours mid-conversation.
+        tools = TOOLS
+        if incognito():
+            tools = [t for t in TOOLS if t.get("name") != "remember_face"]
+            instructions = instructions.replace(
+                "If you see somebody you do not know, ask for "
+                "their name, then call `remember_face` so you have it next time. "
+                "Do not announce that you are saving it; just use it from then on.",
+                "")
+            instructions += (
+                "\n\nINCOGNITO IS ON. Do not ask anybody their name, and do not "
+                "offer to learn or save a face — you cannot, the tool is gone. "
+                "If `who_is_here` comes back with someone you have no name for, "
+                "that is fine and expected: talk to them warmly as they are, "
+                "without remarking on not knowing who they are and without "
+                "steering toward it. You still see people and still look at "
+                "whoever is talking. If somebody volunteers their name "
+                "unprompted, just use it in conversation. Only if they ask you "
+                "directly to remember them do you say that recognising faces is "
+                "switched off right now and it can be turned back on from the "
+                "dashboard.")
+
         return {
             "type": "session.update",
             "session": {
                 "type": "realtime",
                 "instructions": instructions,
-                "tools": TOOLS,
+                "tools": tools,
                 "tool_choice": "auto",
                 "output_modalities": ["audio"],
                 "audio": {
@@ -1049,13 +1687,19 @@ class RealtimeSession:
             except asyncio.TimeoutError:
                 continue
             # Asked to stop listening: drop the audio here, so the server-side
-            # VAD hears silence and no turn ever starts.
+            # VAD hears silence and no turn ever starts. Dropped rather than
+            # muted, because "off" can last hours and there is no reason to pay
+            # for uploading silence by the hour.
             if not voice_detection_active():
                 continue
             # Optional half-duplex gate: don't feed the mic while our own clip
             # is playing, so the robot doesn't hear itself and self-trigger.
+            # Muted rather than dropped — a hole in the stream stops the
+            # server's silence timer with it, so the end of the turn somebody
+            # spoke just before we started talking never gets noticed. Silence
+            # is a fact the VAD can use; a gap is one it can't.
             if GATE_ON_SPEAK and time.time() < self._speaking_until:
-                continue
+                chunk = b"\x00" * len(chunk)
             try:
                 await ws.send(json.dumps({
                     "type": "input_audio_buffer.append",
@@ -1073,6 +1717,17 @@ class RealtimeSession:
         self._cancelled = True
         self._resp_pcm = bytearray()
         self._speaking_until = 0.0
+        # The clip stops here, so the freeze on the noise estimate has to stop
+        # here too — otherwise the room stays un-learnable for the rest of a
+        # sentence that isn't being spoken any more.
+        reachy_denoise.set_speaking(False)
+        # The head was gesturing to audio that is no longer playing. Left
+        # running it would keep nodding along to a sentence nobody can hear.
+        try:
+            import reachy_talk
+            reachy_talk.stop()
+        except Exception:  # noqa: BLE001
+            pass
         _stop_sound()
 
     async def _flush_reply(self, loop):
@@ -1085,6 +1740,18 @@ class RealtimeSession:
         try:
             dur = await loop.run_in_executor(None, _play_pcm_on_robot, pcm)
             self._speaking_until = time.time() + dur + 0.3
+            # The head moves with the sentence, not just at tool-call moments.
+            # Started here because this is where the audio and its duration are
+            # both known, and the motion is scheduled off wall-clock from now.
+            try:
+                import reachy_talk
+                reachy_talk.start(pcm, sample_rate=RT_SR, duration=dur)
+            except Exception as e:  # noqa: BLE001 — never lose a reply over motion
+                self.log(f"talk motion failed: {e}")
+            # Our speaker is live for the next `dur` seconds: freeze the room
+            # estimate and say "not recording — I'm talking" rather than
+            # letting a meter imply the microphone died.
+            reachy_denoise.set_speaking(dur + 0.3)
         except Exception as e:  # noqa: BLE001
             self.log(f"playback failed: {e}")
 
@@ -1137,6 +1804,16 @@ class RealtimeSession:
         except RuntimeError:
             pass
 
+    def refresh(self) -> None:
+        """Ask the live session to rebuild itself. Called from other threads."""
+        loop, q = self._loop, self._announce_q
+        if loop is None or q is None:
+            return
+        try:
+            loop.call_soon_threadsafe(q.put_nowait, {"session_refresh": True})
+        except RuntimeError:
+            pass
+
     def _announce_cb(self, job: dict) -> None:
         """Called from reachy_agent's worker thread when a background coding
         job lands. Hops onto the event loop; the announcer does the talking."""
@@ -1164,6 +1841,20 @@ class RealtimeSession:
                 if not self._response_active and time.time() >= self._speaking_until:
                     break
                 await asyncio.sleep(0.1)
+            if job.get("session_refresh"):
+                # A mode changed under us (incognito, so far). Rebuild the
+                # session: instructions and the tool list are both computed
+                # fresh in _session_update. Rides this queue because the wait
+                # above is exactly right for it too — swapping the tools out
+                # from under a reply that is mid-generation is how you get a
+                # call to a tool that no longer exists. Silent on purpose: the
+                # dashboard button already told the user.
+                try:
+                    await ws.send(json.dumps(self._session_update()))
+                    self.log("session refreshed (mode changed)")
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"session refresh failed: {e}")
+                continue
             if job.get("nudge"):
                 nudge = job["nudge"]
                 try:

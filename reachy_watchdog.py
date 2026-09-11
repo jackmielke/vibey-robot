@@ -68,6 +68,7 @@ SERVICES = {
     # up on it after MAX_RESTARTS rather than resurrecting a 409 forever.
     "telegram":  (None,                            "reachy_telegram.py",  "python3",                "/tmp/telegram.log"),
     "alarm":     (None,                            "reachy_alarm.py",     "python3",                "/tmp/reachy_alarm.log"),
+    "dj":        ("http://localhost:8778/status",  "reachy_dj.py",        "reachy_env/bin/python3", "/tmp/reachy_dj.log"),
 }
 
 _misses: dict[str, int] = {n: 0 for n in SERVICES}
