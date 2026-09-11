@@ -164,6 +164,26 @@ _current_lock = threading.Lock()
 # (set from the dashboard's power button via POST /pause).
 PAUSED = {"on": False}
 
+# Incognito — stop *identifying* people without going blind.
+#
+# PAUSED is the wrong tool for "don't ask my name": it short-circuits the whole
+# loop, which also kills the glance-toward-the-speaker that makes Vibey feel
+# present. The complaint this exists for is narrower — the camera is unreliable
+# enough that a bad frame reads as a stranger, and the robot interrupts whoever
+# is mid-sentence to ask a name it already has. So this gates only the three
+# things that turn a face into an identity:
+#
+#   * enrolling a face nobody has seen before (and the snapshot that stores it)
+#   * banking extra sample photos of people already known
+#   * the greetings whose whole purpose is to fish for a name
+#
+# Detection, CURRENT_PEOPLE, greeting people who ALREADY have names, and the
+# glance all keep running. Vibey still watches the room and looks at whoever is
+# talking; it just stops trying to file everyone.
+#
+# FACE_NAMING=0 in .env makes it the default at boot.
+INCOGNITO = {"on": os.environ.get("FACE_NAMING", "1").strip() == "0"}
+
 
 def _set_current_people(people: list[dict]):
     with _current_lock:
@@ -678,13 +698,6 @@ STARTER_AFTER_S = 300.0       # someone visible this long with no chat
 STARTER_COOLDOWN_S = 1800.0   # at most one opener per half hour
 _starter = {"since": 0.0, "last": 0.0}
 
-STARTERS = [
-    "You know, I've been wondering — what's the best thing that happened to you today?",
-    "Quick question: if I could learn one new trick this week, what should it be?",
-    "I've been people-watching. It's fascinating. What are you working on?",
-    "Fun fact: I dream in JSON. What do you dream about?",
-    "Is it just me, or is this a very good moment for a dance break?",
-]
 
 
 def _maybe_start_conversation(any_face: bool) -> None:
@@ -727,8 +740,7 @@ def _maybe_start_conversation(any_face: bool) -> None:
         return
     _starter["last"] = now
     _starter["since"] = now
-    line = random.choice(STARTERS)
-    print(f"[memory] conversation starter: {line!r}", flush=True)
+    print("[memory] nudging the brain to start a conversation", flush=True)
     try:
         from reachy_emotes import play as _pe
         _pe("curious")
@@ -737,14 +749,13 @@ def _maybe_start_conversation(any_face: bool) -> None:
     # Prompt the brain to open its mouth rather than reading a line at somebody.
     # A canned opener in a different voice is the tell that there are two systems
     # in the room; the same idea handed to the model comes out as Vibey.
-    if _tell_the_conversation(
-            "The room has gone quiet and somebody is still in front of you. "
-            "Start a conversation — one short, curious line in your own voice."):
-        return
-    try:
-        say(line)
-    except Exception:
-        pass
+    # And if no brain is holding the conversation, nothing is said. The canned
+    # line this used to fall back to was the tell that there were two systems in
+    # the room — and at boot, before anyone has turned it on, it was the robot
+    # opening with a scripted greeting nobody asked for.
+    _tell_the_conversation(
+        "The room has gone quiet and somebody is still in front of you. "
+        "Start a conversation — one short, curious line in your own voice.")
 
 
 # --------------------------------------------------------------------------- #
@@ -814,7 +825,12 @@ class _MemHandler(BaseHTTPRequestHandler):
             # `paused` rides along because an empty list means both "nobody is
             # there" and "I am not looking", and those are very different things
             # for the robot to say out loud.
-            self._json({"people": _current_people_fresh(), "paused": PAUSED["on"]})
+            # `incognito` rides along for the same reason as `paused`: an
+            # unnamed face means "we have never been introduced" normally, but
+            # "I was told not to ask" in incognito, and the brain phrases those
+            # two very differently.
+            self._json({"people": _current_people_fresh(), "paused": PAUSED["on"],
+                        "incognito": INCOGNITO["on"]})
         elif self.path.startswith("/names"):
             try:
                 faces = sb_get_faces()
@@ -909,13 +925,10 @@ class _MemHandler(BaseHTTPRequestHandler):
                 # entry from across the room shouldn't make Wonder talk.
                 if live:
                     try:
-                        from reachy_voice import say as _say
-                        if not _tell_the_conversation(
-                                f"You have just learned that this person is called "
-                                f"{name}. Say something warm and brief using their "
-                                f"name — do not mention saving or remembering it."):
-                            if not _realtime_has_the_floor():
-                                _say(f"Nice to meet you, {name}. I'll remember you.")
+                        _tell_the_conversation(
+                            f"You have just learned that this person is called "
+                            f"{name}. Say something warm and brief using their "
+                            f"name — do not mention saving or remembering it.")
                     except Exception:
                         pass
                 self._json({"ok": True, "face_id": face_id, "name": name})
@@ -930,6 +943,21 @@ class _MemHandler(BaseHTTPRequestHandler):
                     _set_current_people([])
                 print(f"[memory] {'paused' if PAUSED['on'] else 'resumed'}", flush=True)
                 self._json({"ok": True, "paused": PAUSED["on"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/incognito"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n))
+                INCOGNITO["on"] = bool(body.get("on"))
+                state = "ON — seeing but not naming" if INCOGNITO["on"] else "off"
+                print(f"[memory] incognito {state}", flush=True)
+                # Only half the switch lives here. The brain carries its own
+                # "ask people their name" line in the prompt and owns the
+                # remember_face tool, and it runs in the chat process — so the
+                # dashboard toggle goes through the chat service, which flips
+                # both. Nothing to call from here.
+                self._json({"ok": True, "on": INCOGNITO["on"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/deletesample"):
@@ -1048,7 +1076,8 @@ def run():
                 # the model gets more accurate just from normal use — but only
                 # if the frame is clean enough (same gate as new enrollment),
                 # so we never bank a blurry/tiny shot that dilutes the person.
-                if (dist <= LEARN_TOLERANCE and _passes_quality(f)[0]
+                if (not INCOGNITO["on"]
+                        and dist <= LEARN_TOLERANCE and _passes_quality(f)[0]
                         and now - last_learn.get(fid, 0) > LEARN_COOLDOWN):
                     last_learn[fid] = now
                     try:
@@ -1068,10 +1097,19 @@ def run():
                     if name:
                         print(f"[memory] recognized {name} (d={dist:.2f})", flush=True)
                         to_greet.append((fid, name))
+                    elif INCOGNITO["on"]:
+                        # Known face, no name, and we are not fishing for one.
+                        # Seen and tracked, just not asked about.
+                        print(f"[memory] unnamed {fid} (d={dist:.2f}) — incognito, "
+                              f"not asking", flush=True)
                     elif fid not in asked_name:
                         asked_name.add(fid)
                         print(f"[memory] unnamed {fid} (d={dist:.2f}) — asking once", flush=True)
                         to_greet.append((fid, None))
+            elif INCOGNITO["on"]:
+                # A stranger stays a stranger: no row, no snapshot, no greeting.
+                # They are still in `faces`, so the glance below can look at them.
+                pass
             else:
                 # Quality gate: never turn a blurry / tiny / bad detection into
                 # a permanent identity. A poor frame of a stranger is just
@@ -1113,23 +1151,19 @@ def run():
                 line = ("Somebody you have never seen before just appeared in front "
                         "of you. Say hello, ask their name, and when they tell you, "
                         "call remember_face.")
-                spoken = "Hi there, I don't think we've met. I'll remember your face."
             elif name:
                 line = (f"{name}, who you already know, just walked into view. "
                         f"Greet them by name, warmly and briefly.")
-                spoken = f"Hey {name}, good to see you."
             else:
                 line = ("Somebody you recognise but have no name for just appeared. "
                         "Say you know their face, ask what they are called, then "
                         "call remember_face.")
-                spoken = ("I recognize you! I don't know your name yet — "
-                          "you can tell me on the dashboard.")
 
             # Hand it to whichever brain is holding the conversation, so the robot
-            # reacts in its own voice instead of a second service talking over it
-            # with a canned line. Only speak it here if nobody took it.
-            if not _tell_the_conversation(line):
-                say(spoken)
+            # reacts in its own voice. No fallback: if nobody is holding it, the
+            # robot is asleep or off, and a scripted "nice to meet you" from a
+            # service that is not the robot is exactly what got removed here.
+            _tell_the_conversation(line)
 
 
 if __name__ == "__main__":
