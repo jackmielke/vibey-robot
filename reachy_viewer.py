@@ -41,9 +41,12 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/
 # Every _get/_post below reads the REACHY_URL global at call time, so
 # repointing the dashboard at a new address is just a reassignment.
 import reachy_connect
+import reachy_modes
 HANDSFREE_URL = os.environ.get("HANDSFREE_URL", "http://localhost:8765").rstrip("/")
 # Live camera MJPEG feed served by reachy_camera.py (runs in the SDK venv).
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
+MIMIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mimic")
+HANDSFREE_STREAM = os.environ.get("HANDSFREE_STREAM", "http://localhost:8765/stream")
 # Voice-chat control API served by reachy_chat.py.
 CHAT_URL = os.environ.get("CHAT_URL", "http://localhost:8772").rstrip("/")
 # Face-memory control API served by reachy_memory.py.
@@ -87,6 +90,11 @@ def _set_power(off: bool) -> None:
         # pose limp) — they must be re-enabled or wake_up silently does
         # nothing and the robot stays face-down.
         _post(f"{REACHY_URL}/api/motors/set_mode/enabled", timeout=10.0)
+        # Switched on = audible, but at the configured level rather than a
+        # hardcoded 100. This path used to silently undo VIBEY_VOLUME, so the
+        # volume you set stuck until the moment you used this button.
+        _post(f"{REACHY_URL}/api/volume/set",
+              {"volume": max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "100"))))})
         _post(f"{REACHY_URL}/api/move/play/wake_up", timeout=20.0)
         # face-following + speech wobble are core to feeling alive — they can
         # get dropped by daemon restarts, so re-assert on every wake.
@@ -333,6 +341,52 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
      cramped gap to the first panel. Own class, own spacing, and the robot's
      address demoted to a quiet mono chip so it stops competing with the
      status text. */
+  /* Off switch bar — deliberately the loudest thing on the page when off. */
+  #offbar{max-width:900px;margin:14px auto 6px;display:flex;align-items:center;
+    gap:16px;padding:14px 18px;border-radius:12px;
+    border:1px solid var(--good);background:color-mix(in srgb,var(--good) 10%,transparent)}
+  #offbar.is-off{border-color:var(--bad);
+    background:color-mix(in srgb,var(--bad) 16%,transparent)}
+  .offbar-txt{flex:1;min-width:0;line-height:1.35}
+  .offbar-txt strong{display:block;font-size:1.05rem;letter-spacing:-.01em}
+  .offbar-txt span{font-size:.85rem;color:var(--dim)}
+  #offbtn{cursor:pointer;border-radius:9px;padding:10px 20px;font-size:.95rem;
+    font-weight:700;letter-spacing:.01em;border:1px solid var(--bad);
+    background:var(--bad);color:#fff;flex:none}
+  #offbtn:hover{filter:brightness(1.08)}
+  #offbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #offbar.is-off #offbtn{border-color:var(--good);background:var(--good)}
+  #offbar.is-off .offbar-txt strong{color:var(--bad)}
+  /* Mimic, embedded. */
+  .panel-hd{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .ghostbtn{cursor:pointer;border-radius:8px;padding:6px 14px;font-size:.85rem;
+    font-weight:600;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--fg)}
+  .ghostbtn:hover{background:var(--line)}
+  .ghostbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .mimicnote{font-size:.82rem;color:var(--dim);margin:2px 0 10px;line-height:1.45}
+  #mimicframe{width:100%;height:min(78vh,900px);border:1px solid var(--line);
+    border-radius:10px;background:var(--panel-2);display:block}
+  /* Switch rows — named controls, not icons. */
+  #switches{max-width:900px;margin:0 auto 6px;display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:2px 20px;
+    padding:10px 18px;border-radius:12px;border:1px solid var(--line);
+    background:var(--panel)}
+  #switches.dimmed{opacity:.45;pointer-events:none}
+  .sw{display:flex;align-items:center;gap:12px;padding:9px 2px;cursor:pointer;
+    border-radius:8px}
+  .sw:hover{background:var(--panel-2)}
+  .sw input{position:absolute;opacity:0;width:0;height:0}
+  .sw-ui{flex:none;width:38px;height:22px;border-radius:11px;background:var(--line);
+    position:relative;transition:background .16s}
+  .sw-ui::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;
+    border-radius:50%;background:#fff;transition:transform .16s}
+  .sw input:checked + .sw-ui{background:var(--good)}
+  .sw input:checked + .sw-ui::after{transform:translateX(16px)}
+  .sw input:focus-visible + .sw-ui{outline:2px solid var(--accent);outline-offset:2px}
+  .sw-txt{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+  .sw-txt b{font-size:.92rem;font-weight:600}
+  .sw-txt i{font-style:normal;font-size:.76rem;color:var(--dim)}
   .statusline{max-width:900px;margin:8px auto 22px;display:flex;align-items:center;
               gap:9px;flex-wrap:wrap;line-height:1;font-size:12.5px;color:var(--dim)}
   .statusline .st-label{font-weight:600;color:var(--txt);letter-spacing:-.1px}
@@ -378,6 +432,7 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   .icon-btn.fast-on{background:var(--warn-soft);border-color:var(--warn-line)}
   .icon-btn.vibe-on{background:var(--violet-soft);border-color:var(--violet-line)}
   .icon-btn.openai-on{background:var(--openai-soft);border-color:var(--openai-line)}
+  .icon-btn.incognito-on{background:var(--violet-soft);border-color:var(--violet-line)}
   .micmeter{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);
             text-transform:uppercase;letter-spacing:.8px}
   .micbar{position:relative;width:72px;height:8px;border-radius:4px;background:var(--well);
@@ -385,6 +440,15 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   #miclevel{position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--good);
             transition:width .15s}
   #micnotch{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--warn)}
+  #mclevel{position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--good)}
+  .mcwave{width:100%;height:90px;margin-top:10px;border-radius:var(--r-md);
+          background:var(--well);border:1px solid var(--line);display:block}
+  #mcrec.on{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
+  /* The level meter cannot say WHY a quiet bar is quiet. This can. */
+  .recdot{font-size:10px;letter-spacing:.6px;padding:2px 7px;border-radius:20px;
+          border:1px solid var(--line);background:var(--well);color:var(--dim);
+          white-space:nowrap}
+  .recdot.rec{color:var(--bad);border-color:var(--bad-line);background:var(--bad-soft)}
   .vc-chip{font-size:12px;color:var(--dim);background:var(--well);border:1px solid var(--line);
            border-radius:20px;padding:6px 12px;white-space:nowrap}
   .vc-chip.live{color:var(--good);border-color:var(--good-line);background:var(--good-soft)}
@@ -541,6 +605,42 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   .combo-menu::-webkit-scrollbar-thumb,.modal::-webkit-scrollbar-thumb{
     background:var(--line);border-radius:99px;border:2px solid transparent;
     background-clip:content-box}
+  /* ---- Modes panel ----------------------------------------------------
+     Three stacked tiers, so the buttons are a ladder rather than a radio
+     group: picking "Pi + Mac" is picking everything below it too, and the
+     fill on each button shows how much of the whole robot that is. */
+  .mode-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .mode-btn{flex:1;min-width:150px;position:relative;overflow:hidden;
+    padding:11px 13px;border:1px solid var(--line);border-radius:11px;
+    background:var(--panel-2);color:var(--txt);cursor:pointer;text-align:left;
+    font:inherit;transition:border-color .15s,background .15s}
+  .mode-btn:hover{border-color:var(--accent-line)}
+  .mode-btn.on{border-color:var(--accent);background:var(--accent-soft)}
+  .mode-btn .mb-fill{position:absolute;inset:0 auto 0 0;background:var(--accent-soft);
+    z-index:0;transition:width .3s}
+  .mode-btn.on .mb-fill{background:var(--accent-soft);opacity:.85}
+  .mode-btn>span{position:relative;z-index:1;display:block}
+  .mode-btn .mb-name{font-weight:650;font-size:13px}
+  .mode-btn .mb-sub{font-size:11px;color:var(--dim);margin-top:2px;line-height:1.35}
+  .mode-btn .mb-pct{font-size:11px;color:var(--accent);margin-top:5px;font-variant-numeric:tabular-nums}
+  .mode-tier{margin-top:13px}
+  .mode-tier>h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 6px;font-weight:600}
+  .mode-cap{display:flex;gap:9px;align-items:flex-start;padding:5px 0;
+    border-top:1px solid var(--line-soft);font-size:12px}
+  .mode-tier>.mode-cap:first-of-type{border-top:0}
+  .mode-cap .mc-dot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px;
+    background:var(--faint)}
+  .mode-cap.live .mc-dot{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .mode-cap.dim{opacity:.45}
+  .mode-cap .mc-txt{flex:1;min-width:0}
+  .mode-cap .mc-note{display:block;font-size:11px;color:var(--dim);line-height:1.4;margin-top:1px}
+  .mode-cap .mc-port{flex:none;font-size:10px;padding:1px 6px;border-radius:20px;
+    border:1px solid var(--line);color:var(--dim);margin-top:3px;white-space:nowrap}
+  .mode-cap .mc-port[data-p=yes]{color:#63d68c;border-color:#2c5c3d}
+  .mode-cap .mc-port[data-p=native]{color:var(--accent);border-color:var(--accent-line)}
+  .mode-cap .mc-port[data-p=partial]{color:#e0b45c;border-color:#5c4a25}
+  .mode-cap .mc-port[data-p=no]{color:#c96a6a;border-color:#5c2f2f}
 </style>
 <script>
   // Runs before first paint: without this a light-mode user gets a dark flash.
@@ -557,6 +657,33 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   <button id=rebootbtn class=power title="Reboot the robot (fixes stuck motors/sounds/camera, ~30s)" style="color:var(--warn)">⟳</button>
   <button id=powerbtn class=power title="Put Vibey to sleep / wake it up">⏻</button>
 </div>
+<!-- The real off switch. Its own bar above everything, because "is this thing
+     listening to me right now" is the one question the page must answer before
+     any other, and it was previously only answerable by reading an icon. -->
+<div id=offbar>
+  <div class=offbar-txt>
+    <strong id=offtitle>Vibey is ON</strong>
+    <span id=offsub>listening — wake phrase active</span>
+  </div>
+  <button id=offbtn type=button>Turn OFF</button>
+</div>
+<!-- One row per thing that can be on or off, each named in plain words.
+     These were previously five unlabelled emoji buttons, which meant knowing
+     what the robot was currently doing required remembering what 🅾️ meant. -->
+<div id=switches>
+  <label class=sw><input type=checkbox id=sw-wake><span class=sw-ui></span>
+    <span class=sw-txt><b>Wake phrase</b><i>responds to "hey vibey"</i></span></label>
+  <label class=sw><input type=checkbox id=sw-claps><span class=sw-ui></span>
+    <span class=sw-txt><b>Clap to wake</b><i>two claps — also fires on doors, books</i></span></label>
+  <label class=sw><input type=checkbox id=sw-tracking><span class=sw-ui></span>
+    <span class=sw-txt><b>Face tracking</b><i>turns its head to follow you</i></span></label>
+  <label class=sw><input type=checkbox id=sw-openai><span class=sw-ui></span>
+    <span class=sw-txt><b>Realtime voice</b><i>full-duplex — just talk</i></span></label>
+  <label class=sw><input type=checkbox id=sw-mic><span class=sw-ui></span>
+    <span class=sw-txt><b>Microphone</b><i>off = hears nothing at all</i></span></label>
+  <label class=sw><input type=checkbox id=sw-naming><span class=sw-ui></span>
+    <span class=sw-txt><b>Learn names</b><i>off = sees you, won't ask who you are</i></span></label>
+</div>
 <div class=statusline id=status><span class=st-label>connecting…</span></div>
 <div class=grid>
   <div class="panel full">
@@ -570,6 +697,46 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
       </div>
     </div>
   </div>
+  <div class="panel full" id=djpanel>
+    <h2 class=panel-hd><span>DJ · <span id=djtitle>nothing loaded</span></span>
+      <span class=sub id=djbpm></span></h2>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0">
+      <span id=djdot style="width:18px;height:18px;border-radius:50%;background:#333;display:inline-block;transition:transform .06s,background .06s"></span>
+      <select id=djtrack style="min-width:180px"></select>
+      <button type=button class=ghostbtn id=djplay>▶ Play</button>
+      <button type=button class=ghostbtn id=djstop>■ Stop</button>
+      <button type=button class=ghostbtn id=djdown>−4%</button>
+      <input type=range id=djslider min=80 max=125 value=100 style="width:200px" title="tempo %">
+      <button type=button class=ghostbtn id=djup>+4%</button>
+      <span id=djpos class=sub></span>
+    </div>
+    <div class=sub>Say it instead: “play something”, “take it up”, “slower”, “stop the music”.</div>
+  </div>
+  <div class="panel full" id=modepanel>
+    <h2>Modes · what's actually running
+      <span id=modesub class=sub style="display:inline;margin-left:6px"></span></h2>
+    <div class=mode-row id=moderow></div>
+    <div id=modecaps></div>
+  </div>
+  <div class="panel full" id=mimicpanel>
+    <h2 class=panel-hd>
+      <span>Face mimicry · drive the head with your face</span>
+      <button id=mimicbtn type=button class=ghostbtn>Show</button>
+    </h2>
+    <!-- Loaded into an iframe, and only once opened.
+         An iframe rather than inlining: mimic is a self-contained app with its
+         own MediaPipe pipeline, its own SDK and a documented set of locked
+         layout invariants, so sharing a document with the dashboard would mean
+         CSS and global-name collisions for no gain. Lazily, because opening it
+         starts the webcam and downloads the vision model — neither of which
+         should happen to somebody who just wanted to see the camera feed. -->
+    <div id=mimicwrap style="display:none">
+      <div class=mimicnote>Runs the camera in your browser and drives the neck at
+        20&nbsp;Hz. Face tracking is suspended while it streams, and handed back
+        when you stop. Nothing moves while Vibey is switched off.</div>
+      <iframe id=mimicframe title="Face mimicry" allow="camera"></iframe>
+    </div>
+  </div>
   <div class="panel full">
     <h2>Voice · talk with Vibey</h2>
     <div class=vc-controls>
@@ -579,12 +746,14 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
           <button id=fastbtn class=icon-btn title="Fast mode: ElevenLabs agent, skips Claude">⚡</button>
           <button id=vibebtn class=icon-btn title="Vibe mode: OpenClaw agent — can improve its own code">🎮</button>
           <button id=openaibtn class=icon-btn title="Realtime mode: OpenAI full-duplex voice — just talk, interrupt anytime">🅾️</button>
+          <button id=incognitobtn class=icon-btn title="Incognito: keep watching and looking at people, but stop asking names, storing faces and taking snapshots">🕶️</button>
           <button id=resaybtn class=icon-btn title="Re-say the last thing Vibey said">🔁</button>
         </span>
         <span id=vcstatus class=vc-chip>connecting…</span>
         <span style="flex:1"></span>
         <span class=micmeter title="Mic level — bar past the notch means Vibey can hear it">
           mic <span class=micbar><span id=miclevel></span><span id=micnotch></span></span>
+          <span id=micmode class=recdot title="Recording state">–</span>
         </span>
       </div>
       <div class=vc-row>
@@ -664,6 +833,25 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
       <span id=capstatus class=sub style="margin:0"></span>
     </div>
     <div id=capgrid class=capgrid></div>
+  </div>
+  <div class="panel full">
+    <h2>🎤 Mic check <span class=sub style="display:inline;margin-left:6px">record your own mic, hear it back</span></h2>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button id=mcrec class=cap-btn>⏺ Record</button>
+      <button id=mcplay class=cap-btn disabled>▶ Play back</button>
+      <button id=mcdl class=cap-btn disabled>⬇ Download</button>
+      <button id=mcclear class=cap-btn disabled>✕ Clear</button>
+      <span id=mcstatus class=sub style="margin:0">idle</span>
+    </div>
+    <canvas id=mcwave class=mcwave width=900 height=90></canvas>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <span class=micmeter style="flex:1">
+        level <span class=micbar style="flex:1;width:auto"><span id=mclevel></span></span>
+        <b class=mono id=mcpeak style="min-width:52px">–</b>
+      </span>
+      <b class=mono id=mcclock>0.0s</b>
+    </div>
+    <audio id=mcaudio style="display:none"></audio>
   </div>
   <div class=panel>
     <h2>⏰ Alarms <span class=sub style="display:inline;margin-left:6px">wake-up shows</span></h2>
@@ -948,12 +1136,114 @@ $('resaybtn').onclick=async()=>{
   }catch(_){}
 };
 
+// Mimic: show/hide, and only build the iframe the first time it is shown.
+// Hiding TEARS IT DOWN rather than just display:none — the page holds a live
+// webcam and a 20 Hz send loop, and a hidden panel quietly driving the robot's
+// neck is exactly the kind of thing you cannot find later.
+$('mimicbtn').onclick=()=>{
+  const wrap=$('mimicwrap'), f=$('mimicframe'), open=wrap.style.display!=='none';
+  if(open){
+    f.removeAttribute('src');           // stops the camera and the send loop
+    wrap.style.display='none';
+    $('mimicbtn').textContent='Show';
+  }else{
+    if(!f.getAttribute('src')) f.setAttribute('src','/mimic/');
+    wrap.style.display='';
+    $('mimicbtn').textContent='Hide';
+    wrap.scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+};
+
+// Each switch: how to read it out of /state, and where a click sends it.
+// Kept as data so a new toggle is one row here plus one row of markup.
+const SWITCHES={
+  'sw-wake':     {read:d=>d.switches&&d.switches.wake,
+                  post:v=>['/switch',{name:'wake',on:v}]},
+  'sw-claps':    {read:d=>d.switches&&d.switches.claps,
+                  post:v=>['/switch',{name:'claps',on:v}]},
+  'sw-tracking': {read:d=>d.switches&&d.switches.tracking,
+                  post:v=>['/switch',{name:'tracking',on:v}]},
+  'sw-openai':   {read:d=>d.openai,        post:v=>['/openaimode',{openai:v}]},
+  // Inverted on purpose: the control reads "Microphone", so ON must mean it
+  // can hear. The service stores the opposite (muted), and a switch whose
+  // label is the negation of its state is how you click the wrong one.
+  'sw-mic':      {read:d=>!d.muted,        post:v=>['/mute',{muted:!v}]},
+  'sw-naming':   {read:d=>!d.incognito,    post:v=>['/incognito',{on:!v}]},
+};
+let swBusy={};
+for(const [id,cfg] of Object.entries(SWITCHES)){
+  const el=$(id); if(!el) continue;
+  el.addEventListener('change',async()=>{
+    const v=el.checked; swBusy[id]=true;
+    const [url,body]=cfg.post(v);
+    try{
+      const r=await fetch(url,{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!r.ok){ el.checked=!v; }        // refused — put it back
+    }catch(_){ el.checked=!v; }
+    swBusy[id]=false;
+  });
+}
+function paintSwitches(d){
+  for(const [id,cfg] of Object.entries(SWITCHES)){
+    const el=$(id); if(!el||swBusy[id]) continue;
+    const v=cfg.read(d);
+    if(typeof v==='boolean'&&el.checked!==v) el.checked=v;
+  }
+  // Off is the master switch: the rest are meaningless until it's back on.
+  const box=$('switches'); if(box) box.classList.toggle('dimmed',!!d.off);
+}
+
+let vcOff=false;
+function paintOff(off){
+  vcOff=!!off;
+  const bar=$('offbar');
+  bar.classList.toggle('is-off',vcOff);
+  $('offtitle').textContent = vcOff ? 'Vibey is OFF' : 'Vibey is ON';
+  $('offsub').textContent = vcOff
+    ? 'not listening — the wake phrase will not work'
+    : 'listening — wake phrase active';
+  $('offbtn').textContent = vcOff ? 'Turn ON' : 'Turn OFF';
+  // Waking is refused while off, so don't offer a button that will just fail.
+  ['powerbtn','alarmbtn'].forEach(id=>{const b=$(id); if(b) b.disabled=vcOff;});
+}
+$('offbtn').onclick=async()=>{
+  const want=!vcOff;
+  paintOff(want);                       // optimistic; /state corrects it
+  $('offbtn').disabled=true;
+  try{
+    const r=await fetch('/off',
+      {method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({off:want})});
+    const d=await r.json();
+    if(typeof d.off==='boolean') paintOff(d.off);
+  }catch(_){}
+  $('offbtn').disabled=false;
+};
+
 let vcVibe=false;
 $('vibebtn').onclick=async()=>{
   vcVibe=!vcVibe;
   $('vibebtn').classList.toggle('vibe-on',vcVibe);
   try{await fetch('/vibemode',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({vibe:vcVibe})});}catch(_){}
+};
+
+let vcIncognito=false;
+$('incognitobtn').onclick=async()=>{
+  const want=!vcIncognito;
+  // Not optimistic: this one is a privacy control, and a button that looks on
+  // while the robot is still enrolling faces is the failure that matters. Only
+  // paint it after the server confirms.
+  try{
+    const r=await fetch('/incognito',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({on:want})});
+    if(!r.ok)throw new Error('rejected');
+    vcIncognito=want;
+    $('incognitobtn').classList.toggle('incognito-on',vcIncognito);
+  }catch(_){
+    $('saystatus').textContent='incognito toggle failed — faces unchanged';
+  }
 };
 
 let vcOpenai=false;
@@ -1023,6 +1313,14 @@ async function chatTick(){
       vcOpenai=d.openai;
       $('openaibtn').classList.toggle('openai-on',vcOpenai);
     }
+    if(d.incognito!==undefined&&d.incognito!==vcIncognito){
+      vcIncognito=d.incognito;
+      $('incognitobtn').classList.toggle('incognito-on',vcIncognito);
+    }
+    // The off state survives restarts and can be set from `vibey off`, so the
+    // bar follows the service rather than only this tab's last click.
+    if(d.off!==undefined&&d.off!==vcOff) paintOff(d.off);
+    paintSwitches(d);
     $('openaibtn').disabled = d.openai_available===false;
     $('openaibtn').title = d.openai_available===false
       ? 'Realtime unavailable — OPENAI_API_KEY not configured in .env'
@@ -1033,6 +1331,16 @@ async function chatTick(){
       const scale=(d.mic_threshold||0.008)*3;   // notch lands at ~1/3 of the bar
       $('miclevel').style.width=Math.min(100,(d.mic_level/scale)*100)+'%';
       $('micnotch').style.left=Math.min(96,((d.mic_threshold||0.008)/scale)*100)+'%';
+    }
+    // Recording or not, and which kind of not — a flat meter looks the same
+    // whether the ears are off, Vibey is talking, or the room is just quiet.
+    if(d.mic_mode!==undefined){
+      const short={recording:'● REC',speaking:'my turn',muted:'muted',
+                   off:'ears off',idle:'not rec'};
+      const el=$('micmode');
+      el.textContent=short[d.mic_mode]||d.mic_mode;
+      el.classList.toggle('rec',d.mic_mode==='recording');
+      el.title=(d.mic_label||d.mic_mode)+' — noise profile: '+(d.noise_profile||'on');
     }
     $('fastbtn').disabled = d.fast_available===false;
     $('fastbtn').title = d.fast_available===false
@@ -1409,6 +1717,82 @@ $('alarmadd').onclick=async()=>{
 };
 setInterval(fetchAlarms,20000);fetchAlarms();
 
+/* ---- Modes -------------------------------------------------------------
+   Everything here reads back off the live system rather than off whatever was
+   last clicked. Clicking a mode flips switches; it does not become the truth,
+   and if the robot is unplugged the Pi tier goes dark no matter which button
+   is lit. That gap is the whole point of the panel. */
+let modeBusy=false;
+const TIER_ORDER=['pi','mac','cloud'];
+const TIER_NAME={pi:'On the Pi',mac:'On the Mac',cloud:'In the cloud'};
+const PORT_TXT={native:'already on the Pi',yes:'could move to the Pi',
+  partial:'could partly move',no:'cannot move',
+  'n/a':'disappears on the Pi'};
+
+async function setMode(m){
+  if(modeBusy) return; modeBusy=true;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.disabled=true);
+  try{
+    const r=await fetch('/setmode',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})});
+    renderModes(await r.json());
+  }catch(_){}
+  modeBusy=false;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.disabled=false);
+}
+
+function renderModes(d){
+  if(!d||!d.modes) return;
+  const row=document.getElementById('moderow');
+  row.innerHTML='';
+  for(const key of TIER_ORDER.map((_,i)=>['pi','mac','cloud'][i])){
+    const m=d.modes[key]; if(!m) continue;
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='mode-btn'+(d.current===key?' on':'');
+    b.innerHTML='<span class=mb-fill style="width:'+m.pct+'%"></span>'
+      +'<span class=mb-name>'+m.label+'</span>'
+      +'<span class=mb-sub>'+m.sub+'</span>'
+      +'<span class=mb-pct>'+m.count+' of '+d.total+' capabilities · '+m.pct+'%</span>';
+    b.onclick=()=>setMode(key);
+    row.appendChild(b);
+  }
+  const cur=d.modes[d.current];
+  document.getElementById('modesub').textContent=
+    d.live+' of '+d.total+' up right now'+(d.reachable?'':' · robot unreachable');
+
+  const wrap=document.getElementById('modecaps');
+  wrap.innerHTML='';
+  for(const t of TIER_ORDER){
+    const caps=d.caps.filter(c=>c.tier===t);
+    if(!caps.length) continue;
+    const sec=document.createElement('div');
+    sec.className='mode-tier';
+    // A tier outside the current mode is dimmed rather than hidden: the
+    // question "what would I get by going up a level" needs the answer to
+    // stay on screen.
+    const inMode=cur&&cur.tiers.includes(t);
+    sec.innerHTML='<h3>'+TIER_NAME[t]+(inMode?'':' · not in this mode')+'</h3>';
+    for(const c of caps){
+      const el=document.createElement('div');
+      el.className='mode-cap'+(c.live?' live':'')+(inMode?'':' dim');
+      el.innerHTML='<span class=mc-dot></span><span class=mc-txt>'
+        +'<b>'+c.label+'</b><span class=mc-note>'+c.note+'</span></span>'
+        +'<span class=mc-port data-p="'+c.portable+'">'
+        +(PORT_TXT[c.portable]||c.portable)+'</span>';
+      sec.appendChild(el);
+    }
+    wrap.appendChild(sec);
+  }
+}
+
+async function fetchModes(){
+  if(modeBusy) return;
+  try{ renderModes(await(await fetch('/modes')).json()); }catch(_){}
+}
+setInterval(fetchModes,6000);fetchModes();
+
+
 // --- connection panel: find the robot, repoint the stack, move networks ----
 // Everything here talks to the robot's own daemon API (proxied through this
 // server), which is all the Reachy desktop app was ever doing.
@@ -1506,6 +1890,162 @@ setInterval(fetchAlarms,20000);fetchAlarms();
 
   find(false);   // quick look on load
 })();
+
+// --- mic check: record from THIS browser's mic, see it, hear it back -------
+// Entirely client-side. Nothing is uploaded — the point is to judge a mic
+// before trusting what Vibey transcribes from it.
+(function(){
+  const $ = id => document.getElementById(id);
+  const MAX_MS = 15000;                       // short by design; this is a test
+  const rec=$('mcrec'), play=$('mcplay'), dl=$('mcdl'), clr=$('mcclear');
+  const status=$('mcstatus'), level=$('mclevel'), peakEl=$('mcpeak');
+  const clock=$('mcclock'), audio=$('mcaudio'), cv=$('mcwave');
+  if(!rec || !cv) return;
+  const ctx2d = cv.getContext('2d');
+
+  let stream=null, mr=null, ac=null, analyser=null, chunks=[], url=null;
+  let raf=0, t0=0, stopTimer=0, peak=0;
+  const trail = [];                           // recent levels -> waveform
+
+  function paintWave(){
+    const w=cv.width, h=cv.height, mid=h/2;
+    ctx2d.clearRect(0,0,w,h);
+    ctx2d.strokeStyle = themeColor('--line');
+    ctx2d.beginPath(); ctx2d.moveTo(0,mid); ctx2d.lineTo(w,mid); ctx2d.stroke();
+    if(!trail.length) return;
+    ctx2d.fillStyle = themeColor('--accent');
+    const step = w / 180, bar = Math.max(1, step-1);
+    trail.forEach((v,i) => {
+      const hh = Math.max(1, v*(h-8));
+      ctx2d.fillRect(i*step, mid-hh/2, bar, hh);
+    });
+  }
+
+  function tick(){
+    if(!analyser) return;
+    const buf = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(buf);
+    let sum=0, pk=0;
+    for(let i=0;i<buf.length;i++){ sum+=buf[i]*buf[i]; pk=Math.max(pk,Math.abs(buf[i])); }
+    const rms = Math.sqrt(sum/buf.length);
+    peak = Math.max(peak, pk);
+    level.style.width = Math.min(100, rms*320) + '%';
+    level.style.background = themeColor(pk>0.98 ? '--bad' : rms>0.02 ? '--good' : '--warn');
+    peakEl.textContent = (20*Math.log10(Math.max(pk,1e-5))).toFixed(0)+' dB';
+    trail.push(Math.min(1, rms*4));
+    if(trail.length>180) trail.shift();
+    paintWave();
+    clock.textContent = ((performance.now()-t0)/1000).toFixed(1)+'s';
+    raf = requestAnimationFrame(tick);
+  }
+
+  async function start(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      status.textContent = 'this browser has no mic access (needs https or localhost)';
+      return;
+    }
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    }catch(e){
+      status.textContent = e && e.name === 'NotAllowedError'
+        ? 'mic permission denied — allow it in the browser address bar, then retry'
+        : 'no mic available: ' + ((e&&e.name)||e);
+      return;
+    }
+    ac = new (window.AudioContext||window.webkitAudioContext)();
+    analyser = ac.createAnalyser(); analyser.fftSize = 1024;
+    ac.createMediaStreamSource(stream).connect(analyser);
+    chunks=[]; trail.length=0; peak=0;
+    mr = new MediaRecorder(stream);
+    mr.ondataavailable = e => { if(e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = finish;
+    mr.start();
+    t0 = performance.now();
+    stopTimer = setTimeout(stop, MAX_MS);
+    raf = requestAnimationFrame(tick);
+    rec.textContent='⏹ Stop'; rec.classList.add('on');
+    play.disabled = dl.disabled = clr.disabled = true;
+    status.textContent = 'recording — up to '+(MAX_MS/1000)+'s';
+  }
+
+  function stop(){ if(mr && mr.state !== 'inactive') mr.stop(); }
+
+  function finish(){
+    clearTimeout(stopTimer); cancelAnimationFrame(raf); raf=0;
+    if(stream){ stream.getTracks().forEach(t => t.stop()); stream=null; }
+    if(ac){ ac.close(); ac=null; } analyser=null;
+    level.style.width='0%';
+    rec.textContent='⏺ Record'; rec.classList.remove('on');
+    if(!chunks.length){ status.textContent='nothing recorded'; return; }
+    if(url) URL.revokeObjectURL(url);
+    const blob = new Blob(chunks, {type: (mr && mr.mimeType) || 'audio/webm'});
+    url = URL.createObjectURL(blob);
+    audio.src = url;
+    play.disabled = dl.disabled = clr.disabled = false;
+    const dB = 20*Math.log10(Math.max(peak,1e-5));
+    status.textContent = clock.textContent + ' recorded · peak ' + dB.toFixed(0) + ' dB'
+      + (dB > -1.5 ? ' — clipping, move back' : dB < -30 ? ' — very quiet, move closer' : ' — looks healthy');
+  }
+
+  rec.onclick = () => (mr && mr.state === 'recording') ? stop() : start();
+  play.onclick = () => { audio.currentTime = 0; audio.play(); };
+  dl.onclick = () => {
+    if(!url) return;
+    const a = document.createElement('a');
+    a.href = url; a.download = 'mic-check.webm'; a.click();
+  };
+  clr.onclick = () => {
+    if(url){ URL.revokeObjectURL(url); url=null; }
+    audio.pause(); audio.removeAttribute('src');
+    chunks=[]; trail.length=0; peak=0; paintWave();
+    play.disabled = dl.disabled = clr.disabled = true;
+    clock.textContent='0.0s'; peakEl.textContent='–'; status.textContent='cleared';
+  };
+  paintWave();
+})();
+
+// --- DJ panel: talks straight to reachy_dj.py on :8778 -----------------------
+(function(){
+  const DJ='http://localhost:8778';
+  const $=id=>document.getElementById(id);
+  const post=(p,b)=>fetch(DJ+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>null);
+  let st=null, lastBeat=0, sliding=false;
+  async function tracks(){
+    try{ const t=await(await fetch(DJ+'/tracks')).json();
+      const sel=$('djtrack'); const cur=sel.value;
+      sel.innerHTML=(t.tracks||[]).map(n=>`<option>${n}</option>`).join('')||'<option>(drop files in ~/Music/vibey)</option>';
+      if(cur) sel.value=cur;
+    }catch(_){}
+  }
+  async function poll(){
+    try{ st=await(await fetch(DJ+'/status')).json(); }catch(_){ st=null; }
+    if(!st){ $('djtitle').textContent='dj service offline'; return; }
+    $('djtitle').textContent=st.track||'nothing loaded';
+    $('djbpm').textContent=st.bpm?`${st.target_bpm} BPM`+(st.rate!==1?` (track ${st.bpm})`:''):'';
+    $('djpos').textContent=st.track?`${st.position}s / ${st.duration}s`:'';
+    $('djplay').textContent=st.playing?'❚❚ Pause':'▶ Play';
+    if(!sliding) $('djslider').value=Math.round((st.rate||1)*100);
+  }
+  // Beat pulse: derived from position and BPM, so it lines up with the audio
+  // without the page needing the beat grid.
+  function pulse(){
+    if(st&&st.playing&&st.target_bpm){
+      const spb=60/st.target_bpm; const now=performance.now()/1000;
+      if(now-lastBeat>=spb){ lastBeat=now; const d=$('djdot');
+        d.style.background='#9f6'; d.style.transform='scale(1.6)';
+        setTimeout(()=>{d.style.background='#333';d.style.transform='scale(1)';},90); }
+    }
+    requestAnimationFrame(pulse);
+  }
+  $('djplay').onclick=async()=>{ if(st&&st.playing) await post('/pause'); else await post('/play',{track:$('djtrack').value}); poll(); };
+  $('djstop').onclick=async()=>{ await post('/stop'); poll(); };
+  $('djup').onclick=async()=>{ await post('/nudge',{percent:4}); poll(); };
+  $('djdown').onclick=async()=>{ await post('/nudge',{percent:-4}); poll(); };
+  $('djslider').oninput=()=>{ sliding=true; };
+  $('djslider').onchange=async e=>{ sliding=false; if(st&&st.bpm) await post('/tempo',{bpm:st.bpm*e.target.value/100}); poll(); };
+  $('djtrack').onchange=async e=>{ await post('/load',{track:e.target.value}); poll(); };
+  tracks(); poll(); setInterval(poll,700); setInterval(tracks,10000); pulse();
+})();
 </script></body></html>"""
 
 
@@ -1523,6 +2063,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/perception"):
             self._send(json.dumps(gather()).encode(), "application/json")
+        elif self.path.startswith("/modes"):
+            self._send(json.dumps(reachy_modes.status()).encode(),
+                       "application/json")
         elif self.path.startswith("/chatstate"):
             self._send(json.dumps(
                 _get(f"{CHAT_URL}/state") or {"mode": "offline"}
@@ -1594,6 +2137,75 @@ class Handler(BaseHTTPRequestHandler):
                 if len(out) >= 60:
                     break
             self._send(json.dumps(out).encode(), "application/json")
+        elif self.path.split("?", 1)[0] == "/mimic/handsfree.mjpg":
+            # Pipe handsfree's MJPEG through this origin.
+            #
+            # handsfree (browser_viewer.py, :8765) owns the MacBook camera from
+            # login onward, so the mimic page cannot open the device itself. It
+            # can read handsfree's stream instead — but only same-origin: an
+            # <img> from :8765 taints the canvas it is drawn into, and
+            # captureStream() on a tainted canvas throws. Proxying here avoids
+            # touching handsfree at all, which is the point — it stays a
+            # separate project that happens to own the camera.
+            try:
+                up = urllib.request.urlopen(HANDSFREE_STREAM, timeout=6)
+            except Exception:
+                self.send_response(502); self.end_headers(); return
+            self.send_response(200)
+            self.send_header("Content-Type", up.headers.get(
+                "Content-Type", "multipart/x-mixed-replace; boundary=handsfree-frame"))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                while True:
+                    chunk = up.read(8192)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            except Exception:
+                pass  # browser navigated away; nothing to say about it
+            finally:
+                up.close()
+        elif self.path.split("?", 1)[0] == "/mimic/robot.json":
+            # The page is served from this host; the robot is on another. The
+            # browser cannot guess the second from the first, and defaulting to
+            # location.hostname silently pointed the whole app at localhost:8000.
+            # Prefer REACHY_HOST: start_wonder.sh resolves the mDNS name to an
+            # address once at boot and exports it. Handing the browser
+            # "reachy-mini.local" instead makes it pay an mDNS lookup on every
+            # request, and this app makes ~30 of them a second.
+            host = os.environ.get("REACHY_HOST", "").strip()
+            url = f"http://{host}:8000" if host else REACHY_URL
+            self._send(json.dumps({"url": url}).encode(), "application/json")
+        elif self.path.split("?", 1)[0] == "/mimic":
+            # Redirect to the trailing slash, or every relative href in
+            # index.html resolves against the site root: /style.css, /main.js.
+            # The page then renders unstyled with no script, which looks exactly
+            # like the app being broken rather than the URL being wrong.
+            self.send_response(301)
+            self.send_header("Location", "/mimic/")
+            self.end_headers()
+        elif self.path.startswith("/mimic"):
+            # The mime_bot app (RemiFabre/mime_bot on Hugging Face), served from
+            # here rather than from the Space so it is same-origin with the rest
+            # of the dashboard and so its transport can be the local one.
+            rel = self.path.split("?", 1)[0][len("/mimic"):].lstrip("/") or "index.html"
+            path = os.path.normpath(os.path.join(MIMIC_DIR, rel))
+            if not path.startswith(MIMIC_DIR) or not os.path.isfile(path):
+                self.send_response(404); self.end_headers(); return
+            ctype = {"html": "text/html", "js": "text/javascript",
+                     "css": "text/css", "md": "text/plain"}.get(
+                         path.rsplit(".", 1)[-1], "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+            # No caching. These files are edited live, and a stale ES module is
+            # invisible: the page loads, looks right, and silently runs last
+            # week's logic. Cost of re-fetching 100KB over localhost is nil.
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            self.send_header("Content-Length", str(os.path.getsize(path)))
+            self.end_headers()
+            with open(path, "rb") as f:
+                self.wfile.write(f.read())
         elif self.path.startswith("/captures/"):
             name = os.path.basename(urllib.parse.unquote(self.path.split("/captures/", 1)[1]))
             path = os.path.join(CAPTURES_DIR, name)
@@ -1693,6 +2305,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 out = {"error": str(e)}
             self._send(json.dumps(out).encode(), "application/json")
+        elif self.path.startswith("/setmode"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                self._send(json.dumps(
+                    reachy_modes.apply(body.get("mode", "mac"))).encode(),
+                    "application/json")
+            except Exception as e:  # noqa: BLE001
+                self._send(json.dumps({"error": str(e)}).encode(),
+                           "application/json", 400)
         elif self.path.startswith("/power"):
             try:
                 n = int(self.headers.get("Content-Length", 0))
@@ -1793,6 +2415,8 @@ class Handler(BaseHTTPRequestHandler):
         if (self.path.startswith("/mute") or self.path.startswith("/volume")
                 or self.path.startswith("/nameface") or self.path.startswith("/fastmode")
                 or self.path.startswith("/vibemode") or self.path.startswith("/openaimode")
+                or self.path.startswith("/incognito") or self.path.startswith("/off")
+                or self.path.startswith("/switch")
                 or self.path.startswith("/chatmsg")
                 or self.path.startswith("/resay") or self.path.startswith("/deletesample")
                 or self.path.startswith("/deleteface")):
@@ -1807,6 +2431,24 @@ class Handler(BaseHTTPRequestHandler):
                     out = _post(f"{CHAT_URL}/vibemode", {"vibe": bool(body.get("vibe"))})
                 elif self.path.startswith("/openaimode"):
                     out = _post(f"{CHAT_URL}/openaimode", {"openai": bool(body.get("openai"))})
+                elif self.path.startswith("/switch"):
+                    out = _post(f"{CHAT_URL}/switch",
+                                {"name": body.get("name"),
+                                 "on": bool(body.get("on"))}, timeout=15.0)
+                    # _post returns None for any failure, including a refusal
+                    # (switching something on while Vibey is OFF). Raising here
+                    # turns that into a non-200 the page can see, so the toggle
+                    # springs back instead of showing a state that never took.
+                    if out is None:
+                        raise ValueError("switch refused — is Vibey off?")
+                elif self.path.startswith("/off"):
+                    out = _post(f"{CHAT_URL}/off", {"off": bool(body.get("off"))},
+                                timeout=25.0)
+                elif self.path.startswith("/incognito"):
+                    # Via the chat service, not straight to the face service:
+                    # it flips the brain's prompt and tools in the same call.
+                    out = _post(f"{CHAT_URL}/incognito", {"on": bool(body.get("on"))},
+                                timeout=10.0)
                 elif self.path.startswith("/chatmsg"):
                     out = _post(f"{CHAT_URL}/message", {"text": body.get("text", "")},
                                 timeout=10.0)
@@ -1858,10 +2500,23 @@ def main():
     # each sit out their full timeout before the server binds. That made the
     # dashboard unreachable for ~16s exactly when the robot was down — i.e.
     # precisely when you need the connection panel to go find it.
-    threading.Thread(target=lambda: (
-        _post(f"{REACHY_URL}/api/media/tracking/enable"),
-        _post(f"{REACHY_URL}/api/media/wobbling/enable"),
-    ), daemon=True).start()
+    # ...and never when Vibey has been switched off. The watchdog restarts this
+    # service on its own, so an unconditional enable here meant a robot the user
+    # had explicitly turned off started following them around the room again a
+    # few minutes later, with the dashboard still truthfully reporting "OFF".
+    # The off state is the chat service's, read over HTTP rather than duplicated.
+    def _nudge_live():
+        try:
+            with urllib.request.urlopen(f"{CHAT_URL}/state", timeout=4) as r:
+                if json.loads(r.read()).get("off"):
+                    print("[viewer] Vibey is OFF — not enabling tracking", flush=True)
+                    return
+        except Exception:  # noqa: BLE001 — chat down: leave the robot alone
+            return
+        _post(f"{REACHY_URL}/api/media/tracking/enable")
+        _post(f"{REACHY_URL}/api/media/wobbling/enable")
+
+    threading.Thread(target=_nudge_live, daemon=True).start()
     print(f"[viewer] reachy    = {REACHY_URL}")
     print(f"[viewer] handsfree = {HANDSFREE_URL}")
     print(f"[viewer] open       http://localhost:{PORT}")
