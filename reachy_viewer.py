@@ -94,7 +94,7 @@ def _set_power(off: bool) -> None:
         # hardcoded 100. This path used to silently undo VIBEY_VOLUME, so the
         # volume you set stuck until the moment you used this button.
         _post(f"{REACHY_URL}/api/volume/set",
-              {"volume": max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "100"))))})
+              {"volume": max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "85"))))})
         _post(f"{REACHY_URL}/api/move/play/wake_up", timeout=20.0)
         # face-following + speech wobble are core to feeling alive — they can
         # get dropped by daemon restarts, so re-assert on every wake.
@@ -2426,6 +2426,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+            return
+        if self.path.startswith("/turn"):
+            # The one button. Three things have to agree for Vibey to be "on":
+            # the chat service's OFF gate (which refuses /wake while set), the
+            # body (motors enabled, wake_up played), and the conversation
+            # (/wake). The old page had a switch for each and they drifted —
+            # a robot sitting up with no brain, or a brain with a limp body.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                on = bool((json.loads(self.rfile.read(n)) if n else {}).get("on"))
+                if on:
+                    _post(f"{CHAT_URL}/off", {"off": False}, timeout=10.0)
+                    _set_power(False)
+                    out = _post(f"{CHAT_URL}/wake", {}, timeout=40.0) or {}
+                else:
+                    _post(f"{CHAT_URL}/sleep", {}, timeout=30.0)
+                    _set_power(True)
+                    out = _post(f"{CHAT_URL}/off", {"off": True}, timeout=10.0) or {}
+                self._send(json.dumps({"ok": True, "on": on, **out}).encode(), "application/json")
+            except Exception as e:
+                self._send(json.dumps({"ok": False, "error": str(e)}).encode(), "application/json", 500)
             return
         if self.path.startswith(("/wake", "/sleep", "/dials", "/brain")):
             try:

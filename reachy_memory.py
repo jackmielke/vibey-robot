@@ -146,6 +146,7 @@ MAX_FACES = int(os.environ.get("MAX_FACES", "4"))
 # do not enrol.
 MIN_FACE_PX = int(os.environ.get("MIN_FACE_PX", "70"))
 MIN_BLUR_VAR = float(os.environ.get("MIN_BLUR_VAR", "45"))
+MAX_BLOCKINESS = float(os.environ.get("MAX_BLOCKINESS", "2.5"))
 
 GREET_COOLDOWN = 600.0    # don't re-greet a named person within this window (10 min)
 LEARN_COOLDOWN = 45.0     # min time between auto-banked samples per person
@@ -462,6 +463,31 @@ def encode_faces(jpeg: bytes) -> list[dict]:
         buf = io.BytesIO()
         crop.save(buf, format="JPEG", quality=85)
         uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        # Corruption, measured directly. The camera arrives over WebRTC and a
+        # dropped packet leaves the decoder painting 16-pixel macroblocks from
+        # the wrong frame. The blur gate cannot catch that — block edges are
+        # SHARP, so a corrupted face scores as unusually crisp and sails through.
+        # Of 35 saved "people", about ten were the same person enrolled again
+        # from smeared frames. So: how much of the image's edge energy sits
+        # exactly on 16-pixel column boundaries. Natural faces: ~1x. Torn
+        # frames: 2-4x.
+        blocky = 0.0
+        if region.shape[0] >= 48 and region.shape[1] >= 48:
+            g = region.astype(np.float64).mean(axis=2)
+            dx = np.abs(np.diff(g, axis=1))
+            cols = np.arange(dx.shape[1]) + max(0, left) + 1
+            on_edge = dx[:, (cols % 16) == 0].mean() if ((cols % 16) == 0).any() else 0.0
+            off_edge = dx[:, (cols % 16) != 0].mean() + 1e-6
+            blocky = float(on_edge / off_edge)
+        # And whether it is a face at all. HOG fires on dogs and t-shirt
+        # logos; the landmark model does not find two eyes and a mouth on either.
+        parts = 0
+        try:
+            lm = face_recognition.face_landmarks(img, [(top, right, bottom, left)])
+            if lm:
+                parts = sum(1 for k in ("left_eye", "right_eye", "nose_tip", "top_lip") if lm[0].get(k))
+        except Exception:  # noqa: BLE001
+            parts = 4   # landmark model unavailable: do not block on it
         out.append({
             "embedding": enc.tolist(),
             "snapshot": uri,
@@ -469,6 +495,8 @@ def encode_faces(jpeg: bytes) -> list[dict]:
             "y": (cy / h - 0.5) * 2,
             "face_px": face_px,
             "blur": blur,
+            "blocky": blocky,
+            "parts": parts,
         })
     return out
 
@@ -480,7 +508,42 @@ def _passes_quality(face: dict) -> tuple[bool, str]:
         return False, f"too small ({face.get('face_px', 0)}px < {MIN_FACE_PX})"
     if face.get("blur", 0.0) < MIN_BLUR_VAR:
         return False, f"too blurry (var {face.get('blur', 0.0):.0f} < {MIN_BLUR_VAR})"
+    if face.get("blocky", 0.0) > MAX_BLOCKINESS:
+        return False, f"torn frame (blockiness {face.get('blocky', 0.0):.1f} > {MAX_BLOCKINESS})"
+    if face.get("parts", 4) < 4:
+        return False, f"not a face ({face.get('parts', 0)}/4 landmarks)"
     return True, ""
+
+
+# A stranger has to be seen more than once before they exist.
+#
+# The strongest guard of the three, because it needs no image heuristics at all:
+# corruption is different on every frame, so garbage embeddings never agree with
+# each other, while a real new face produces near-identical embeddings cycle
+# after cycle. Enrollment waits for STRANGER_CONFIRM sightings inside
+# STRANGER_WINDOW_S whose embeddings all sit within STRANGER_AGREE of the first.
+STRANGER_CONFIRM = int(os.environ.get("STRANGER_CONFIRM", "3"))
+STRANGER_WINDOW_S = float(os.environ.get("STRANGER_WINDOW_S", "12"))
+STRANGER_AGREE = float(os.environ.get("STRANGER_AGREE", "0.45"))
+_PENDING: list[dict] = []     # {"emb": np.array, "first": t, "count": n}
+
+
+def _stranger_confirmed(embedding: list[float]) -> bool:
+    """Counts this sighting against recent unmatched ones; True once the same
+    face has been seen enough times to be believed."""
+    import numpy as np
+    now = time.time()
+    emb = np.asarray(embedding)
+    _PENDING[:] = [p for p in _PENDING if now - p["first"] < STRANGER_WINDOW_S]
+    for p in _PENDING:
+        if float(np.linalg.norm(p["emb"] - emb)) < STRANGER_AGREE:
+            p["count"] += 1
+            if p["count"] >= STRANGER_CONFIRM:
+                _PENDING.remove(p)
+                return True
+            return False
+    _PENDING.append({"emb": emb, "first": now, "count": 1})
+    return False
 
 
 def best_match(embedding: list[float], samples: list[dict]):
@@ -1117,6 +1180,9 @@ def run():
                 ok, why = _passes_quality(f)
                 if not ok:
                     print(f"[memory] skip enroll — {why}", flush=True)
+                    continue
+                if not _stranger_confirmed(embedding):
+                    print("[memory] stranger seen — waiting to see them again before enrolling", flush=True)
                     continue
                 try:
                     row = sb_insert_face(snap)

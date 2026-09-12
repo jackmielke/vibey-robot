@@ -127,8 +127,8 @@ async function poll(){
   const st=$('status'), p=$('power');
   if(!chat){ st.textContent='stack offline'; st.className='pill offline'; p.disabled=true; return; }
   p.disabled=false;
-  const awake=!chat.asleep;
-  st.textContent=awake?(chat.speaking?'awake · talking':chat.listening?'awake · listening':'awake'):'asleep';
+  const awake=!chat.asleep && !chat.off;
+  st.textContent=chat.off?'off':awake?(chat.speaking?'awake · talking':chat.listening?'awake · listening':'awake'):'asleep';
   st.className='pill'+(awake?' awake':'');
   p.textContent=awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
   if(dials){ document.querySelectorAll('.sw[data-dial]').forEach(b=>{ const k=b.dataset.dial; b.classList.toggle('on',!!dials[k]); b.disabled=!awake&&(k==='listening'||k==='face_tracking'); });
@@ -137,7 +137,8 @@ async function poll(){
   renderLog();
   const c=await j('/cost'); if(c) $('cost').textContent=`$${(c.today||0).toFixed(2)} today`;
 }
-$('power').onclick=async()=>{ $('power').disabled=true; await j(chat.asleep?'/wake':'/sleep',{}); setTimeout(poll,1500); };
+$('power').onclick=async()=>{ const p=$('power'); const on=!(chat&&!chat.asleep&&!chat.off); p.disabled=true; p.textContent=on?'Waking…':'Sleeping…';
+  const r=await j('/turn',{on}); if(r&&r.error) alert(r.error); setTimeout(poll,1500); };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; await j('/dials',{[k]:!(dials&&dials[k])}); poll(); });
 $('vol').oninput=e=>$('volv').textContent=e.target.value+'%';
 $('vol').onchange=async e=>{ await j('/dials',{volume:+e.target.value}); poll(); };
