@@ -39,6 +39,7 @@ import subprocess
 import threading
 import datetime
 import time
+import urllib.parse
 import urllib.request
 import wave
 from collections import deque
@@ -47,6 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 import sounddevice as sd
 
+import reachy_denoise
 from reachy_voice import load_env, say, upload_sound, play_sound
 
 load_env()
@@ -180,9 +182,20 @@ STATE = {
     "openai": (os.environ.get("OPENAI_MODE", "1").strip() == "1"
                and bool(os.environ.get("OPENAI_API_KEY", "").strip())),
     "openai_available": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+    # Seeing people without filing them: face tracking and glancing stay on,
+    # enrolling and name-asking stop. Mirrors reachy_memory's own flag — that
+    # service owns the truth, this is the copy the dashboard reads. Same env
+    # var on both sides so a boot default can't disagree with itself.
+    "incognito": os.environ.get("FACE_NAMING", "1").strip() == "0",
     "think_aloud": False,     # when True, Vibey narrates their thinking before each reply
     "mic_level": 0.0,         # smoothed RMS — dashboard meter for "can it hear me?"
     "mic_threshold": 0.0,     # the speech gate, so the meter can show the bar
+    # Recording or not, and — the part a level meter can never show — WHICH of
+    # the four not-recordings this is: ears off, muted, Vibey talking, or
+    # listening with nobody speaking. Owned by reachy_denoise.
+    "mic_mode": "idle",
+    "noise_profile": reachy_denoise.get_mode(),
+    "voice_brain": None,
 }
 
 # Vibe mode: route turns to the "vibe" OpenClaw agent — a full agentic brain
@@ -656,6 +669,92 @@ ASLEEP_VOICE = {"on": False}
 # or memory — a quick "shush" for a phone call, not bedtime. Distinct
 # phrasing on purpose so normal chatter about tv volumes etc. can't trip it.
 EARS_CLOSED = {"on": False}
+
+# --------------------------------------------------------------------------- #
+# OFF — genuinely off, not asleep.
+#
+# Asleep was never off. It puts the head down and closes the realtime socket,
+# but the wake detector keeps running by design: that is the whole point of
+# being able to say "hey vibey" to a sleeping robot. There was no state that
+# meant "stop listening entirely and do not come back until I say so", and a
+# robot in a bedroom needs one.
+#
+# Off gates EVERY path back to consciousness, not just the loud one:
+#
+#   * the wake phrase          (_try_power_voice returns early)
+#   * the audio loop itself    (blocks before any capture — no listening at all)
+#   * POST /wake               (refused, so the dashboard can't contradict it)
+#   * a face appearing         (memory service is paused)
+#   * a VibeVerse sighting     (nudges are dropped)
+#
+# It persists to disk. An off switch that turns itself back on when the service
+# restarts is not an off switch, and this service restarts often.
+_OFF_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".off")
+
+
+def _load_state() -> dict:
+    """Both the master switch and the individual ones.
+
+    Reads the older one-character format too, so an upgrade doesn't silently
+    switch a robot back on that somebody had deliberately switched off.
+    """
+    try:
+        raw = open(_OFF_FILE).read().strip()
+    except Exception:  # noqa: BLE001
+        return {}
+    if raw in ("0", "1"):
+        return {"off": raw == "1"}
+    try:
+        return json.loads(raw) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_SAVED = _load_state()
+OFF = {"on": bool(_SAVED.get("off"))}
+
+# Individual switches, each independently meaningful. OFF is the master: it
+# forces all of these off without erasing what they were, so switching back on
+# restores the setup rather than a default.
+#
+#   wake      the "hey vibey" phrase detector
+#   tracking  the robot's OWN face-following + speech wobble, which run on the
+#             daemon and keep going even with every Mac-side service stopped
+SWITCHES = {
+    "wake": _SAVED.get("wake", os.environ.get("WAKE_PHRASE", "1").strip() != "0"),
+    # Separate from the phrase because it misfires for different reasons: two
+    # claps is any pair of loud transients, so a dropped book, a door, or just
+    # clapping in conversation wakes it. Defaults OFF — a wake route that fires
+    # on applause should be opted into, not out of.
+    "claps": _SAVED.get("claps", os.environ.get("CLAP_WAKE", "0").strip() != "0"),
+    "tracking": _SAVED.get("tracking",
+                           os.environ.get("FACE_TRACKING", "1").strip() != "0"),
+}
+
+
+def _apply_tracking(on: bool) -> None:
+    """Robot-side face-following and speech wobble, together.
+
+    Kept as one switch because they are one behaviour to anyone watching: the
+    head turning to follow you. Splitting them would be two controls for a
+    thing nobody thinks of as two things.
+    """
+    verb = "enable" if on else "disable"
+    _robot_post(f"/api/media/tracking/{verb}", 8)
+    _robot_post(f"/api/media/wobbling/{verb}", 8)
+
+
+def _persist_off() -> None:
+    """Write the whole control state, not just OFF.
+
+    A switch that resets on restart is not a switch — and this service is
+    restarted by the watchdog on its own schedule.
+    """
+    try:
+        with open(_OFF_FILE, "w") as f:
+            json.dump({"off": OFF["on"], **SWITCHES}, f)
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] could not persist control state: {e}", flush=True)
 _EARS_CLOSE_RE = re.compile(
     r"\b(mute yourself|close your ears|zip it|hush now|quiet please)\b", re.I)
 _EARS_OPEN_RE = re.compile(
@@ -741,6 +840,15 @@ def _voice_sleep() -> None:
 def _voice_wake() -> None:
     ASLEEP_VOICE["on"] = False
     _robot_post("/api/motors/set_mode/enabled", 10)
+    # Voice back on = full volume, always, whatever the last session or the
+    # night clamp left it at.
+    try:
+        import reachy_wakesleep
+        reachy_wakesleep.set_volume(reachy_wakesleep.WAKE_VOLUME,
+                                    log=lambda m: print(m, flush=True),
+                                    force=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[power] volume failed: {e}", flush=True)
     _robot_post("/api/move/play/wake_up")
     _robot_post("/api/media/tracking/enable", 8)
     _robot_post("/api/media/wobbling/enable", 8)
@@ -758,7 +866,43 @@ def _voice_wake() -> None:
     _speak_line("Good morning! I'm up.")
 
 
+def _power_down() -> None:
+    """Everything that should stop when the switch goes off.
+
+    Order matters: close the conversation first so nothing is mid-sentence,
+    then pause the camera, then put the body down. Motors go last because
+    goto_sleep needs them to get there.
+    """
+    try:
+        _sleep_now()
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] off: sleep failed: {e}", flush=True)
+    try:
+        import urllib.request as _u
+        _u.urlopen(_u.Request(f"{MEM_URL}/pause", data=b'{"paused": true}',
+                              method="POST",
+                              headers={"Content-Type": "application/json"}),
+                   timeout=5).read()
+    except Exception:  # noqa: BLE001
+        pass
+    # The daemon does its OWN face-following and speech-wobble, on the robot,
+    # with no involvement from anything on the Mac. Switching off every Mac-side
+    # service therefore left a robot that was still turning to watch people —
+    # "off" in the logs and visibly alive in the room. These two are the actual
+    # difference between quiet and still.
+    _robot_post("/api/media/tracking/disable", 8)
+    _robot_post("/api/media/wobbling/disable", 8)
+    # Limp rather than holding a pose: a switched-off robot that is still
+    # tensioning its servos is not off in any sense a person would accept.
+    _robot_post("/api/motors/set_mode/disabled", 10)
+
+
 def _try_power_voice(text: str) -> bool:
+    # Off means off. Nothing said in the room brings it back — only the
+    # dashboard button or `vibey on`. The wake switch does the same for the
+    # phrase alone, leaving everything else running.
+    if OFF["on"] or not SWITCHES["wake"]:
+        return True
     if ASLEEP_VOICE["on"]:
         if _WAKE_RE.search(text):
             _log_turn("you", text)
@@ -948,6 +1092,14 @@ def _typed_turn(text: str) -> None:
 
 def _log_turn(who: str, text: str) -> None:
     TRANSCRIPT.append({"who": who, "text": text, "ts": int(time.time() * 1000)})
+    # The deque above is 40 lines of RAM for the dashboard and is gone on
+    # restart. This is the copy that keeps. Queued, never written inline —
+    # this runs on the realtime receive loop, which is also feeding audio.
+    try:
+        import reachy_transcript
+        reachy_transcript.log(who, text)
+    except Exception as e:  # noqa: BLE001 — a lost line must not end a sentence
+        print(f"[chat] transcript failed: {e}", flush=True)
 
 
 class _CtrlHandler(BaseHTTPRequestHandler):
@@ -964,8 +1116,33 @@ class _CtrlHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/state"):
-            self._json({**STATE, "ears_closed": EARS_CLOSED["on"],
-                       "mic_source": MIC_SOURCE, "transcript": list(TRANSCRIPT)})
+            # Capture state is read live rather than from STATE: in realtime
+            # mode this loop has handed the mic over entirely and stops
+            # updating STATE, and a dashboard frozen on "recording" from four
+            # minutes ago is worse than no indicator at all.
+            cap = reachy_denoise.capture_status()
+            self._json({**STATE, "off": OFF["on"],
+                       "switches": dict(SWITCHES),
+                       "ears_closed": EARS_CLOSED["on"],
+                       "mic_source": MIC_SOURCE,
+                       "mic_mode": cap["mode"], "mic_label": cap["label"],
+                       "recording": cap["recording"],
+                       "noise_profile": cap["profile"],
+                       "transcript": list(TRANSCRIPT)})
+        elif self.path.startswith("/transcript"):
+            # The kept conversation, not the 40-line dashboard deque in /state.
+            # ?day=YYYY-MM-DD for one day, ?days=1 to list what exists.
+            import reachy_transcript
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if q.get("days"):
+                self._json({"days": reachy_transcript.days()})
+            else:
+                day = (q.get("day") or [None])[0]
+                self._json({"day": day or "today",
+                            "entries": reachy_transcript.read(day)})
+        elif self.path.startswith("/brain"):
+            self._json({"brain": voice_brain(), "options": VOICE_BRAINS,
+                        "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"]})
         elif self.path.startswith("/cost"):
             import reachy_cost
             self._json({**reachy_cost.summary(),
@@ -982,6 +1159,35 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("Content-Length", 0))
                 STATE["muted"] = bool(json.loads(self.rfile.read(n)).get("muted"))
                 self._json({"ok": True, "muted": STATE["muted"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/incognito"):
+            # One button, two halves. The face service must stop enrolling and
+            # stop fishing for names; the realtime brain must lose the
+            # remember_face tool and the prompt line telling it to ask. Doing
+            # only the first leaves the robot asking a question it can no
+            # longer act on, which is worse than either state.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                on = bool(json.loads(self.rfile.read(n)).get("on"))
+                import urllib.request as _u
+                _u.urlopen(_u.Request(
+                    f"{MEM_URL}/incognito",
+                    data=json.dumps({"on": on}).encode(), method="POST",
+                    headers={"Content-Type": "application/json"}),
+                    timeout=5).read()
+                STATE["incognito"] = on
+                # Only matters if the realtime brain is live right now; a
+                # session that starts later reads the flag when it builds.
+                live = False
+                try:
+                    import reachy_openai_realtime as _rt
+                    live = _rt.refresh_live_session()
+                except Exception as e:  # noqa: BLE001
+                    print(f"[chat] session refresh failed: {e}", flush=True)
+                print(f"[chat] incognito {'on' if on else 'off'}"
+                      f"{' (session rebuilt)' if live else ''}", flush=True)
+                self._json({"ok": True, "on": on})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/fastmode"):
@@ -1065,6 +1271,10 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 text = (body.get("text") or "").strip()
                 if not text:
                     raise ValueError("text required")
+                if OFF["on"]:
+                    # A face in the room is a wake path too. Drop it silently.
+                    self._json({"ok": True, "delivered": "none", "off": True})
+                    return
                 import reachy_openai_realtime as _rt
                 sess = _rt.LIVE_SESSION.get("session")
                 if sess is not None and STATE["openai"]:
@@ -1077,14 +1287,79 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     self._json({"ok": True, "delivered": "none"})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/brain"):
+            # Choosing a brain while awake restarts the conversation on the new
+            # one — a session in flight cannot change engines underneath itself.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                name = set_voice_brain(str(body.get("brain", "")))
+                if not STATE["asleep"]:
+                    _sleep_now()
+                    time.sleep(1.5)
+                    _wake_now("brain change")
+                self._json({"ok": True, "brain": name})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/wake"):
             # Wake by hand. The wake phrase needs a person in the room to test —
             # the robot cannot hear its own speaker — so there has to be a way in
             # that does not depend on it, both for the dashboard and for a demo
             # where the room is loud.
             try:
+                if OFF["on"]:
+                    # Refused rather than silently ignored: a wake that reports
+                    # success while nothing happens is how you end up debugging
+                    # a robot that was simply switched off.
+                    self._json({"error": "Vibey is OFF — switch it on first",
+                                "off": True}, 409)
+                    return
                 _wake_now("manual")
                 self._json({"ok": True, "asleep": STATE["asleep"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/switch"):
+            # One route for every individual toggle, so adding the next one is
+            # a dict entry rather than another endpoint.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n))
+                name = str(body.get("name", "")).strip()
+                if name not in SWITCHES:
+                    raise ValueError(f"unknown switch {name!r}")
+                if OFF["on"]:
+                    raise ValueError("Vibey is OFF — switch it on first")
+                on = bool(body.get("on"))
+                SWITCHES[name] = on
+                _persist_off()          # survives the watchdog restarting us
+                if name == "tracking":
+                    threading.Thread(target=_apply_tracking, args=(on,),
+                                     daemon=True).start()
+                print(f"[chat] {name} {'on' if on else 'off'}", flush=True)
+                self._json({"ok": True, "switches": dict(SWITCHES)})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/off"):
+            # The actual off switch. Sleeping the body is the easy half; the
+            # half that matters is that nothing gets to wake it afterwards.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                want = bool(json.loads(self.rfile.read(n)).get("off"))
+                OFF["on"] = want
+                _persist_off()
+                if want:
+                    ASLEEP_VOICE["on"] = True
+                    threading.Thread(target=_power_down, daemon=True).start()
+                else:
+                    ASLEEP_VOICE["on"] = False
+                    # Switching back on restores whatever the individual
+                    # switches were set to, rather than a blanket default.
+                    if SWITCHES["tracking"]:
+                        threading.Thread(target=_apply_tracking, args=(True,),
+                                         daemon=True).start()
+                print(f"[chat] {'OFF — not listening' if want else 'ON'}",
+                      flush=True)
+                self._json({"ok": True, "off": OFF["on"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/sleep"):
@@ -1634,6 +1909,42 @@ def _handle_fast_turn(agent: "FastAgent", audio: np.ndarray, muted_until: float)
 # --------------------------------------------------------------------------- #
 # Main loop
 # --------------------------------------------------------------------------- #
+# Which voice engine answers when the robot is awake.
+#
+#   realtime  gpt-realtime-2.1 (or -mini): one model hears, thinks, speaks and
+#             calls tools. What everything was built on.
+#   live      gpt-live-1: a voice layer that delegates thinking and tool calls
+#             to a backend model. Faster to first word, tighter replies, priced
+#             per minute. Different wire format — see reachy_openai_live.py.
+#
+# Persisted, because the dashboard picks it and the choice should survive a
+# restart. Takes effect on the next wake: a session in flight keeps its engine.
+VOICE_BRAIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".voice_brain.json")
+VOICE_BRAINS = {
+    "realtime": {"label": "Realtime 2.1", "module": "reachy_openai_realtime",
+                 "blurb": "One model hears, thinks and speaks. ~$0.03-0.10/min by tokens."},
+    "live":     {"label": "GPT-Live 1", "module": "reachy_openai_live",
+                 "blurb": "Voice layer + gpt-5.5 brain. Snappier. $0.05/min + backend tokens."},
+}
+
+
+def voice_brain() -> str:
+    try:
+        v = json.loads(open(VOICE_BRAIN_PATH).read()).get("brain")
+        return v if v in VOICE_BRAINS else "realtime"
+    except Exception:
+        return os.environ.get("VOICE_BRAIN", "realtime") if os.environ.get("VOICE_BRAIN") in VOICE_BRAINS else "realtime"
+
+
+def set_voice_brain(name: str) -> str:
+    if name not in VOICE_BRAINS:
+        raise ValueError(f"unknown brain {name!r}; one of {list(VOICE_BRAINS)}")
+    with open(VOICE_BRAIN_PATH, "w") as f:
+        json.dump({"brain": name}, f)
+    STATE["voice_brain"] = name
+    return name
+
+
 def _run_openai_realtime() -> None:
     """Hand the mic + speaker to the self-contained OpenAI Realtime engine and
     block until STATE['openai'] is turned back off. Fully decoupled from the
@@ -1646,7 +1957,11 @@ def _run_openai_realtime() -> None:
     _log_turn("wonder", "(OpenAI Realtime mode — full-duplex, just talk)")
     print("[chat] → handing off to OpenAI Realtime engine", flush=True)
     try:
-        import reachy_openai_realtime as rt
+        import importlib
+        brain = voice_brain()
+        STATE["voice_brain"] = brain
+        rt = importlib.import_module(VOICE_BRAINS[brain]["module"])
+        print(f"[chat] voice brain: {brain} ({VOICE_BRAINS[brain]['module']})", flush=True)
         rt.run(
             should_run=lambda: STATE["openai"],
             on_user_text=lambda t: _log_turn("you", t),
@@ -1668,6 +1983,11 @@ def _run_openai_realtime() -> None:
 def _wake_now(reason: str = "wake") -> None:
     """Called from the wake listener. Hands the conversation over, then stirs.
 
+    The first thing it does is refuse when Vibey is off, or when the route that
+    fired has been switched off. Belt and braces with the gates in the listener:
+    this is the single funnel every wake route passes through, so a future one
+    that forgets to check is still caught here.
+
     ORDER MATTERS, and getting it wrong produced the strangest bug of the night.
     Waking used to set `asleep = False`, then do the body — volume, upload a
     chime, play the wake animation, up to several seconds of blocking HTTP — and
@@ -1685,6 +2005,16 @@ def _wake_now(reason: str = "wake") -> None:
     if not STATE["asleep"]:
         return
     print(f"[chat] waking ({reason})", flush=True)
+    if OFF["on"]:
+        print(f"[chat] ignored {reason} wake — Vibey is OFF", flush=True)
+        return
+    if reason == "clap" and not SWITCHES["claps"]:
+        print("[chat] ignored clap — clap-to-wake is off", flush=True)
+        return
+    if reason == "phrase" and not SWITCHES["wake"]:
+        print("[chat] ignored phrase — wake phrase is off", flush=True)
+        return
+
     # Both flags together, before anything slow. The main loop must never see
     # "awake, but nobody is holding the conversation".
     STATE["openai"] = bool(STATE["openai_available"])
@@ -1694,6 +2024,10 @@ def _wake_now(reason: str = "wake") -> None:
         try:
             import reachy_wakesleep
             reachy_wakesleep.wake(log=lambda m: print(m, flush=True))
+            # Breathing starts only once the body is up, and only while awake:
+            # a sleeping robot drifting its head is not resting, it is haunted.
+            import reachy_idle
+            reachy_idle.start()
         except Exception as e:  # noqa: BLE001
             print(f"[chat] wake body failed: {e}", flush=True)
         threading.Thread(target=_mode_antennas, daemon=True).start()
@@ -1703,6 +2037,11 @@ def _wake_now(reason: str = "wake") -> None:
 
 def _sleep_now() -> None:
     """Head down, falling notes, socket closed."""
+    try:
+        import reachy_idle
+        reachy_idle.stop()
+    except Exception:  # noqa: BLE001
+        pass
     if STATE["asleep"]:
         return
     print("[chat] going to sleep", flush=True)
@@ -1776,10 +2115,18 @@ def main():
     # sleeping robot back on, so it must outlive every session.
     try:
         import reachy_wake
+        # This listener holds its OWN connection to the microphone and runs for
+        # the life of the process, independent of the main audio loop — so the
+        # OFF gate down there never touched it. Worse, its only condition was
+        # `asleep`, and switching Vibey off SETS asleep: turning it off made
+        # clap-to-wake *more* live, not less. Every gate belongs here.
         _waker = reachy_wake.WakeListener(
             on_wake=_wake_now,
-            should_listen=lambda: STATE["asleep"],
+            should_listen=lambda: (STATE["asleep"] and not OFF["on"]
+                                   and (SWITCHES["wake"] or SWITCHES["claps"])),
+            phrase=lambda: SWITCHES["wake"] and not OFF["on"],
             log=lambda m: print(m, flush=True))
+        _waker.clap_enabled = lambda: SWITCHES["claps"] and not OFF["on"]
         _waker.start()
         print("[chat] asleep — clap twice or say 'hey vibey'", flush=True)
     except Exception as e:  # noqa: BLE001
@@ -1815,6 +2162,8 @@ def main():
         if STATE["asleep"]:
             # Nothing to do but wait to be woken. The wake listener has its own
             # connection to the microphone, so this loop can simply idle.
+            reachy_denoise.set_listening(False)
+            STATE["mic_mode"] = reachy_denoise.update_capture(False)
             time.sleep(0.2)
             continue
 
@@ -1868,13 +2217,34 @@ def main():
         effective_muted_until = max(muted_until, MUTED_EXT["until"])
         STATE["speaking"] = now < effective_muted_until
         STATE["listening"] = not STATE["speaking"] and not STATE["muted"]
-        if now < effective_muted_until or STATE["muted"]:  # Vibey talking, or user muted
+        # Hand the recording state to reachy_denoise, which owns the one
+        # answer to "is this being recorded, and if not, which of the four
+        # reasons is it?" — the same answer the dashboard and the voice tool
+        # read. Speaking also freezes the noise estimate, so Vibey's own voice
+        # is never learned as the room.
+        reachy_denoise.set_speaking(max(0.0, effective_muted_until - now))
+        reachy_denoise.set_muted(bool(STATE["muted"]))
+        reachy_denoise.set_listening(not STATE["asleep"])
+        # Off blocks here, before anything is captured or transcribed. Muting
+        # would have been enough to stop the wake phrase, but this is the line
+        # that makes "off" honest: no audio is examined at all.
+        if OFF["on"] or now < effective_muted_until or STATE["muted"]:
+            STATE["mic_mode"] = reachy_denoise.update_capture(False)
             pre_roll.clear(); buf = []; in_speech = False
             continue
+
+        # Same suppressor the realtime brain uses, so a room tuned by voice in
+        # one mode is still tuned in the other. Denoising BEFORE the RMS gate
+        # is the point: a fixed threshold cannot tell a quiet voice across the
+        # room from music beside the robot, because they measure the same —
+        # but they stop measuring the same once the music has been subtracted.
+        data = reachy_denoise.process_block(data[:, 0], "live", SR).reshape(-1, 1)
 
         rms = float(np.sqrt(np.mean(data ** 2)))
         # light smoothing so the dashboard meter reads steadily
         STATE["mic_level"] = round(0.6 * STATE["mic_level"] + 0.4 * rms, 5)
+        STATE["mic_mode"] = reachy_denoise.update_capture(rms > SPEECH_RMS)
+        STATE["noise_profile"] = reachy_denoise.get_mode()
         if rms > SPEECH_RMS:
             if not in_speech:
                 in_speech = True
