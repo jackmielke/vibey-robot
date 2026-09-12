@@ -2247,7 +2247,22 @@ class Handler(BaseHTTPRequestHandler):
                     "IDENTITY.md — a file the robot writes itself.</p>"
                     "</body></html>")
             self._send(page.encode(), "text/html; charset=utf-8")
-        elif self.path == "/" or self.path.startswith("/index"):
+        elif self.path == "/" or self.path.startswith("/control"):
+            try:
+                html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "control.html"), "rb").read()
+                self._send(html, "text/html; charset=utf-8")
+            except Exception as e:
+                self._send(f"control.html missing: {e}".encode(), "text/plain", 500)
+        elif self.path.startswith("/chatstate"):
+            self._send(json.dumps(_get(f"{CHAT_URL}/state", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path.startswith("/dials"):
+            self._send(json.dumps(_get(f"{CHAT_URL}/dials", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path.startswith("/brain"):
+            self._send(json.dumps(_get(f"{CHAT_URL}/brain", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path.startswith("/cost"):
+            self._send(json.dumps(_get(f"{CHAT_URL}/cost", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path == "/full" or self.path.startswith("/index"):
             html = (PAGE
                     .replace("%REACHY%", json.dumps(REACHY_URL))
                     .replace("%HANDSFREE%", json.dumps(HANDSFREE_URL))
@@ -2411,6 +2426,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+            return
+        if self.path.startswith(("/wake", "/sleep", "/dials", "/brain")):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                out = _post(f"{CHAT_URL}{self.path.split('?')[0]}", body, timeout=40.0)
+                self._send(json.dumps(out or {"ok": False}).encode(), "application/json")
+            except Exception as e:
+                self._send(json.dumps({"error": str(e)}).encode(), "application/json", 500)
             return
         if (self.path.startswith("/mute") or self.path.startswith("/volume")
                 or self.path.startswith("/nameface") or self.path.startswith("/fastmode")

@@ -1140,6 +1140,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 day = (q.get("day") or [None])[0]
                 self._json({"day": day or "today",
                             "entries": reachy_transcript.read(day)})
+        elif self.path.startswith("/dials"):
+            self._json(_dials())
         elif self.path.startswith("/brain"):
             self._json({"brain": voice_brain(), "options": VOICE_BRAINS,
                         "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"]})
@@ -1285,6 +1287,15 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     # back to a different voice — an unprompted line from a brain
                     # nobody is talking to is the thing being replaced here.
                     self._json({"ok": True, "delivered": "none"})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/dials"):
+            # One switchboard for the control center. Every key is optional;
+            # whatever is present is applied, and the full state comes back.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                self._json(_set_dials(body))
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/brain"):
@@ -1943,6 +1954,54 @@ def set_voice_brain(name: str) -> str:
         json.dump({"brain": name}, f)
     STATE["voice_brain"] = name
     return name
+
+
+def _dials() -> dict:
+    """Every switch the control center can flip, read from wherever it lives."""
+    import reachy_openai_realtime as rt
+    try:
+        import reachy_denoise
+        denoise = reachy_denoise.describe()
+    except Exception:  # noqa: BLE001
+        denoise = None
+    try:
+        import reachy_wakesleep
+        vol = reachy_wakesleep._last_volume.get("level")
+    except Exception:  # noqa: BLE001
+        vol = None
+    return {
+        "awake": not STATE["asleep"],
+        "listening": rt.voice_detection_active(),
+        "face_tracking": bool(rt.FACE_DETECTION.get("on", True)),
+        "noise_suppression": denoise,
+        "muted": bool(STATE.get("muted")),
+        "incognito": bool(STATE.get("incognito")),
+        "think_aloud": bool(STATE.get("think_aloud")),
+        "volume": vol,
+        "voice_brain": voice_brain(),
+        "mic_source": MIC_SOURCE,
+    }
+
+
+def _set_dials(body: dict) -> dict:
+    import reachy_openai_realtime as rt
+    if "listening" in body:
+        rt.set_voice_detection(bool(body["listening"]))
+    if "face_tracking" in body:
+        rt.set_face_detection(bool(body["face_tracking"]), log=lambda m: print(m, flush=True))
+    if "noise_suppression" in body:
+        import reachy_denoise
+        reachy_denoise.set_mode(str(body["noise_suppression"]))
+    if "muted" in body:
+        STATE["muted"] = bool(body["muted"])
+    if "think_aloud" in body:
+        STATE["think_aloud"] = bool(body["think_aloud"])
+    if "volume" in body:
+        import reachy_wakesleep
+        reachy_wakesleep.set_volume(int(body["volume"]), log=lambda m: print(m, flush=True), force=True)
+    if "voice_brain" in body:
+        set_voice_brain(str(body["voice_brain"]))
+    return _dials()
 
 
 def _run_openai_realtime() -> None:
