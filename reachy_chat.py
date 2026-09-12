@@ -1306,10 +1306,12 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(n)) if n else {}
                 name = set_voice_brain(str(body.get("brain", "")))
                 if not STATE["asleep"]:
-                    _sleep_now()
-                    time.sleep(1.5)
-                    _wake_now("brain change")
-                self._json({"ok": True, "brain": name})
+                    def _swap():
+                        _sleep_now()
+                        time.sleep(1.5)
+                        _wake_now("brain change")
+                    threading.Thread(target=_swap, daemon=True).start()
+                self._json({"ok": True, "brain": name, "restarting": not STATE["asleep"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/wake"):

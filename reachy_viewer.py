@@ -102,6 +102,24 @@ def _set_power(off: bool) -> None:
         _post(f"{REACHY_URL}/api/media/wobbling/enable")
 
 
+TURNING = {"to": None}
+_PEOPLE_CACHE: dict = {"at": 0.0, "data": None}
+
+
+def _turn(on: bool) -> None:
+    try:
+        if on:
+            _post(f"{CHAT_URL}/off", {"off": False}, timeout=10.0)
+            _set_power(False)
+            _post(f"{CHAT_URL}/wake", {}, timeout=40.0)
+        else:
+            _post(f"{CHAT_URL}/sleep", {}, timeout=30.0)
+            _set_power(True)
+            _post(f"{CHAT_URL}/off", {"off": True}, timeout=10.0)
+    finally:
+        TURNING["to"] = None
+
+
 def _reboot_robot() -> None:
     """Full daemon restart on the robot — the fix for a stuck backend
     (symptoms: motions/sounds ignored, camera WebRTC won't connect). Takes
@@ -2078,9 +2096,15 @@ class Handler(BaseHTTPRequestHandler):
             from reachy_sfx import catalog
             self._send(json.dumps(catalog()).encode(), "application/json")
         elif self.path.startswith("/peoplelist"):
-            self._send(json.dumps(
-                _get(f"{MEM_URL}/people", timeout=8.0) or []
-            ).encode(), "application/json")
+            # Cached: this is a Supabase round trip carrying every saved photo
+            # as base64, which took the Friends panel eight seconds to appear
+            # and made the page look broken on first load.
+            now = time.time()
+            if now - _PEOPLE_CACHE["at"] > 20 or _PEOPLE_CACHE["data"] is None:
+                fresh = _get(f"{MEM_URL}/people", timeout=12.0)
+                if fresh is not None:
+                    _PEOPLE_CACHE.update(at=now, data=fresh)
+            self._send(json.dumps(_PEOPLE_CACHE["data"] or []).encode(), "application/json")
         elif self.path.startswith("/knownnames"):
             self._send(json.dumps(
                 _get(f"{MEM_URL}/names", timeout=8.0) or []
@@ -2255,7 +2279,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(f"control.html missing: {e}".encode(), "text/plain", 500)
         elif self.path.startswith("/chatstate"):
-            self._send(json.dumps(_get(f"{CHAT_URL}/state", timeout=4.0) or {}).encode(), "application/json")
+            st = _get(f"{CHAT_URL}/state", timeout=4.0) or {}
+            st["turning"] = TURNING["to"]
+            self._send(json.dumps(st).encode(), "application/json")
         elif self.path.startswith("/dials"):
             self._send(json.dumps(_get(f"{CHAT_URL}/dials", timeout=4.0) or {}).encode(), "application/json")
         elif self.path.startswith("/brain"):
@@ -2433,18 +2459,17 @@ class Handler(BaseHTTPRequestHandler):
             # body (motors enabled, wake_up played), and the conversation
             # (/wake). The old page had a switch for each and they drifted —
             # a robot sitting up with no brain, or a brain with a limp body.
+            # Answered immediately; the twenty seconds of motors and socket
+            # happen on a thread. The page reads TURNING from /chatstate and
+            # shows "waking…" — a button that is dead for twenty seconds reads
+            # as broken, whatever it is doing underneath.
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 on = bool((json.loads(self.rfile.read(n)) if n else {}).get("on"))
-                if on:
-                    _post(f"{CHAT_URL}/off", {"off": False}, timeout=10.0)
-                    _set_power(False)
-                    out = _post(f"{CHAT_URL}/wake", {}, timeout=40.0) or {}
-                else:
-                    _post(f"{CHAT_URL}/sleep", {}, timeout=30.0)
-                    _set_power(True)
-                    out = _post(f"{CHAT_URL}/off", {"off": True}, timeout=10.0) or {}
-                self._send(json.dumps({"ok": True, "on": on, **out}).encode(), "application/json")
+                if TURNING["to"] is None:
+                    TURNING["to"] = "on" if on else "off"
+                    threading.Thread(target=_turn, args=(on,), daemon=True).start()
+                self._send(json.dumps({"ok": True, "turning": TURNING["to"]}).encode(), "application/json")
             except Exception as e:
                 self._send(json.dumps({"ok": False, "error": str(e)}).encode(), "application/json", 500)
             return
