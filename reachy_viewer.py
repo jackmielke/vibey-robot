@@ -2271,11 +2271,20 @@ class Handler(BaseHTTPRequestHandler):
                     "IDENTITY.md — a file the robot writes itself.</p>"
                     "</body></html>")
             self._send(page.encode(), "text/html; charset=utf-8")
-        elif self.path == "/" or self.path.startswith("/control"):
+        elif self.path.split("?")[0] in ("/", "/control"):
             try:
                 html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          "control.html"), "rb").read()
-                self._send(html, "text/html; charset=utf-8")
+                # Never cached. The page changes as often as the code does, and a
+                # browser holding yesterday's JavaScript against today's endpoints
+                # produces buttons that do nothing, with no error anywhere.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+                return
             except Exception as e:
                 self._send(f"control.html missing: {e}".encode(), "text/plain", 500)
         elif self.path.startswith("/chatstate"):

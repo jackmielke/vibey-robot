@@ -2065,6 +2065,15 @@ def _wake_now(reason: str = "wake") -> None:
     """
     if not STATE["asleep"]:
         return
+    # Its own bedtime is not a wake-up call. Going to sleep is a motor move and
+    # a chime, and the clap detector heard exactly that as clap-clap two seconds
+    # after "Turn off" — so the robot put itself to bed and got straight back up.
+    # Sounds and claps are ignored for a few seconds after any sleep; a person
+    # pressing the button or texting still gets through.
+    if reason not in ("manual", "telegram", "brain change") \
+            and time.time() - LAST_SLEEP_AT["t"] < 6.0:
+        print(f"[chat] ignored {reason} wake — just went to sleep", flush=True)
+        return
     print(f"[chat] waking ({reason})", flush=True)
     if OFF["on"]:
         print(f"[chat] ignored {reason} wake — Vibey is OFF", flush=True)
@@ -2096,8 +2105,12 @@ def _wake_now(reason: str = "wake") -> None:
     threading.Thread(target=_body, daemon=True).start()
 
 
+LAST_SLEEP_AT = {"t": 0.0}
+
+
 def _sleep_now() -> None:
     """Head down, falling notes, socket closed."""
+    LAST_SLEEP_AT["t"] = time.time()
     try:
         import reachy_idle
         reachy_idle.stop()
