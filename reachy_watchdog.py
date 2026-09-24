@@ -121,6 +121,9 @@ def _restart(name: str) -> None:
     print(f"[watchdog] restarted {name}", flush=True)
 
 
+_last_alert: dict = {}   # service -> date of last Telegram give-up alert
+
+
 def main() -> None:
     print(f"[watchdog] guarding {', '.join(SERVICES)} every {CHECK_S}s", flush=True)
     # everything just booted with the stack — give it all a grace window
@@ -151,12 +154,18 @@ def main() -> None:
                 msg = (f"🚨 Vibey watchdog: {name} crashed {MAX_RESTARTS}x in an "
                        f"hour — giving up on it. Check {SERVICES[name][3]}")
                 print(f"[watchdog] {msg}", flush=True)
-                _telegram(msg)
+                today = time.strftime("%Y-%m-%d")
+                if _last_alert.get(name) != today:
+                    _last_alert[name] = today
+                    _telegram(msg)
                 continue
             _restarts[name].append(time.time())
             _restart(name)
-            _telegram(f"🩹 Vibey watchdog: {name} was down — restarted it "
-                      f"({len(_restarts[name])}/{MAX_RESTARTS} this hour).")
+            # Routine restarts are logged, not sent. Jack, 23 Sep 2026: "I just get
+            # spammed every single day by Vibey Claw." A restart that worked is not
+            # news; only the give-up below reaches Telegram, once per service per day.
+            print(f"[watchdog] {name} restarted "
+                  f"({len(_restarts[name])}/{MAX_RESTARTS} this hour)", flush=True)
 
 
 if __name__ == "__main__":
