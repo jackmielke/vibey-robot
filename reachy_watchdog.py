@@ -24,6 +24,7 @@ import re
 import subprocess
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -121,6 +122,23 @@ def _restart(name: str) -> None:
     print(f"[watchdog] restarted {name}", flush=True)
 
 
+# Services that only work while the robot itself is on. When Jack switches Vibey
+# off these fail by design; that is not a crash and must not page him (23 Sep:
+# two give-up alerts at 11:19pm for a robot he had turned off at 11:21 the night before).
+NEEDS_ROBOT = {"camera", "viewer", "robot_mic"}
+
+
+def _robot_up() -> bool:
+    host = os.environ.get("REACHY_HOST", "reachy-mini.local")
+    try:
+        urllib.request.urlopen(f"http://{host}:8000/", timeout=4).read()
+        return True
+    except urllib.error.HTTPError:
+        return True          # the daemon answered, just not with a 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
 _last_alert: dict = {}   # service -> date of last Telegram give-up alert
 
 
@@ -133,7 +151,15 @@ def main() -> None:
 
     while True:
         time.sleep(CHECK_S)
+        robot_up = _robot_up()
         for name in SERVICES:
+            if name in NEEDS_ROBOT and not robot_up:
+                # robot is off: forget any failure history so it starts clean
+                # when he turns it back on, and say nothing.
+                _misses[name] = 0
+                _restarts[name] = []
+                _gave_up.discard(name)
+                continue
             if name in _gave_up:
                 continue
             if time.time() - _started_at.get(name, 0) < STARTUP_GRACE_S:
