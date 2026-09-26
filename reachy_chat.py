@@ -82,6 +82,14 @@ MEM_URL = os.environ.get("MEM_URL", "http://localhost:8773").rstrip("/")
 # changed from "laptop" to "robot" so this is true even if .env is ever
 # missing the line; MIC_SOURCE=laptop is still there as an explicit escape
 # hatch if the robot-mic bridge is ever down and you need to fall back.
+# The dashboard / Telegram choice wins over .env, and survives restarts.
+MIC_PREF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".mic_source.json")
+try:
+    _pref = json.loads(open(MIC_PREF_PATH).read()).get("source")
+    if _pref in ("robot", "laptop"):
+        os.environ["MIC_SOURCE"] = _pref   # before the voice engines import
+except Exception:  # noqa: BLE001
+    pass
 MIC_SOURCE = os.environ.get("MIC_SOURCE", "robot").strip().lower()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
 
@@ -2206,6 +2214,31 @@ def set_voice_brain(name: str) -> str:
     return name
 
 
+def set_mic_source(src: str) -> str:
+    """Robot mic or MacBook mic, switched live. The voice session restarts to
+    pick it up; the body stays up."""
+    global MIC_SOURCE
+    if src not in ("robot", "laptop"):
+        raise ValueError("mic is robot or laptop")
+    with open(MIC_PREF_PATH, "w") as f:
+        json.dump({"source": src}, f)
+    MIC_SOURCE = src
+    os.environ["MIC_SOURCE"] = src
+    import sys as _sys
+    import reachy_openai_realtime as rt
+    rt.MIC_SOURCE = src
+    # The laptop mic has no echo cancellation: gate it while Vibey speaks.
+    gate = src == "laptop" and os.environ.get("OPENAI_RT_GATE_ON_SPEAK", "") != "0"
+    rt.GATE_ON_SPEAK = gate
+    live = _sys.modules.get("reachy_openai_live")
+    if live is not None:
+        live.GATE_ON_SPEAK = gate
+    print(f"[chat] mic source → {src}", flush=True)
+    if STATE["mode"] == "openai" and not STATE["asleep"]:
+        threading.Thread(target=_swap_brain, daemon=True).start()
+    return src
+
+
 def _dials() -> dict:
     """Every switch the control center can flip, read from wherever it lives."""
     import reachy_openai_realtime as rt
@@ -2251,6 +2284,8 @@ def _set_dials(body: dict) -> dict:
         reachy_wakesleep.set_volume(int(body["volume"]), log=lambda m: print(m, flush=True), force=True)
     if "voice_brain" in body:
         set_voice_brain(str(body["voice_brain"]))
+    if "mic_source" in body:
+        set_mic_source(str(body["mic_source"]))
     return _dials()
 
 

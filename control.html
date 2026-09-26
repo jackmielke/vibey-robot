@@ -94,6 +94,7 @@
 
   <div class=panel>
     <h2>Senses</h2>
+    <div class=row><div class=l>Ears<small>which mic Vibey listens with</small></div><div class=seg id=mic style="width:180px"><button data-mic=robot>Robot</button><button data-mic=laptop>MacBook</button></div></div>
     <div class=row><div class=l>Listening<small>hears the room</small></div><button class=sw data-dial=listening></button></div>
     <div class=row><div class=l>Face tracking<small>turns to follow you</small></div><button class=sw data-dial=face_tracking></button></div>
     <div class=row><div class=l>Mic muted<small>hears nothing at all</small></div><button class=sw data-dial=muted></button></div>
@@ -169,6 +170,7 @@ async function poll(){
   if(want.stage&&chat.stage===want.stage) want.stage=null;
   const sb=$('scribe'); sb.textContent=sc.on?'■ Stop notes':'📝 Take notes'; sb.disabled=busy||chat.off;
   p.disabled=busy; p.textContent=busy?'…':awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
+  if(dials){ const m=want.dials.mic_source??dials.mic_source; document.querySelectorAll('#mic button').forEach(b=>b.classList.toggle('on',b.dataset.mic===m)); }
   if(dials){ document.querySelectorAll('.sw[data-dial]').forEach(b=>{ const k=b.dataset.dial; const v=(k in want.dials)?want.dials[k]:!!dials[k]; b.classList.toggle('on',v); b.disabled=!awake&&(k==='listening'||k==='face_tracking'); });
     if(dials.volume!=null&&document.activeElement!==$('vol')){ $('vol').value=dials.volume; $('volv').textContent=dials.volume+'%'; } }
   if(brainInfo) renderBrain();
@@ -182,6 +184,7 @@ async function poll(){
   b.onclick=()=>{ r.dataset.theme=dark()?'light':'dark'; try{localStorage.setItem('vibey-theme',r.dataset.theme);}catch(_){} paint(); };
 })();
 document.querySelectorAll('#stages button').forEach(b=>b.onclick=async()=>{ const n=+b.dataset.stage; want.stage=n; want.at=Date.now(); poll(); const r=await j('/stage',{stage:n}); if(!r||r.error){ want.stage=null; if(r&&r.error) alert(r.error); } poll(); });
+document.querySelectorAll('#mic button').forEach(b=>b.onclick=async()=>{ want.dials.mic_source=b.dataset.mic; want.at=Date.now(); poll(); const r=await j('/dials',{mic_source:b.dataset.mic}); if(!r||r.error) delete want.dials.mic_source; poll(); });
 $('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
 $('power').onclick=async()=>{ const on=!(chat&&!chat.asleep&&!chat.off); want.power=on; want.at=Date.now(); poll(); const r=await j('/turn',{on}); if(r&&r.error){ want.power=null; alert(r.error);} };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; const v=!((k in want.dials)?want.dials[k]:(dials&&dials[k])); want.dials[k]=v; want.at=Date.now(); b.classList.toggle('on',v); const r=await j('/dials',{[k]:v}); if(!r||r.error){ delete want.dials[k]; } poll(); });
