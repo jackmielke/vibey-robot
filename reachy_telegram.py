@@ -256,11 +256,13 @@ def send_to_contact(name: str, text: str) -> str:
 
 
 GUEST_PER_HOUR = 30
+GUEST_PHOTOS_PER_HOUR = 5
+_guest_photos: dict = {}
 _guest_sent: dict = {}
 
 GUEST_WELCOME = (
     "hey 👋 i'm vibey, a little robot who lives on jack's desk.\n\n"
-    "text me whatever, i'm down to chat.\n\n"
+    "text me whatever, i'm down to chat. /photo shows you what i'm looking at.\n\n"
     "if you're cool with me sending you the odd message later, reply YES. "
     "STOP any time and i'll leave you alone."
 )
@@ -302,8 +304,25 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
             _send(owner, f"✅ {name} consented to being texted by me.\n"
                          f"Approve with:  /allow {chat_id} <nickname>")
         return
+    if low == "photo":
+        # Anyone can peek, but it's Jack's room: rate limited, never while
+        # incognito, and Jack is told every time.
+        dials = _get_json(f"{CHAT_URL}/dials") or {}
+        if dials.get("incognito"):
+            _send(chat_id, "eyes closed rn 🙈 try later")
+            return
+        now = time.time()
+        recent = [t for t in _guest_photos.get(chat_id, []) if now - t < 3600]
+        if len(recent) >= GUEST_PHOTOS_PER_HOUR:
+            _send(chat_id, "that's enough peeking for now 👀 try in a bit")
+            return
+        _guest_photos[chat_id] = recent + [now]
+        _photo(chat_id, "hi from vibey's desk 👋")
+        if owner:
+            _send(owner, f"👀 {name} grabbed a /photo")
+        return
     if not raw or raw.startswith("/"):
-        _send(chat_id, "i only do chatting here, no commands. just text me 🙂")
+        _send(chat_id, "the only command here is /photo 📷 otherwise just text me")
         return
     if _asleep():
         _sleep_note(chat_id, "vibey's asleep rn 😴 try me later")
@@ -351,6 +370,61 @@ def _sleep_note(chat_id: int, text: str) -> None:
 def _asleep() -> bool:
     st = _get_json(f"{CHAT_URL}/state") or {}
     return bool(st.get("asleep"))
+
+
+def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> None:
+    try:
+        with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
+            jpeg = r.read()
+        _send_photo(chat_id, jpeg, caption)
+    except urllib.error.HTTPError as e:
+        # The camera now refuses to pass off an old frame as a photo, so
+        # this is the honest branch rather than the broken one. Say which
+        # kind of nothing it is: a wedged capture loop and a dark room look
+        # identical in a photo, and only one of them is worth restarting.
+        detail = ""
+        try:
+            info = json.loads(e.read() or b"{}")
+            if info.get("age") is not None:
+                detail = f" — last frame was {info['age']:.0f}s ago"
+        except Exception:  # noqa: BLE001
+            pass
+        _send(chat_id, f"📷 my eyes aren't giving me anything fresh{detail}. "
+                       "I'll try to get them back — ask again in a minute.")
+    except Exception as e:  # noqa: BLE001
+        _send(chat_id, f"camera's not answering ({e})")
+
+
+def _dials(chat_id: int, change: dict, ok: str) -> None:
+    try:
+        out = _post_json(f"{CHAT_URL}/dials", change, timeout=20)
+        _send(chat_id, f"couldn't: {out['error']}" if out.get("error") else ok)
+    except Exception as e:  # noqa: BLE001
+        _send(chat_id, f"couldn't reach the chat service ({e})")
+
+
+def _now_line() -> str:
+    """What the dashboard's status pill says, plus the switches."""
+    st = _get_json(f"{CHAT_URL}/state") or {}
+    d = _get_json(f"{CHAT_URL}/dials") or {}
+    if not st:
+        return "chat service is down, try /status"
+    brain = "GPT-Live" if d.get("voice_brain") == "live" else "Realtime 2.1"
+    sc = st.get("scribe") or {}
+    if st.get("off"):
+        head = "⚫ off"
+    elif sc.get("on"):
+        head = f"📝 taking notes, {sc.get('minutes', 0)} min in, not talking"
+    elif st.get("asleep"):
+        head = "😴 asleep"
+    else:
+        head = f"🟢 voice on · {brain}"
+    yn = lambda k: "on" if d.get(k) else "off"
+    return (f"{head}\n\n"
+            f"mic {'muted' if d.get('muted') else 'live'} · volume {d.get('volume', '?')}\n"
+            f"listening {yn('listening')} · tracking {yn('face_tracking')}\n"
+            f"incognito {yn('incognito')} · think aloud {yn('think_aloud')}\n"
+            f"brain {brain}")
 
 
 def _power(chat_id: int, wake: bool) -> None:
@@ -411,6 +485,10 @@ def _handle(chat_id: int, text: str) -> None:
               "anyone else who finds me can chat too, but they only get "
               "texts: no commands, nothing said in the room.\n\n"
               "say: <text> — I'll speak it verbatim\n"
+              "/now — what I'm doing + every switch\n"
+              "/talk, /talk off — voice on/off · /mute, /unmute\n"
+              "/volume 0-100|up|down · /brain live|realtime\n"
+              "/listening, /tracking, /incognito, /thinkaloud on|off\n"
               "/photo — see through my eyes right now\n"
               "/clip — an 8-second video through my eyes\n"
               "/timelapse — today so far, one frame a minute\n"
@@ -445,6 +523,60 @@ def _handle(chat_id: int, text: str) -> None:
                 _send(chat_id, "wrapping up, notes coming in a sec")
         except Exception as e:  # noqa: BLE001
             _send(chat_id, f"couldn't reach the chat service ({e})")
+        return
+    # ---- remote control: everything the dashboard does, as commands ----
+    cmd, _, arg = low.partition(" ")
+    arg = arg.strip()
+    onoff = {"on": True, "off": False, "yes": True, "no": False}
+    if cmd in ("/talk", "/voice"):
+        _power(chat_id, wake=(arg != "off"))
+        return
+    if cmd in ("/mute", "/unmute"):
+        _dials(chat_id, {"muted": cmd == "/mute"},
+               "🔇 mic muted, i can't hear anything. /unmute to undo"
+               if cmd == "/mute" else "🎙️ mic's back on")
+        return
+    if cmd == "/volume":
+        cur = (_get_json(f"{CHAT_URL}/dials") or {}).get("volume") or 70
+        if arg in ("up", "+"):
+            v = cur + 15
+        elif arg in ("down", "-"):
+            v = cur - 15
+        elif arg.isdigit():
+            v = int(arg)
+        else:
+            _send(chat_id, f"🔊 volume's at {cur}. /volume 0-100, up or down")
+            return
+        v = max(0, min(100, v))
+        _dials(chat_id, {"volume": v}, f"🔊 volume {v}")
+        return
+    if cmd == "/brain":
+        pick = {"live": "live", "gpt-live": "live", "realtime": "realtime", "rt": "realtime"}.get(arg)
+        if not pick:
+            cur = (_get_json(f"{CHAT_URL}/brain") or {}).get("brain")
+            _send(chat_id, f"🧠 on {cur}. /brain live or /brain realtime")
+            return
+        try:
+            out = _post_json(f"{CHAT_URL}/brain", {"brain": pick}, timeout=20)
+            _send(chat_id, f"🧠 switched to {pick}"
+                  + (", restarting the conversation" if out.get("restarting") else ", used next time i wake"))
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"couldn't switch ({e})")
+        return
+    dial_cmds = {"/listening": ("listening", "listening to the room"),
+                 "/tracking": ("face_tracking", "face tracking"),
+                 "/incognito": ("incognito", "incognito (remembers nothing)"),
+                 "/thinkaloud": ("think_aloud", "thinking out loud")}
+    if cmd in dial_cmds:
+        key, label = dial_cmds[cmd]
+        if arg not in onoff:
+            cur = (_get_json(f"{CHAT_URL}/dials") or {}).get(key)
+            _send(chat_id, f"{label}: {'on' if cur else 'off'}. {cmd} on|off")
+            return
+        _dials(chat_id, {key: onoff[arg]}, f"{label}: {arg}")
+        return
+    if cmd == "/now":
+        _send(chat_id, _now_line())
         return
     if low.startswith("/contacts"):
         d = _contacts()
@@ -491,26 +623,7 @@ def _handle(chat_id: int, text: str) -> None:
         _send(entry["chat_id"], "Jack unlinked you — I won't message you again.")
         return
     if low == "/photo":
-        try:
-            with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
-                jpeg = r.read()
-            _send_photo(chat_id, jpeg, "what I'm seeing right now 👁️")
-        except urllib.error.HTTPError as e:
-            # The camera now refuses to pass off an old frame as a photo, so
-            # this is the honest branch rather than the broken one. Say which
-            # kind of nothing it is: a wedged capture loop and a dark room look
-            # identical in a photo, and only one of them is worth restarting.
-            detail = ""
-            try:
-                info = json.loads(e.read() or b"{}")
-                if info.get("age") is not None:
-                    detail = f" — last frame was {info['age']:.0f}s ago"
-            except Exception:  # noqa: BLE001
-                pass
-            _send(chat_id, f"📷 my eyes aren't giving me anything fresh{detail}. "
-                           "I'll try to get them back — ask again in a minute.")
-        except Exception as e:  # noqa: BLE001
-            _send(chat_id, f"camera's not answering ({e})")
+        _photo(chat_id)
         return
     if low.startswith("/clip"):
         _send(chat_id, "🎬 recording 8 seconds…")
@@ -691,6 +804,16 @@ def _note_voice_session(text: str, reply: str) -> None:
 
 # The "/" menu in Telegram. Owner only: guests get no commands at all.
 OWNER_COMMANDS = [
+    ("now", "what i'm doing + all switches"),
+    ("talk", "wake up and start voice (/talk off to stop)"),
+    ("mute", "mute my mic"),
+    ("unmute", "unmute my mic"),
+    ("volume", "0-100, up or down"),
+    ("brain", "live or realtime"),
+    ("listening", "hear the room: on|off"),
+    ("tracking", "follow faces: on|off"),
+    ("incognito", "remember nothing: on|off"),
+    ("thinkaloud", "narrate thoughts: on|off"),
     ("photo", "see through my eyes right now"),
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),
