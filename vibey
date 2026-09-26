@@ -9,6 +9,7 @@
 #   vibey wifi join "SSID" "pass"  join a network (robot reboots its link)
 #   vibey wifi forget "SSID"
 #   vibey wifi hotspot             fall back to the robot's own AP if it's lost
+#   vibey look [path]  grab one camera frame to a jpeg (default /tmp/vibey_look.jpg)
 #   vibey fix          robot moves return 200 but the body is frozen → daemon restart
 #   vibey logs         tail every service log at once
 REPO=~/dev/vibey-robot
@@ -66,7 +67,19 @@ sleep_robot() {
 }
 
 case "$1" in
-  stop)   sleep_robot; ./start_wonder.sh stop ;;
+  stop)
+    sleep_robot
+    ./start_wonder.sh stop
+    # Then make sure the torque is actually off.
+    #
+    # :8772/sleep hands the body to a thread and returns, so killing the
+    # services immediately afterwards races the tail of the sleep animation —
+    # the head goes down, the services die, and `motors(False)` never runs.
+    # Found it exactly that way: head down, antennas parked, and the servos left
+    # holding position all night.
+    curl -s -m 8 -X POST "$URL/api/motors/set_mode/disabled" >/dev/null
+    echo "   torque off"
+    ;;
   wake)   wake ;;
   sleep)  sleep_robot ;;
   logs)   tail -f /tmp/reachy_*.log /tmp/vibeverse.log /tmp/telegram.log ;;
@@ -83,6 +96,18 @@ case "$1" in
       lsof -ti tcp:$port >/dev/null 2>&1 && echo "  ✅ $name (:$port)" || echo "  ❌ $name (:$port)"
     done
     ;;
+  look)
+    # Grab one frame so an agent can actually look at the room. reachy_camera.py
+    # already holds the WebRTC stream open, so this is a local read off the
+    # bridge — no second connection to the robot, no cost, no API key.
+    out=${2:-/tmp/vibey_look.jpg}
+    if curl -s -m 10 "http://localhost:8771/frame" -o "$out" && [[ -s "$out" ]]; then
+      echo "$out  ($(/usr/bin/stat -f%z "$out") bytes)"
+    else
+      echo "no frame — camera bridge down? try: vibey status"
+      exit 1
+    fi
+    ;;
   fix)
     # The robot's daemon wedges every so often: /api/move/* still returns 200
     # with a job id, but the body never twitches and every /api/state/* readback
@@ -97,6 +122,29 @@ case "$1" in
       curl -s -m 4 "$URL/api/daemon/status" >/dev/null 2>&1 && break
     done
     wake
+    ;;
+  off)
+    # Genuinely off: stops listening, so the wake phrase does nothing.
+    curl -s -m 25 -X POST localhost:8772/off -H "Content-Type: application/json" \
+      -d '{"off": true}' >/dev/null && echo "⏻ OFF — not listening. \`vibey on\` to bring it back."
+    ;;
+  on)
+    curl -s -m 25 -X POST localhost:8772/off -H "Content-Type: application/json" \
+      -d '{"off": false}' >/dev/null && wake
+    ;;
+  antenna)
+    # Antennas only — never commands the head, so it is safe with the shell off.
+    shift
+    python3 antenna_test.py "$@"
+    ;;
+  transcript)
+    # Read straight off disk rather than through the chat service, so the
+    # conversation is still readable when nothing is running.
+    if [ "$2" = "days" ]; then
+      python3 reachy_transcript.py --days
+    else
+      python3 reachy_transcript.py "$2"
+    fi
     ;;
   wifi)
     case "$2" in

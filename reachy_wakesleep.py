@@ -105,16 +105,11 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
 
 # How loud Vibey talks. The daemon boots at 70, which is fine in a quiet room and
 # not enough in a room with people in it — and a social robot is, by definition,
-# never in the quiet room. Back to 100: 90 was measured in the room and was not
-# enough. The distortion worry that argued for 90 is handled better upstream —
-# replies are lifted toward full scale before playback now, so the speaker is
-# being fed a strong signal rather than being asked to make a weak one loud.
-# 85, not 100.
-#
-# Full volume is startling in a room somebody is sitting in, and every wake is a
-# wake in a room somebody is sitting in — that is what woke it. Loud enough to
-# hear from the kitchen, quiet enough not to be an event.
-WAKE_VOLUME = max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "85"))))
+# never in the quiet room. Every intermediate value has been tried and every one
+# of them ended with somebody asking Vibey to speak up, so: full, every time.
+# Waking is now a reset to 100 rather than a negotiation with whatever the last
+# session left behind.
+WAKE_VOLUME = max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "100"))))
 
 
 # What the daemon last told us the volume is, so we can avoid setting it to the
@@ -187,7 +182,10 @@ def wake(log=print):
     log("[wakesleep] waking")
     # First of all, or nothing below moves anything.
     motors(True, log)
-    set_volume(WAKE_VOLUME, log)
+    # force: skip the "close enough, don't whistle" check. Waking is exactly the
+    # moment the old level should stop mattering — one whistle is cheaper than a
+    # conversation held at whatever volume last night's clamp left behind.
+    set_volume(WAKE_VOLUME, log, force=True)
     _upload_and_play("vibey_wake.wav", _tone(WAKE_NOTES), log)
     try:
         _post("/api/move/play/wake_up", timeout=15)

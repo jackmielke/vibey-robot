@@ -83,6 +83,11 @@ STALE_AFTER = 10.0
 DEAD_AFTER = 45.0
 
 
+# How long the video can go quiet before we give up and reconnect. Generous on
+# purpose: see the note in the capture loop.
+STALL_AFTER_S = float(os.environ.get("CAMERA_STALL_S", "10"))
+
+
 def _capture_loop():
     """Connect (with retry) and continuously publish the newest JPEG frame."""
     global _latest_jpeg, _frame_seq, _connected, _frame_at
@@ -92,16 +97,31 @@ def _capture_loop():
             mini = ReachyMini(host=REACHY_HOST, connection_mode="network")
             _connected = True
             print("[camera] connected — streaming", flush=True)
-            misses = 0
+            last_frame = time.time()
             while True:
                 jpg = mini.media.get_frame_jpeg()
                 if not jpg:
-                    misses += 1
-                    if misses > 50:
-                        raise RuntimeError("frame stream stalled")
+                    # Wait STALL_AFTER_S of real silence before tearing the
+                    # session down, and measure it in seconds rather than in
+                    # missed polls.
+                    #
+                    # This used to be `misses > 50` with a 20ms sleep — one
+                    # second. Renegotiating WebRTC costs ten to twenty, so a
+                    # one-second hiccup on the wifi bought twenty seconds of
+                    # black screen, and the camera read as broken when the
+                    # stream underneath it was fine. The robot's MIC bridge
+                    # holds the same kind of session over the same wifi and had
+                    # reconnected once in the time this reconnected nine times;
+                    # the difference was entirely this number.
+                    #
+                    # The bound to stay under is the cost of being wrong: give
+                    # it well under the reconnect it is trying to avoid.
+                    if time.time() - last_frame > STALL_AFTER_S:
+                        raise RuntimeError(
+                            f"frame stream stalled ({STALL_AFTER_S:g}s)")
                     time.sleep(0.02)
                     continue
-                misses = 0
+                last_frame = time.time()
                 with _frame_lock:
                     _latest_jpeg = jpg
                     _frame_at = time.time()

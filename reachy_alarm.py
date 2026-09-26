@@ -72,14 +72,24 @@ def _post_local(url: str, body: dict) -> None:
 
 
 def _in_conversation() -> bool:
-    """True when Vibey is awake and holding a conversation."""
+    """True when Vibey is awake and holding a conversation.
+
+    Fails CLOSED — an unreachable chat service counts as "in conversation", so
+    the clamp holds off rather than firing. The two mistakes are not equal: a
+    clamp skipped costs a slightly loud robot in an empty room for one minute,
+    while a clamp fired wrongly halves the volume of a robot somebody is
+    talking to right now, and nothing puts it back until the next wake. That is
+    indistinguishable from a broken speaker, and it cost an evening: the chat
+    service was restarting, this returned False on the connection error, and
+    Vibey answered every question at 45 into a room that could not hear it.
+    """
     try:
         import urllib.request as _ur
         with _ur.urlopen("http://localhost:8772/state", timeout=2) as r:
             st = json.loads(r.read())
         return not st.get("asleep", True)
     except Exception:  # noqa: BLE001
-        return False
+        return True
 
 
 def _load_alarms() -> list[dict]:

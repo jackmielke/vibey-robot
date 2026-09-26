@@ -77,8 +77,27 @@ def set_voice(name_or_id: str) -> str | None:
     return vid
 
 
+# Replies like to trail off into something nobody in the room can hear: a slash
+# command to try next, a link to go read. Out loud those land as "slash photo"
+# and "h t t p s colon slash slash", which is noise at the end of every sentence.
+# Only the TAIL is trimmed, and only at a word boundary — a command named inside
+# a sentence ("text me /photo and I'll look") is part of what was said, and
+# "they/them" keeps its second half.
+_TRAILING_NOISE = re.compile(
+    r"(?:(?:^|[\s—–|])[\s(\[]*(?:/[a-zA-Z][\w-]*|(?:https?://|www\.)\S+)"
+    r"[\s,.;:!?)\]]*)+$")
+
+
+def spoken_text(text: str) -> str:
+    """`text` with any trailing slash-commands or URLs stripped. Never returns
+    empty: a line that is nothing but a command is left alone to be read."""
+    cleaned = _TRAILING_NOISE.sub("", str(text or "")).strip(" \t\n—–-|·")
+    return cleaned or str(text or "").strip()
+
+
 def tts(text: str) -> bytes:
     """Return MP3 audio bytes for `text` from ElevenLabs."""
+    text = spoken_text(text)
     if not ELEVEN_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY not set (see .env)")
     if not VOICE["id"]:

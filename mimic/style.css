@@ -1,0 +1,517 @@
+:root {
+    --coral: #FF6B35;
+    --coral-light: #FF8A5C;
+    --dark: #1A1A2E;
+    --darker: #0F0F1A;
+    --card: #16213E;
+    --card-light: #1E2A4A;
+    --text: #FFFFFF;
+    --text-secondary: #A0AEC0;
+    --text-muted: #718096;
+    --success: #48BB78;
+    --warning: #ECC94B;
+    --danger: #F56565;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--darker);
+    color: var(--text);
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: hidden;
+}
+
+.hidden { display: none !important; }
+
+/* ─── Login ──────────────────────────────────────────────── */
+.login-view {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.login-card {
+    background: var(--card);
+    padding: 40px;
+    border-radius: 16px;
+    text-align: center;
+    max-width: 380px;
+}
+.login-emoji {
+    font-size: 56px;
+    margin-bottom: 12px;
+}
+.login-card h2 {
+    color: var(--coral);
+    margin-bottom: 10px;
+    font-size: 1.5em;
+}
+.login-card p {
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+.btn-hf {
+    background: #FFD21E;
+    color: #000;
+    border: none;
+    padding: 12px 28px;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* ─── Header ─────────────────────────────────────────────── */
+.header {
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255,107,53,0.2);
+}
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.logo-emoji { font-size: 24px; }
+.logo-text {
+    font-weight: 700;
+    font-size: 1em;
+    color: var(--coral);
+}
+.logo-text span {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 0.85em;
+}
+.user-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.user-badge {
+    background: var(--card);
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.8em;
+}
+.btn-logout {
+    background: transparent;
+    border: 1px solid var(--text-muted);
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 0.75em;
+}
+
+/* ─── Main layout ────────────────────────────────────────── */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    gap: 8px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+/* ─── Panels ─────────────────────────────────────────────── */
+.panel {
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.panel-header {
+    padding: 10px 14px;
+    background: rgba(0,0,0,0.2);
+    font-weight: 600;
+    font-size: 0.85em;
+    color: var(--coral);
+}
+.panel-content {
+    padding: 12px;
+}
+.hint {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+/* ─── Connect row ────────────────────────────────────────── */
+.connection-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+}
+.status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+.status-indicator.connected {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+.status-indicator.connecting {
+    background: var(--warning);
+    animation: blink 0.8s infinite;
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* ─── Buttons ────────────────────────────────────────────── */
+.btn {
+    padding: 12px 18px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    min-height: 44px;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--coral); color: white; }
+.btn-secondary { background: rgba(255,255,255,0.15); color: white; }
+.btn-danger { background: var(--danger); color: white; }
+.btn-add {
+    background: transparent;
+    border: 1px dashed var(--text-muted);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    margin-top: 8px;
+    width: 100%;
+}
+.btn-add:hover {
+    border-color: var(--coral);
+    color: var(--coral);
+}
+.full-width {
+    width: 100%;
+    margin-top: 12px;
+}
+
+/* ─── Robot picker ───────────────────────────────────────── */
+.robot-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.robot-card {
+    padding: 10px 14px;
+    background: var(--darker);
+    border: 2px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.robot-card:hover { background: var(--card-light); }
+.robot-card.selected { border-color: var(--coral); }
+.robot-card .name {
+    font-weight: 600;
+    font-size: 0.9em;
+}
+.robot-card .id {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+/* ─── Video / mimicry view ───────────────────────────────── */
+.video-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: 100%;
+}
+.video-cell {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    aspect-ratio: 4/3;
+}
+.video-cell video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: linear-gradient(135deg, #0a0a15 0%, #1a1a2e 100%);
+}
+.overlay-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+.cell-label {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    background: rgba(0,0,0,0.55);
+    color: var(--text-secondary);
+    padding: 3px 9px;
+    border-radius: 12px;
+    font-size: 0.72em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.connection-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--card);
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 0.8em;
+}
+.robot-name {
+    background: var(--card);
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+/* When mirror mode is on, flip both videos AND the overlay canvas as
+   a unit so they stay aligned. Face landmarks are read from the
+   un-flipped frame; this is purely visual. */
+.mirror-preview .video-cell video,
+.mirror-preview .video-cell .overlay-canvas {
+    transform: scaleX(-1);
+}
+
+/* ─── Master row ─────────────────────────────────────────── */
+.master-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+}
+.master-row .btn-danger { margin-left: auto; }
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+.toggle input {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--coral);
+    cursor: pointer;
+}
+.camera-select {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+.camera-select select {
+    background: var(--card-light);
+    color: var(--text);
+    border: 1px solid var(--card-light);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    max-width: 200px;
+    cursor: pointer;
+}
+
+/* ─── Sliders (head amplitudes + rule weights) ───────────── */
+.slider-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 60px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.slider-row:last-child { margin-bottom: 0; }
+.slider-label {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+.slider {
+    width: 100%;
+    height: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--darker);
+    border-radius: 4px;
+    outline: none;
+}
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    background: var(--coral);
+    border-radius: 50%;
+    cursor: pointer;
+}
+.slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    background: var(--coral);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+.slider-value {
+    font-family: monospace;
+    font-size: 0.85em;
+    color: var(--coral);
+    text-align: right;
+}
+
+/* ─── Blendshape monitor ─────────────────────────────────── */
+.bs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 16px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+@media (max-width: 600px) {
+    .bs-grid { grid-template-columns: 1fr; max-height: 260px; }
+}
+.bs-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 38px;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.72em;
+}
+.bs-row .bs-label {
+    color: var(--text-secondary);
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bs-row .bs-bar {
+    height: 8px;
+    background: var(--darker);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+.bs-row .bs-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0%;
+    background: linear-gradient(90deg, var(--coral) 0%, var(--coral-light) 100%);
+    transition: width 0.06s linear;
+}
+.bs-row .bs-val {
+    color: var(--coral);
+    font-family: monospace;
+    text-align: right;
+}
+.bs-row.dim .bs-label { opacity: 0.45; }
+.bs-row.dim .bs-val { opacity: 0.45; color: var(--text-muted); }
+
+/* ─── Free-routing rule rows ─────────────────────────────── */
+.rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.rule-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    background: var(--darker);
+    border-radius: 8px;
+}
+.rule-row select {
+    background: var(--card-light);
+    color: var(--text);
+    border: 1px solid var(--card-light);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.85em;
+}
+.rule-row .weight-block {
+    display: grid;
+    grid-template-columns: 110px 50px;
+    gap: 6px;
+    align-items: center;
+}
+.rule-row .live-readout {
+    font-family: monospace;
+    font-size: 0.75em;
+    color: var(--text-muted);
+    min-width: 70px;
+    text-align: right;
+}
+.rule-row .btn-remove {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 4px 8px;
+}
+.rule-row .btn-remove:hover { color: var(--danger); }
+
+@media (max-width: 600px) {
+    .rule-row {
+        grid-template-columns: 1fr auto;
+        grid-template-rows: auto auto;
+    }
+    .rule-row select { grid-column: 1 / -1; }
+    .rule-row .btn-remove { grid-column: 2; grid-row: 1; }
+    .rule-row .weight-block { grid-column: 1; grid-row: 2; }
+}
+
+/* ─── Desktop layout ─────────────────────────────────────── */
+@media (min-width: 900px) {
+    .app-container {
+        max-width: 1100px;
+    }
+    #mimicryView {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    #mimicryView .video-pair      { grid-column: 1 / -1; grid-row: 1; }
+    /* nth-of-type counts ALL <div> siblings, and .video-pair is the first
+       div — so panel indices start at 2, not 1. Getting this wrong leaves
+       row 2 empty and auto-places the unmatched right-antenna panel under
+       the raw video, which would block the demo's webcam-→-chart slot. */
+    /* Panel #1 = blendshape monitor — flush under the video, full-width.
+       This is the demo hero view: webcam + chart in one viewport slot. */
+    #mimicryView > .panel:nth-of-type(2) { grid-column: 1 / -1; grid-row: 2; }
+    /* Panel #2 = controls (status + master/mirror/reset/stop), full width */
+    #mimicryView > .panel:nth-of-type(3) { grid-column: 1 / -1; grid-row: 3; }
+    /* Panel #3 = head amps */
+    #mimicryView > .panel:nth-of-type(4) { grid-column: 1 / -1; grid-row: 4; }
+    /* Rule panels — three side-by-side on desktop */
+    #mimicryView > .panel:nth-of-type(5) { grid-column: 1; grid-row: 5; }
+    #mimicryView > .panel:nth-of-type(6) { grid-column: 2; grid-row: 5; }
+    #mimicryView > .panel:nth-of-type(7) { grid-column: 1 / -1; grid-row: 6; }
+}

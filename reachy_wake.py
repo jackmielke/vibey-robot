@@ -282,7 +282,13 @@ class WakeListener(threading.Thread):
         self.should_listen = should_listen or (lambda: True)
         self.log = log
         self.clap = ClapDetector(sensitivity)
-        self.phrase_enabled = phrase
+        # Both wake routes are callables rather than flags, so the dashboard can
+        # turn either off mid-run without restarting this thread. They are two
+        # switches because they fail differently: the phrase needs a sentence,
+        # while two claps is any pair of transients — a dropped book, a door,
+        # applause on a video, or somebody just clapping in conversation.
+        self.phrase_enabled = phrase if callable(phrase) else (lambda p=phrase: p)
+        self.clap_enabled = lambda: True
         # Prints every transient and why it was refused. "It did not hear me" is
         # not a fact anybody can act on; "you were 6 dB under" is.
         self.verbose = verbose
@@ -362,9 +368,17 @@ class WakeListener(threading.Thread):
                             time.sleep(0.2)
                             continue
 
+                        claps_on = self.clap_enabled()
                         for peak, n in peaks(raw):
                             at = self.samples_seen / MIC_SR
                             self.samples_seen += n
+                            if not claps_on:
+                                # Keep the running background estimate fed even
+                                # while disabled, so re-enabling doesn't start
+                                # from a cold threshold and fire on the first
+                                # loud thing it hears.
+                                self.clap.feed(peak, at)
+                                continue
                             event, detail = self.clap.feed(peak, at)
                             if event == "wake":
                                 self.log("[wake] clap-clap")
@@ -374,7 +388,7 @@ class WakeListener(threading.Thread):
                                          f"(peak {peak:.3f}, needs {self.clap.threshold:.3f}, "
                                          f"room {self.clap.background:.4f})")
 
-                        if self.phrase_enabled:
+                        if self.phrase_enabled():
                             self._pcm_for_phrase += raw
                             if len(self._pcm_for_phrase) >= window:
                                 buf = bytes(self._pcm_for_phrase)

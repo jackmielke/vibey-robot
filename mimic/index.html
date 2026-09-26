@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Mime Bot — Reachy Mini</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Login View — also used for "Checking sign-in…" while authenticate()
+         resolves on page load; the button text + handler are swapped. -->
+    <div id="loginView" class="login-view">
+        <div class="login-card">
+            <div class="login-emoji">🪞</div>
+            <h2>Mime Bot</h2>
+            <p id="loginMessage">Checking sign-in…</p>
+            <button class="btn-hf hidden" id="btnLogin">Sign in with Hugging Face</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp" class="hidden">
+        <header class="header">
+            <div class="logo">
+                <span class="logo-emoji">🪞</span>
+                <div class="logo-text">Mime Bot <span>· Reachy Mini</span></div>
+            </div>
+            <div class="user-section">
+                <div class="user-badge"><span id="username">@user</span></div>
+                <button class="btn-logout" id="btnLogout">Sign out</button>
+            </div>
+        </header>
+
+        <div class="app-container">
+            <!-- Robot picker (shown automatically after auto-connect, hidden once streaming).
+                 List is populated by the SDK's robotsChanged event. -->
+            <div id="robotSelector" class="panel">
+                <div class="panel-header">
+                    <span id="pickerHeader">Connecting…</span>
+                </div>
+                <div class="panel-content">
+                    <div id="robotList" class="robot-list">
+                        <div class="hint">Talking to the signaling server…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live mimicry view (shown when streaming) -->
+            <div id="mimicryView" class="hidden">
+                <!-- Two videos side-by-side: raw on the left, the same
+                     stream + MediaPipe face mesh overlay on the right.
+                     Both <video> elements share the camera MediaStream. -->
+                <div class="video-pair">
+                    <div class="video-cell">
+                        <video id="localVideo" autoplay playsinline muted></video>
+                        <div class="cell-label">Raw</div>
+                    </div>
+                    <div class="video-cell">
+                        <video id="localVideo2" autoplay playsinline muted></video>
+                        <canvas id="overlayCanvas" class="overlay-canvas"></canvas>
+                        <div class="cell-label">Tracked</div>
+                    </div>
+                </div>
+                <!-- Live monitor sits flush under the video pair — no
+                     separator UI between them — so both fit in one
+                     viewport "slot" for filming. Everything else
+                     (controls, mapping, tuning) lives below. -->
+                <div class="panel">
+                    <div class="panel-header">Live blendshape monitor (52)</div>
+                    <div class="panel-content" id="blendshapeMonitor">
+                        <!-- Filled by main.js -->
+                    </div>
+                </div>
+
+                <!-- Controls + master/mirror/reset, merged so a single
+                     row of UI follows the chart instead of two. -->
+                <div class="panel">
+                    <div class="panel-content">
+                        <div class="master-row">
+                            <div class="connection-badge">
+                                <div class="status-indicator connected"></div>
+                                <span id="streamingStatus">Streaming</span>
+                            </div>
+                            <div class="robot-name" id="robotName"></div>
+                            <label class="toggle">
+                                <input type="checkbox" id="toggleMaster" checked />
+                                <span>Robot follows my face</span>
+                            </label>
+                            <label class="toggle">
+                                <input type="checkbox" id="toggleMirror" checked />
+                                <span>Mirror mode</span>
+                            </label>
+                            <!-- Hidden until camera permission resolves and we
+                                 enumerate at least 2 video devices; for a
+                                 single-camera laptop we don't bother showing it. -->
+                            <label class="camera-select hidden" id="cameraSelectWrap">
+                                <span>Camera</span>
+                                <select id="cameraSelect"></select>
+                            </label>
+                            <button class="btn btn-secondary" id="btnReset">Reset tuner</button>
+                            <button class="btn btn-secondary" id="btnSnapshot">Save snapshot</button>
+                            <button class="btn btn-danger" id="btnStop">Stop</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tuner: head amplitudes (fixed routing) -->
+                <div class="panel">
+                    <div class="panel-header">Head — direct mapping (amplitudes only)</div>
+                    <div class="panel-content" id="headAmpPanel">
+                        <!-- Filled by main.js -->
+                    </div>
+                </div>
+
+                <!-- Tuner: free-routing for body + antennas -->
+                <div class="panel">
+                    <div class="panel-header">Body yaw — free routing</div>
+                    <div class="panel-content channel-content">
+                        <div class="rules-list" id="rules_body_yaw"></div>
+                        <button class="btn btn-add" data-channel="body_yaw">+ Add mapping</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">Left antenna — free routing</div>
+                    <div class="panel-content channel-content">
+                        <div class="rules-list" id="rules_left_antenna"></div>
+                        <button class="btn btn-add" data-channel="left_antenna">+ Add mapping</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">Right antenna — free routing</div>
+                    <div class="panel-content channel-content">
+                        <div class="rules-list" id="rules_right_antenna"></div>
+                        <button class="btn btn-add" data-channel="right_antenna">+ Add mapping</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

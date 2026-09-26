@@ -291,6 +291,8 @@ class LiveSession(RealtimeSession):
                 await asyncio.sleep(0.1)
             if job.get("nudge"):
                 text = job["nudge"]
+            elif job.get("note"):
+                text = job["note"]
             else:
                 spoken = (job.get("spoken") or "").strip() or "I finished that one."
                 ok = job.get("state") == "done"

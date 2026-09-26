@@ -4,6 +4,7 @@ reachy_gestures.py — Vibey waves back.
 
 Watches the camera for hand gestures and answers them with the body:
 
+    middle finger           → Vibey laughs at you (one of three)
     open palm, LEFT hand    → Vibey waves its RIGHT antenna
     open palm, RIGHT hand   → Vibey waves its LEFT antenna
     peace sign              → both antennas snap up into a V
@@ -14,6 +15,11 @@ The side-swap is the point, and it goes the way it does because Vibey is
 facing you, not standing beside you: the hand you raise is across from you,
 so it comes back on the opposite antenna. Same-side would read like a
 recording being played back; opposite-side reads like someone waving back.
+
+The flip-off is the one gesture MediaPipe's classifier cannot name — its
+vocabulary is fist / palm / point / thumb-up / thumb-down / victory / iloveyou
+and nothing else — so it is measured off the raw hand landmarks here and
+checked BEFORE the classifier, which would otherwise call it a fist.
 
 Runs in its OWN venv (.venv-gestures) because mediapipe pins numpy<2 and the
 robot SDK requires numpy>=2.2.5 — installing both in reachy_env breaks the
@@ -59,6 +65,13 @@ COOLDOWN = float(os.environ.get("GESTURE_COOLDOWN", "4.0"))
 DANCE_SECONDS = float(os.environ.get("GESTURE_DANCE_SECONDS", "12"))
 HOLD = int(os.environ.get("GESTURE_HOLD", "3"))
 MIN_SCORE = float(os.environ.get("GESTURE_MIN_SCORE", "0.6"))
+# Flip-off thresholds. MediaPipe's canned classifier has no class for it — its
+# seven gestures are none/fist/palm/point/thumb-up/thumb-down/victory/iloveyou —
+# so this one is measured off the raw landmarks instead (see _finger_extension).
+# Both are ratios of wrist→tip over wrist→PIP distance, which is scale- and
+# rotation-free: it holds whether the hand is near, far, or upside down.
+FLIP_MID = float(os.environ.get("GESTURE_FLIP_MID", "1.45"))    # middle must clear this
+FLIP_OTHERS = float(os.environ.get("GESTURE_FLIP_OTHERS", "1.15"))  # the rest must stay under
 
 # Which antenna answers which hand.
 #
@@ -74,6 +87,38 @@ MIN_SCORE = float(os.environ.get("GESTURE_MIN_SCORE", "0.6"))
 _MIRROR = {"Right": "wave_left", "Left": "wave_right"}
 # Set 1 only for a mirrored/selfie feed, where the label really is flipped.
 HAND_FLIP = os.environ.get("GESTURE_HAND_FLIP", "0") not in ("0", "false", "no")
+
+# Hand landmark indices, MediaPipe's ordering: wrist is 0, then four points
+# per finger from knuckle to tip.
+_TIP = {"index": 8, "middle": 12, "ring": 16, "pinky": 20}
+_PIP = {"index": 6, "middle": 10, "ring": 14, "pinky": 18}
+
+
+def _finger_extension(lm, finger: str) -> float:
+    """How far a fingertip reaches past its own middle knuckle, as a ratio.
+
+    Measuring from the wrist rather than reading y-coordinates is what makes
+    this survive a hand held sideways or tipped back: curling a finger folds
+    the tip back toward the palm, so the ratio drops below ~1 no matter which
+    way the hand is pointing. A y-axis test only works for a hand held upright
+    and fails the moment someone leans on an elbow.
+    """
+    w = lm[0]
+    def d(pt) -> float:
+        return ((pt.x - w.x) ** 2 + (pt.y - w.y) ** 2) ** 0.5
+    return d(lm[_TIP[finger]]) / max(d(lm[_PIP[finger]]), 1e-6)
+
+
+def _is_flip_off(lm) -> bool:
+    """One finger up, the other three down. Thumb deliberately ignored —
+    people hold it against the fist or tucked across the palm and both are
+    the same gesture."""
+    if len(lm) < 21:
+        return False
+    mid = _finger_extension(lm, "middle")
+    others = max(_finger_extension(lm, f) for f in ("index", "ring", "pinky"))
+    return mid >= FLIP_MID and others <= FLIP_OTHERS
+
 
 STATE = {
     "on": os.environ.get("GESTURE_ON", "1") not in ("0", "false", "no"),
@@ -92,7 +137,11 @@ STATE = {
 # How long to ignore new gestures after firing one. Mostly this just stops a
 # held pose retriggering; the dance is long enough to need its own, or a fist
 # held through the whole track restarts it repeatedly.
-COOLDOWNS = {"dance": DANCE_SECONDS + 2.0}
+COOLDOWNS = {"dance": DANCE_SECONDS + 2.0,
+             # A held middle finger should get exactly one laugh, not a loop —
+             # and the laugh choreography itself runs ~2s, so the cooldown has
+             # to outlast the move or the next one lands on a moving neck.
+             "laugh": 6.0}
 
 
 def _emote_for(gesture: str, handedness: str) -> str | None:
@@ -122,6 +171,14 @@ def _fire(emote: str) -> None:
     STATE["last_at"] = time.time()
     STATE["cooldown"] = COOLDOWNS.get(emote, COOLDOWN)
     STATE["seen"] += 1
+    if emote == "laugh":
+        # Not a fixed move: one of three laughs, never the same one twice in a
+        # row, with its chirp. Sound is on here where most emotes are silent —
+        # a laugh with no noise is just the head nodding.
+        pick = reachy_emotes.laugh_any(sound=True)
+        STATE["last"] = pick
+        print(f"[gesture] → {pick}", flush=True)
+        return
     print(f"[gesture] → {emote}", flush=True)
     if emote == "dance":
         # Not an emote: a synthesized beat uploaded to the robot's speaker
@@ -182,6 +239,18 @@ def watch() -> None:
 
         STATE["hands"] = len(res.gestures or [])
 
+        # The flip-off goes first, and it wins outright. MediaPipe usually
+        # calls this hand "Closed_Fist" or "Pointing_Up" with real confidence,
+        # so letting the classifier answer first would map it onto some other
+        # emote — the landmark test has to pre-empt it, not tie-break with it.
+        flip = None
+        for i, lm in enumerate(res.hand_landmarks or []):
+            if _is_flip_off(lm):
+                hands = res.handedness or []
+                flip = (hands[i][0].category_name
+                        if i < len(hands) and hands[i] else "Right")
+                break
+
         # Pick the most confident recognised gesture in the frame.
         best = None
         for cats, hands in zip(res.gestures or [], res.handedness or []):
@@ -193,7 +262,16 @@ def watch() -> None:
             if best is None or g.score > best[0].score:
                 best = (g, h)
 
-        if best is None:
+        if flip is not None:
+            STATE["raw"] = f"MiddleFinger/{flip}"
+            key = f"MiddleFinger:{flip}"
+            streak = streak + 1 if key == streak_key else 1
+            streak_key = key
+            if streak >= HOLD and (time.time() - STATE["last_at"]
+                                   >= STATE.get("cooldown", COOLDOWN)):
+                _fire("laugh")
+                streak_key, streak = None, 0
+        elif best is None:
             streak_key, streak = None, 0
             STATE["raw"] = None
         else:

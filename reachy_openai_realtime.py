@@ -1456,8 +1456,21 @@ def _wav_from_pcm16(pcm: bytes, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+# Where replies come out. SPEAKER_SOURCE=laptop plays them here instead of
+# uploading a WAV to the robot: for testing on the laptop, and for when the
+# robot's Wi-Fi is too slow to take a clip before it times out.
+SPEAKER_SOURCE = os.environ.get("SPEAKER_SOURCE", "robot").strip().lower()
+
+
 def _stop_sound() -> None:
     """Cut whatever the robot is currently playing (barge-in)."""
+    if SPEAKER_SOURCE == "laptop":
+        try:
+            import sounddevice as sd
+            sd.stop()
+        except Exception as e:  # noqa: BLE001
+            print(f"[openai-rt] laptop stop failed: {e}", flush=True)
+        return
     try:
         req = urllib.request.Request(
             f"{REACHY_URL}/api/media/stop_sound", data=b"{}", method="POST",
@@ -1500,6 +1513,11 @@ def _play_pcm_on_robot(pcm24: bytes) -> float:
     Returns the clip duration in seconds (so the caller can gate the mic)."""
     duration = len(pcm24) / 2 / RT_SR
     pcm24 = _normalise(pcm24)
+    if SPEAKER_SOURCE == "laptop":
+        import numpy as np
+        import sounddevice as sd
+        sd.play(np.frombuffer(pcm24, dtype=np.int16), RT_SR)
+        return duration
     wav = _wav_from_pcm16(pcm24, RT_SR)
     name = f"oai_{uuid.uuid4().hex[:8]}.wav"
     upload_sound(wav, name)
@@ -1511,6 +1529,31 @@ def _play_pcm_on_robot(pcm24: bytes) -> float:
 # Mic pump — a background thread reads PCM and hands resampled 24kHz chunks to
 # the asyncio loop via a queue. Two sources, same queue on the other side.
 # --------------------------------------------------------------------------- #
+# Every mic pump ever started, with the event that stops it. Sessions are
+# started and stopped by a person clicking things, and a pump that is still
+# holding /pcm when the next session opens its own is not a leak you notice —
+# both readers get the full stream, so the audio looks fine, and the two
+# interleave into one websocket as overlapping speech that the server VAD can
+# never segment into a turn. The robot sits there connected, listening, and
+# answering nothing. Reaping on the way IN rather than trusting the way out is
+# what makes that unrepresentable: however the last session died, it is gone
+# before this one reads a byte.
+_PUMPS: list = []
+_PUMPS_LOCK = threading.Lock()
+
+
+def _reap_pumps(log=print) -> None:
+    with _PUMPS_LOCK:
+        stale = list(_PUMPS)
+        _PUMPS.clear()
+    for thread, stop in stale:
+        stop.set()
+    for thread, _stop in stale:
+        thread.join(timeout=3.0)
+        if thread.is_alive():
+            log(f"[openai-rt] mic pump {thread.name} would not stop")
+
+
 def _mic_pump(loop: asyncio.AbstractEventLoop, queue: "asyncio.Queue",
               stop: threading.Event) -> None:
     if MIC_SOURCE == "laptop":
@@ -1804,6 +1847,18 @@ class RealtimeSession:
         except RuntimeError:
             pass
 
+    def note(self, text: str) -> None:
+        """Quiet context: goes into the conversation with NO response asked
+        for. The model sees it next time it speaks and decides for itself
+        whether it matters. For texts, which should never be read out."""
+        loop, q = self._loop, self._announce_q
+        if loop is None or q is None:
+            return
+        try:
+            loop.call_soon_threadsafe(q.put_nowait, {"note": text})
+        except RuntimeError:
+            pass
+
     def refresh(self) -> None:
         """Ask the live session to rebuild itself. Called from other threads."""
         loop, q = self._loop, self._announce_q
@@ -1854,6 +1909,16 @@ class RealtimeSession:
                     self.log("session refreshed (mode changed)")
                 except Exception as e:  # noqa: BLE001
                     self.log(f"session refresh failed: {e}")
+                continue
+            if job.get("note"):
+                try:
+                    await ws.send(json.dumps({
+                        "type": "conversation.item.create",
+                        "item": {"type": "message", "role": "user",
+                                 "content": [{"type": "input_text", "text": job["note"]}]},
+                    }))
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"note failed: {e}")
                 continue
             if job.get("nudge"):
                 nudge = job["nudge"]
@@ -1977,6 +2042,8 @@ class RealtimeSession:
         queue: "asyncio.Queue" = asyncio.Queue()
         pump = threading.Thread(
             target=_mic_pump, args=(loop, queue, stop), daemon=True)
+        with _PUMPS_LOCK:
+            _PUMPS.append((pump, stop))
         pump.start()
 
         # An ephemeral key on the wire, not the account key.
@@ -2054,6 +2121,9 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         return
     caller_should_run = should_run or (lambda: True)
     SLEEP_REQUESTED.clear()
+    # Whatever the last session left behind, it does not get to share the mic
+    # with this one. See _reap_pumps.
+    _reap_pumps(log or print)
     stop = stop_event or threading.Event()
     session = RealtimeSession(on_user_text, on_agent_text, log)
     LIVE_SESSION["session"] = session
@@ -2096,6 +2166,7 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         # separate thread and this event is the only thing that tells it to
         # stop once the loop it feeds is gone.
         stop.set()
+        _reap_pumps(log or print)
         LIVE_SESSION["session"] = None
         if SLEEP_REQUESTED.is_set():
             (log or print)("[openai-rt] asked to sleep — session closed")

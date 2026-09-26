@@ -17,7 +17,7 @@ A stdlib-only Telegram bridge:
   `send_to_contact` below. Anyone can reply STOP to be forgotten.
 
 Pairing: the FIRST person to message the bot becomes the owner (saved to
-.telegram_state.json); everyone else gets a polite brush-off. Delete that
+.telegram_state.json); everyone else gets a walled-off guest chat. Delete that
 file to re-pair.
 
     python3 reachy_telegram.py
@@ -255,10 +255,25 @@ def send_to_contact(name: str, text: str) -> str:
             + (" I trimmed it to fit." if len(body) > MSG_MAX_CHARS else ""))
 
 
+GUEST_PER_HOUR = 30
+_guest_sent: dict = {}
+
+GUEST_WELCOME = (
+    "hey 👋 i'm vibey, a little robot who lives on jack's desk.\n\n"
+    "text me whatever, i'm down to chat.\n\n"
+    "if you're cool with me sending you the odd message later, reply YES. "
+    "STOP any time and i'll leave you alone."
+)
+
+
 def _handle_guest(chat_id: int, msg: dict) -> None:
-    """Anyone who isn't the owner. They can only ever opt in or opt out here —
-    guests never reach the brain, and their words are never forwarded."""
-    low = (msg.get("text") or "").strip().lower().strip("/ !.")
+    """Anyone who isn't the owner. They can chat, and opt in or out of being
+    texted. Guest turns go to a walled-off brain (see _guest_turn in
+    reachy_chat.py): no tools, nothing said in the room, no commands."""
+    if msg["chat"].get("type") != "private":
+        return  # in a group it would answer every message anyone sends
+    raw = (msg.get("text") or "").strip()
+    low = raw.lower().strip("/ !.")
     d = _contacts()
     mine = [s for s, e in d["contacts"].items() if e.get("chat_id") == chat_id]
     owner = _state().get("owner")
@@ -271,12 +286,11 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
         if owner and mine:
             _send(owner, f"📵 {mine[0]} opted out of my messages.")
         return
-    if mine:
-        _send(chat_id, "I'm Vibey, Jack's desk robot. I only send messages "
-                       "here, I don't chat. Reply STOP any time to opt out.")
-        return
     name = (msg["chat"].get("first_name") or msg["chat"].get("username")
             or "someone")
+    if low == "start":
+        _send(chat_id, GUEST_WELCOME)
+        return
     pend = d["pending"].get(str(chat_id)) or {"name": name}
     if low in ("yes", "y", "yes please", "i consent", "start yes"):
         pend["consented"] = True
@@ -288,17 +302,26 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
             _send(owner, f"✅ {name} consented to being texted by me.\n"
                          f"Approve with:  /allow {chat_id} <nickname>")
         return
-    d["pending"][str(chat_id)] = pend
-    _save_contacts(d)
-    if pend.get("consented"):
-        _send(chat_id, "You've already said yes — I'm waiting on Jack to "
-                       "approve it. Reply STOP to withdraw.")
+    if not raw or raw.startswith("/"):
+        _send(chat_id, "i only do chatting here, no commands. just text me 🙂")
         return
-    _send(chat_id,
-          "👋 I'm Vibey, a desk robot belonging to Jack. I'm a bot, not a "
-          "person, and I don't chat here.\n\nIf you're happy for Jack's robot "
-          "to send you the occasional short message, reply YES. Ignore this and "
-          "nothing happens. You can reply STOP at any time.")
+    now = time.time()
+    recent = [t for t in _guest_sent.get(chat_id, []) if now - t < 3600]
+    if len(recent) >= GUEST_PER_HOUR:
+        _send(chat_id, "ok i need a breather, talk in a bit?")
+        return
+    _guest_sent[chat_id] = recent + [now]
+    try:
+        _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out = _post_json(f"{CHAT_URL}/ask", {"text": raw[:800], "channel": "guest",
+                                             "chat_id": chat_id, "name": name})
+        _send(chat_id, (out or {}).get("reply") or "hmm, lost my train of thought")
+    except Exception as e:  # noqa: BLE001
+        print(f"[tg] guest turn failed: {e}", flush=True)
+        _send(chat_id, "brain's lagging, try me again in a sec")
 
 
 # Phrases, not keywords.
@@ -371,8 +394,10 @@ def _handle(chat_id: int, text: str) -> None:
     low = text.lower()
     if low in ("/start", "/help"):
         _send(chat_id,
-              "🤖 Vibey here — the actual robot in Jack's house.\n\n"
-              "Just text me and I'll answer (and say it out loud in the room).\n"
+              "hey it's vibey, the actual robot on your desk 🤖\n\n"
+              "just text me and i'll answer (and say it out loud in the room). "
+              "anyone else who finds me can chat too, but they only get "
+              "texts: no commands, nothing said in the room.\n\n"
               "say: <text> — I'll speak it verbatim\n"
               "/photo — see through my eyes right now\n"
               "/clip — an 8-second video through my eyes\n"
@@ -593,28 +618,68 @@ def _handle(chat_id: int, text: str) -> None:
     # session is live, the message is handed to that session instead, framed as
     # what it is — something that arrived on the phone — so Vibey brings it up
     # in the conversation already happening, in the voice already talking.
-    st = _get_json(f"{CHAT_URL}/state") or {}
-    if st.get("openai") and not st.get("asleep"):
-        try:
-            out = _post_json(f"{CHAT_URL}/sighting", {
-                "text": f"[Jack just texted you: \"{text[:400]}\". Nobody in "
-                        f"the room said this out loud. Answer him in the "
-                        f"conversation.]"}, timeout=20)
-            if (out or {}).get("delivered") == "realtime":
-                _send(chat_id, "🗣️ told him out loud — listen in.")
-                return
-        except Exception:  # noqa: BLE001 — fall through to the text brain
-            pass
-
-    # normal chat → active brain; reply is also spoken in the room
+    # A text gets a text back, always. If a voice session is live it is told
+    # quietly afterwards (see _note_voice_session) and decides for itself
+    # whether any of it is worth saying in the room.
     try:
-        out = _post_json(f"{CHAT_URL}/ask", {"text": text})
+        try:
+            _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
+        except Exception:  # noqa: BLE001 — cosmetic
+            pass
+        out = _post_json(f"{CHAT_URL}/ask", {"text": text, "channel": "telegram"})
         reply = (out or {}).get("reply") or "(no reply)"
         _send(chat_id, reply)
+        _note_voice_session(text, reply)
         if _state().get("voice_notes") and reply and not reply.startswith("("):
             _send_voice_note(chat_id, reply)
     except Exception as e:  # noqa: BLE001
-        _send(chat_id, f"brain hiccup ({e}) — is the chat service up?")
+        _send(chat_id, "ugh my brain's being slow, try me again in a sec")
+
+
+def _note_voice_session(text: str, reply: str) -> None:
+    st = _get_json(f"{CHAT_URL}/state") or {}
+    if not (st.get("openai") and not st.get("asleep")):
+        return
+    try:
+        _post_json(f"{CHAT_URL}/sighting", {"silent": True, "text": (
+            f"[Context only, nobody in the room heard this: Jack texted you "
+            f"\"{text[:400]}\" and you texted back \"{reply[:400]}\". Do not "
+            f"read either out. Only bring it up if it naturally fits what is "
+            f"happening in the room.]")}, timeout=10)
+    except Exception:  # noqa: BLE001 — context is a nice-to-have
+        pass
+
+
+# The "/" menu in Telegram. Owner only: guests get no commands at all.
+OWNER_COMMANDS = [
+    ("photo", "see through my eyes right now"),
+    ("clip", "an 8-second video through my eyes"),
+    ("timelapse", "today so far, one frame a minute"),
+    ("status", "stack health"),
+    ("alarm", "wake-up show: /alarm 07:30 [daily], /alarm off"),
+    ("sleep", "put me to bed"),
+    ("wake", "get me up"),
+    ("code", "set Claude Code on a task in my repo"),
+    ("jobs", "what Claude Code is doing"),
+    ("voicenotes", "replies as voice messages too: on|off"),
+    ("contacts", "who I'm allowed to text"),
+    ("cost", "what I've cost you today"),
+    ("verse", "what's happening in my VibeVerse lobby"),
+    ("help", "everything I can do"),
+]
+
+
+def _set_command_menu(owner) -> None:
+    try:
+        _tg("deleteMyCommands", {}, timeout=10)  # default scope: nothing for guests
+        if owner:
+            _tg("setMyCommands", {
+                "commands": json.dumps([{"command": c, "description": d}
+                                        for c, d in OWNER_COMMANDS]),
+                "scope": json.dumps({"type": "chat", "chat_id": owner}),
+            }, timeout=10)
+    except Exception as e:  # noqa: BLE001
+        print(f"[tg] command menu failed: {e}", flush=True)
 
 
 def _sleep_watcher() -> None:
@@ -685,6 +750,7 @@ def run() -> None:
               "the 409 that killed both. Vibey needs its own bot.", flush=True)
         return
     print(f"[tg] up as @{BOT_HANDLE}", flush=True)
+    _set_command_menu(_state().get("owner"))
     threading.Thread(target=_verse_watcher, daemon=True).start()
     threading.Thread(target=_sleep_watcher, daemon=True).start()
 
@@ -711,7 +777,7 @@ def run() -> None:
                 print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
                 _send(chat_id, "👋 paired! You're my human now.")
             if chat_id != st.get("owner"):
-                # Not the owner: the only conversation on offer is consent.
+                # Not the owner: a walled-off guest chat, plus consent.
                 threading.Thread(target=_handle_guest, args=(chat_id, msg),
                                  daemon=True).start()
                 continue

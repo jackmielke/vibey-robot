@@ -7,9 +7,18 @@ __pycache__/
 *.log
 .openclaw/
 .telegram_state.json
+.audio_prefs.json
 captures/
 agent_runs/
 .venv-gestures/
 models/
 .env.bak.*
 .cost.json
+
+# Everything said near the robot. Private by default — see reachy_transcript.py
+transcripts/
+.env.bak
+.env.bak2
+.off
+.telegram_contacts.json
+.voice_brain.json

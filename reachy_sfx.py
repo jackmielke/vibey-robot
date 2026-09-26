@@ -441,6 +441,15 @@ def _run_effect(key: str) -> None:
             _duck.clear()             # the bed resumes on its next tick
 
 
+# A held (or mashed) soundboard button sends one request per repeat, and every
+# one of them used to QUEUE — so a half-second press bought a stomping little
+# effect that kept firing over the top of the conversation long after the finger
+# came off. Same effect asked for again inside this window is dropped, not
+# queued. A deliberate double-tap is slower than this; an auto-repeat is not.
+_REPEAT_S = 0.7
+_last_fired: dict[str, float] = {}
+
+
 def play(name: str) -> bool:
     """Fire anything in the catalog by name or spoken shorthand. Non-blocking.
     Music names start the bed; 'stop' stops everything. False = no such sound.
@@ -455,6 +464,10 @@ def play(name: str) -> bool:
         return start_music(key) is not None
     if _AUDIO["muted"]:
         return True
+    now = time.time()
+    if now - _last_fired.get(key, 0.0) < _REPEAT_S:
+        return True                   # a repeat of a held button: honoured, silently
+    _last_fired[key] = now
     threading.Thread(target=_run_effect, args=(key,), daemon=True).start()
     return True
 
