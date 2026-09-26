@@ -257,12 +257,15 @@ def send_to_contact(name: str, text: str) -> str:
 
 GUEST_PER_HOUR = 30
 GUEST_PHOTOS_PER_HOUR = 5
+GUEST_ACTIONS_PER_HOUR = 10
+_guest_actions: dict = {}
 _guest_photos: dict = {}
 _guest_sent: dict = {}
 
 GUEST_WELCOME = (
     "hey 👋 i'm vibey, a little robot who lives on jack's desk.\n\n"
-    "text me whatever, i'm down to chat. /photo shows you what i'm looking at.\n\n"
+    "text me whatever, i'm down to chat. /photo shows you what i'm looking at, "
+    "/wave and /whistle and i'll do it in the room.\n\n"
     "if you're cool with me sending you the odd message later, reply YES. "
     "STOP any time and i'll leave you alone."
 )
@@ -321,8 +324,19 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
         if owner:
             _send(owner, f"👀 {name} grabbed a /photo")
         return
+    if low in ACTIONS:
+        now = time.time()
+        recent = [t for t in _guest_actions.get(chat_id, []) if now - t < 3600]
+        if len(recent) >= GUEST_ACTIONS_PER_HOUR:
+            _send(chat_id, "i'm all waved out, try later 😅")
+            return
+        if _act(chat_id, low):
+            _guest_actions[chat_id] = recent + [now]
+            _note_voice_session(f"/{low}", f"(you did a {low} in the room)",
+                                who=f"{name} (a guest, via Telegram)")
+        return
     if not raw or raw.startswith("/"):
-        _send(chat_id, "the only command here is /photo 📷 otherwise just text me")
+        _send(chat_id, "here you can /photo, /wave or /whistle. otherwise just text me")
         return
     if _asleep():
         _sleep_note(chat_id, "vibey's asleep rn 😴 try me later")
@@ -340,7 +354,11 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
     try:
         out = _post_json(f"{CHAT_URL}/ask", {"text": raw[:800], "channel": "guest",
                                              "chat_id": chat_id, "name": name})
-        _send(chat_id, (out or {}).get("reply") or "hmm, lost my train of thought")
+        reply = (out or {}).get("reply") or "hmm, lost my train of thought"
+        _send(chat_id, reply)
+        # So the robot in the room knows who's been texting it and can bring
+        # it up: "Sam just told me it's her birthday".
+        _note_voice_session(raw[:400], reply, who=f"{name} (a guest, via Telegram)")
     except Exception as e:  # noqa: BLE001
         print(f"[tg] guest turn failed: {e}", flush=True)
         _send(chat_id, "brain's lagging, try me again in a sec")
@@ -393,6 +411,26 @@ def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> 
                        "I'll try to get them back — ask again in a minute.")
     except Exception as e:  # noqa: BLE001
         _send(chat_id, f"camera's not answering ({e})")
+
+
+ACTIONS = {"wave": "👋", "whistle": "🎶"}
+
+
+def _act(chat_id: int, emote: str) -> bool:
+    """Wave or whistle in the room. Only while awake: asleep the motors are
+    off and a gesture would just be a noise from a limp robot."""
+    if _asleep():
+        _send(chat_id, "😴 asleep rn, can't " + emote)
+        return False
+    try:
+        out = _post_json("http://localhost:8770/emote", {"name": emote}, timeout=15)
+        if not (out or {}).get("ok"):
+            raise RuntimeError("didn't take")
+        _send(chat_id, ACTIONS[emote])
+        return True
+    except Exception as e:  # noqa: BLE001
+        _send(chat_id, f"couldn't {emote} ({e})")
+        return False
 
 
 def _dials(chat_id: int, change: dict, ok: str) -> None:
@@ -574,6 +612,9 @@ def _handle(chat_id: int, text: str) -> None:
             _send(chat_id, f"{label}: {'on' if cur else 'off'}. {cmd} on|off")
             return
         _dials(chat_id, {key: onoff[arg]}, f"{label}: {arg}")
+        return
+    if cmd in ("/wave", "/whistle"):
+        _act(chat_id, cmd[1:])
         return
     if cmd == "/now":
         _send(chat_id, _now_line())
@@ -788,13 +829,13 @@ def _handle(chat_id: int, text: str) -> None:
         _send(chat_id, "ugh my brain's being slow, try me again in a sec")
 
 
-def _note_voice_session(text: str, reply: str) -> None:
+def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
     st = _get_json(f"{CHAT_URL}/state") or {}
     if not (st.get("openai") and not st.get("asleep")):
         return
     try:
         _post_json(f"{CHAT_URL}/sighting", {"silent": True, "text": (
-            f"[Context only, nobody in the room heard this: Jack texted you "
+            f"[Context only, nobody in the room heard this: {who} texted you "
             f"\"{text[:400]}\" and you texted back \"{reply[:400]}\". Do not "
             f"read either out. Only bring it up if it naturally fits what is "
             f"happening in the room.]")}, timeout=10)
@@ -814,6 +855,8 @@ OWNER_COMMANDS = [
     ("tracking", "follow faces: on|off"),
     ("incognito", "remember nothing: on|off"),
     ("thinkaloud", "narrate thoughts: on|off"),
+    ("wave", "wave in the room"),
+    ("whistle", "whistle a little tune"),
     ("photo", "see through my eyes right now"),
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),
@@ -834,7 +877,12 @@ OWNER_COMMANDS = [
 
 def _set_command_menu(owner) -> None:
     try:
-        _tg("deleteMyCommands", {}, timeout=10)  # default scope: nothing for guests
+        # Default scope is what everyone else sees in their "/" menu.
+        _tg("setMyCommands", {"commands": json.dumps([
+            {"command": "photo", "description": "see what i'm looking at"},
+            {"command": "wave", "description": "i'll wave in the room"},
+            {"command": "whistle", "description": "i'll whistle a tune"},
+        ])}, timeout=10)
         if owner:
             _tg("setMyCommands", {
                 "commands": json.dumps([{"command": c, "description": d}

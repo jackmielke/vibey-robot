@@ -48,7 +48,7 @@ EMOTIONS = ["happy", "excited", "curious", "sad", "smug", "thinking", "victory",
             "wave", "nod", "shake", "wave_left", "wave_right", "peace",
             "smile", "tilt_left", "tilt_right", "tilt_left_big",
             "tilt_right_big", "dance", "antenna_check", "left_antenna_check",
-            "right_antenna_check"]
+            "right_antenna_check", "whistle"]
 
 
 # --------------------------------------------------------------------------- #
@@ -463,6 +463,12 @@ def _chirp(emotion: str) -> bytes:
              + _sweep(1046, 1046, .08) + _silence(.04)
              + _sweep(880, 1318, .2, .65) + _silence(.05)
              + _sweep(1046, 1568, .25, .7))
+    elif emotion == "whistle":    # wolf whistle, then a little three-note tune
+        s = (_sweep(900, 2300, .22, .55) + _silence(.06)
+             + _sweep(1500, 650, .5, .5, vibrato=6) + _silence(.25)
+             + _sweep(1175, 1175, .16, .45, vibrato=10) + _silence(.03)
+             + _sweep(1318, 1318, .16, .45, vibrato=10) + _silence(.03)
+             + _sweep(1568, 1480, .38, .45, vibrato=14))
     elif emotion == "wave":       # a chirpy two-tone "hi!"
         s = _sweep(660, 880, .12, .5) + _silence(.04) + _sweep(880, 1100, .16, .5)
     elif emotion == "laugh":      # belly laugh: four "ha"s falling and fading
@@ -887,7 +893,17 @@ def _do_shy_nod():
     _goto(NEUTRAL, _ANT(0.2, -0.2), 0.55)
 
 
-_MOVES = {"happy": _do_happy, "excited": _do_excited, "curious": _do_curious,
+def _do_whistle():
+    # chin up and a little sway, antennas perked, in time with the tune
+    _goto(_pose(pitch=-0.18, roll=0.08), _ANT(0.5, 0.5), 0.3)
+    time.sleep(0.8)
+    for r in (0.12, -0.12, 0.1):
+        _goto(_pose(pitch=-0.12, roll=r), _ANT(0.35, 0.35), 0.35)
+        time.sleep(0.36)
+    _goto(NEUTRAL, _ANT(0.2, -0.2), 0.5)
+
+
+_MOVES = {"happy": _do_happy, "whistle": _do_whistle, "excited": _do_excited, "curious": _do_curious,
           "sad": _do_sad, "smug": _do_smug, "thinking": _do_thinking,
           "victory": _do_victory, "wave": _do_wave, "nod": _do_nod,
           "shake": _do_shake, "wave_left": _do_wave_left,

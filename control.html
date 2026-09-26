@@ -34,6 +34,8 @@
   select,input[type=range] { background:#0f0f14; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px }
   .seg { display:flex; gap:6px } .seg button { flex:1; padding:8px; border-radius:9px; border:1px solid var(--line); background:#0f0f14; color:var(--text); cursor:pointer }
   .seg button.on { background:var(--on); color:#052; border-color:var(--on); font-weight:700 }
+  .fname { width:100%; background:transparent; border:1px solid transparent; border-radius:6px; color:inherit; font:inherit; text-align:center; padding:2px 4px }
+  .fname:hover, .fname:focus { border-color:var(--line); outline:none; background:rgba(127,127,127,.08) }
   .faces { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:10px }
   .face { text-align:center; font-size:12px } .face img { width:84px; height:84px; object-fit:cover; border-radius:12px; background:#222; display:block; margin:0 auto 4px }
   .face.here img { outline:3px solid var(--on) }
@@ -183,7 +185,13 @@ async function friends(){
   const list=await j('/peoplelist'); if(!Array.isArray(list)) return;
   const here=new Set(((await j('/perception'))||{}).people?.map(q=>q.face_id)||[]);
   $('friendsub').textContent=list.length+' known';
-  $('faces').innerHTML=list.map(p=>`<div class="face ${here.has(p.id)?'here':''}" title="seen ${p.times_seen}×"><img src="${p.snapshot||''}" onerror="this.style.visibility='hidden'"><div>${p.name||'<i>unnamed</i>'}</div></div>`).join('')||'<span class=sub>no faces saved yet</span>';
+  if(document.activeElement&&document.activeElement.classList.contains('fname')) return; // don't redraw mid-rename
+  const esc=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  $('faces').innerHTML=list.map(p=>`<div class="face ${here.has(p.id)?'here':''}" title="seen ${p.times_seen}× · click the name to rename"><img src="${p.snapshot||''}" onerror="this.style.visibility='hidden'"><input class=fname data-id="${esc(p.id)}" value="${esc(p.name)}" placeholder="name…" aria-label="Name for this face"></div>`).join('')||'<span class=sub>no faces saved yet</span>';
+  document.querySelectorAll('.fname').forEach(inp=>{ const was=inp.value;
+    const save=async()=>{ const v=inp.value.trim(); if(!v||v===was) return; inp.disabled=true; await j('/nameface',{name:v,face_id:inp.dataset.id}); friends(); };
+    inp.onkeydown=e=>{ if(e.key==='Enter') inp.blur(); if(e.key==='Escape'){ inp.value=was; inp.blur(); } };
+    inp.onblur=save; });
 }
 
 // ---- log ------------------------------------------------------------------
