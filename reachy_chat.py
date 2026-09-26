@@ -90,6 +90,13 @@ try:
         os.environ["MIC_SOURCE"] = _pref   # before the voice engines import
 except Exception:  # noqa: BLE001
     pass
+SPEAKER_PREF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".speaker_source.json")
+try:
+    _pref = json.loads(open(SPEAKER_PREF_PATH).read()).get("source")
+    if _pref in ("robot", "laptop"):
+        os.environ["SPEAKER_SOURCE"] = _pref
+except Exception:  # noqa: BLE001
+    pass
 MIC_SOURCE = os.environ.get("MIC_SOURCE", "robot").strip().lower()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
 
@@ -2239,6 +2246,20 @@ def set_mic_source(src: str) -> str:
     return src
 
 
+def set_speaker_source(src: str) -> str:
+    """Where the voice comes out: the robot or the MacBook. Read per clip, so
+    no session restart is needed."""
+    if src not in ("robot", "laptop"):
+        raise ValueError("speaker is robot or laptop")
+    with open(SPEAKER_PREF_PATH, "w") as f:
+        json.dump({"source": src}, f)
+    os.environ["SPEAKER_SOURCE"] = src
+    import reachy_openai_realtime as rt
+    rt.SPEAKER_SOURCE = src
+    print(f"[chat] speaker → {src}", flush=True)
+    return src
+
+
 def _dials() -> dict:
     """Every switch the control center can flip, read from wherever it lives."""
     import reachy_openai_realtime as rt
@@ -2263,6 +2284,8 @@ def _dials() -> dict:
         "volume": vol,
         "voice_brain": voice_brain(),
         "mic_source": MIC_SOURCE,
+        "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
+        "voice": STAGE["n"] == 3,
     }
 
 
@@ -2286,6 +2309,12 @@ def _set_dials(body: dict) -> dict:
         set_voice_brain(str(body["voice_brain"]))
     if "mic_source" in body:
         set_mic_source(str(body["mic_source"]))
+    if "speaker_source" in body:
+        set_speaker_source(str(body["speaker_source"]))
+    if "voice" in body:
+        # Voice off = stage 2: everything local keeps running, the cloud
+        # conversation stops. Voice on = stage 3.
+        _set_stage(3 if body["voice"] else 2)
     return _dials()
 
 

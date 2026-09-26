@@ -617,6 +617,15 @@ def _handle(chat_id: int, text: str) -> None:
     if cmd in ("/wave", "/whistle"):
         _act(chat_id, cmd[1:])
         return
+    if cmd == "/speaker":
+        pick = {"robot": "robot", "mac": "laptop", "laptop": "laptop", "macbook": "laptop"}.get(arg)
+        if not pick:
+            cur = (_get_json(f"{CHAT_URL}/dials") or {}).get("speaker_source")
+            _send(chat_id, f"🔈 talking through the {'macbook' if cur == 'laptop' else 'robot'}. /speaker robot or /speaker mac")
+            return
+        _dials(chat_id, {"speaker_source": pick},
+               f"🔈 now talking through the {'macbook' if pick == 'laptop' else 'robot'}")
+        return
     if cmd == "/mic":
         pick = {"robot": "robot", "mac": "laptop", "laptop": "laptop", "macbook": "laptop"}.get(arg)
         if not pick:
@@ -873,6 +882,7 @@ OWNER_COMMANDS = [
     ("now", "what i'm doing + all switches"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("mic", "listen with the robot or macbook mic"),
+    ("speaker", "talk through the robot or macbook"),
     ("talk", "wake up and start voice (/talk off to stop)"),
     ("mute", "mute my mic"),
     ("unmute", "unmute my mic"),
