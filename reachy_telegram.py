@@ -305,6 +305,9 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
     if not raw or raw.startswith("/"):
         _send(chat_id, "i only do chatting here, no commands. just text me 🙂")
         return
+    if _asleep():
+        _sleep_note(chat_id, "vibey's asleep rn 😴 try me later")
+        return
     now = time.time()
     recent = [t for t in _guest_sent.get(chat_id, []) if now - t < 3600]
     if len(recent) >= GUEST_PER_HOUR:
@@ -334,6 +337,15 @@ _WAKE_INTENT = re.compile(
     r"you there\b|get up\b|^good morning|morning vibey|come back|"
     r"turn (yourself )?on\b|switch (yourself )?on\b|boot up|"
     r"rise and shine|^wake\b|^awake\b)")
+
+
+_sleep_noted: dict = {}
+
+
+def _sleep_note(chat_id: int, text: str) -> None:
+    if time.time() - _sleep_noted.get(chat_id, 0) > 3600:
+        _sleep_noted[chat_id] = time.time()
+        _send(chat_id, text)
 
 
 def _asleep() -> bool:
@@ -608,6 +620,11 @@ def _handle(chat_id: int, text: str) -> None:
     # forwarded to a brain that is not running.
     if _asleep() and _WAKE_INTENT.search(low):
         _power(chat_id, wake=True)
+        return
+    # Asleep means asleep: no chat replies until it's up. One short note per
+    # hour so a text never just vanishes, and commands above still work.
+    if _asleep():
+        _sleep_note(chat_id, "😴 asleep rn. text \"wake up\" to get me up")
         return
 
     # A text that arrives DURING a conversation is a text, not a new
