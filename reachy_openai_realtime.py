@@ -531,6 +531,18 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "take_notes",
+        "description": (
+            "Switch into quiet note-taking mode: you stop talking, put your head "
+            "down, and just listen and transcribe until someone says 'stop taking "
+            "notes' or 'hey Vibey'. Then notes get texted to Jack. Use when "
+            "someone says just listen, take notes, be a fly on the wall, scribe "
+            "this, or similar. Call it FIRST, then say something like 'got it, "
+            "I'll take notes' in five words or fewer."),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "type": "function",
         "name": "go_to_sleep",
         "description": (
             "Stop listening and close the live session. Use whenever someone says "
@@ -1205,6 +1217,24 @@ def _tool_remember_face(args: dict) -> str:
                 "front of me, ask them to take turns.")
 
 
+def _tool_take_notes() -> str:
+    """Close the session like go_to_sleep, then switch scribe on once the short
+    acknowledgement has been spoken."""
+    _tool_sleep()
+
+    def _later():
+        time.sleep(6)
+        try:
+            req = urllib.request.Request(
+                "http://localhost:8772/scribe", data=b'{"on": true}', method="POST",
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=40).read()
+        except Exception as e:  # noqa: BLE001
+            print(f"[openai-rt] scribe start failed: {e}", flush=True)
+    threading.Thread(target=_later, daemon=True).start()
+    return "ok"
+
+
 def _tool_sleep() -> str:
     """Ask the loop to wind up once the goodbye has been spoken."""
     global SLEEP_REQUESTED_AT
@@ -1395,6 +1425,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_remember_face(args)
         if name == "go_to_sleep":
             return _tool_sleep()
+        if name == "take_notes":
+            return _tool_take_notes()
         if name == "set_voice_detection":
             return _tool_voice_detection(args)
         if name == "dj_play":

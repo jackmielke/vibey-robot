@@ -417,12 +417,34 @@ def _handle(chat_id: int, text: str) -> None:
               "/status — stack health\n"
               "/alarm 07:30 [daily] — wake-up show (/alarm off clears)\n"
               "/sleep, /wake — or just say \"you awake?\" and I'll get up\n"
+              "/scribe — listen quietly and text you notes (/scribe off to finish)\n"
               "/code <task> — set Claude Code on this repo, I'll report back\n"
               "/jobs — what Claude Code is doing\n"
               "/voicenotes on|off — replies as voice messages too\n"
               "/contacts — who I'm allowed to text (and how to add someone)\n"
               "/cost — what I've cost you today\n"
               "/verse — what's happening in my VibeVerse lobby")
+        return
+    if low.startswith("/scribe") or low in ("take notes", "just listen"):
+        arg = low.replace("/scribe", "").strip()
+        st = _get_json(f"{CHAT_URL}/state") or {}
+        sc = st.get("scribe") or {}
+        if arg in ("", "status") and low.startswith("/scribe") and sc.get("on"):
+            _send(chat_id, f"📝 taking notes, {sc.get('minutes', 0)} min in, "
+                           f"{sc.get('lines', 0)} lines. /scribe off to wrap up")
+            return
+        on = arg not in ("off", "stop", "done")
+        try:
+            out = _post_json(f"{CHAT_URL}/scribe", {"on": on}, timeout=40)
+            if out.get("error"):
+                _send(chat_id, f"couldn't: {out['error']}")
+            elif on:
+                _send(chat_id, "📝 ok, head down, just listening. /scribe off "
+                               "(or say \"stop taking notes\") and i'll text you the notes")
+            else:
+                _send(chat_id, "wrapping up, notes coming in a sec")
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"couldn't reach the chat service ({e})")
         return
     if low.startswith("/contacts"):
         d = _contacts()
@@ -676,6 +698,7 @@ OWNER_COMMANDS = [
     ("alarm", "wake-up show: /alarm 07:30 [daily], /alarm off"),
     ("sleep", "put me to bed"),
     ("wake", "get me up"),
+    ("scribe", "just listen and take notes: /scribe, /scribe off"),
     ("code", "set Claude Code on a task in my repo"),
     ("jobs", "what Claude Code is doing"),
     ("voicenotes", "replies as voice messages too: on|off"),

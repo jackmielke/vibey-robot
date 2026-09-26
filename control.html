@@ -49,6 +49,7 @@
 <header>
   <h1>Vibey</h1>
   <span class=pill id=status>connecting…</span>
+  <button class=ghost id=scribe title="Listen quietly and text notes to Telegram">📝 Take notes</button>
   <span class=sub id=cost></span>
   <button class=big id=power>Turn on</button>
 </header>
@@ -137,8 +138,11 @@ async function poll(){
   if(!chat){ st.textContent='stack offline'; st.className='pill offline'; p.disabled=true; return; }
   p.disabled=false;
   const awake=!chat.asleep && !chat.off, busy=want.power!==null||!!chat.turning;
-  st.textContent=busy?((want.power??(chat.turning==='on'))?'waking up…':'going to sleep…'):chat.off?'off':awake?(chat.speaking?'awake · talking':chat.listening?'awake · listening':'awake'):'asleep';
-  st.className='pill'+(awake&&!busy?' awake':'');
+  // One plain answer to "what is it doing right now".
+  const sc=chat.scribe||{}, brainName=(brainInfo&&brainInfo.brains&&brainInfo.brains[brainInfo.brain]&&brainInfo.brains[brainInfo.brain].label)||(chat.voice_brain==='live'?'GPT-Live':'Realtime');
+  st.textContent=busy?((want.power??(chat.turning==='on'))?'waking up…':'going to sleep…'):chat.off?'off':sc.on?`📝 taking notes · ${sc.minutes||0} min · not talking`:awake?(chat.speaking?`talking · ${brainName}`:`voice on · ${brainName} · listening`):'asleep · say "hey vibey"';
+  st.className='pill'+((awake||sc.on)&&!busy?' awake':'');
+  const sb=$('scribe'); sb.textContent=sc.on?'■ Stop notes':'📝 Take notes'; sb.disabled=busy||chat.off;
   p.disabled=busy; p.textContent=busy?'…':awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
   if(dials){ document.querySelectorAll('.sw[data-dial]').forEach(b=>{ const k=b.dataset.dial; const v=(k in want.dials)?want.dials[k]:!!dials[k]; b.classList.toggle('on',v); b.disabled=!awake&&(k==='listening'||k==='face_tracking'); });
     if(dials.volume!=null&&document.activeElement!==$('vol')){ $('vol').value=dials.volume; $('volv').textContent=dials.volume+'%'; } }
@@ -146,6 +150,7 @@ async function poll(){
   renderLog();
   const c=await j('/cost'); if(c) $('cost').textContent=`$${(c.today||0).toFixed(2)} today`;
 }
+$('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
 $('power').onclick=async()=>{ const on=!(chat&&!chat.asleep&&!chat.off); want.power=on; want.at=Date.now(); poll(); const r=await j('/turn',{on}); if(r&&r.error){ want.power=null; alert(r.error);} };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; const v=!((k in want.dials)?want.dials[k]:(dials&&dials[k])); want.dials[k]=v; want.at=Date.now(); b.classList.toggle('on',v); const r=await j('/dials',{[k]:v}); if(!r||r.error){ delete want.dials[k]; } poll(); });
 $('vol').oninput=e=>$('volv').textContent=e.target.value+'%';

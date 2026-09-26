@@ -871,6 +871,41 @@ def _voice_wake() -> None:
 WAS_AWAKE = {"on": False}
 
 
+# --------------------------------------------------------------------------- #
+# Scribe mode: asleep, listening only, notes at the end. See reachy_scribe.py.
+# --------------------------------------------------------------------------- #
+def _text_owner(text: str) -> None:
+    import reachy_telegram
+    owner = reachy_telegram._state().get("owner")
+    if owner:
+        reachy_telegram._send(owner, text)
+
+
+def _scribe_start() -> dict:
+    import reachy_scribe
+    if OFF["on"]:
+        raise ValueError("Vibey is OFF, switch it on first")
+    if not STATE["asleep"]:
+        # Quiet and still: the conversation closes and the head goes down.
+        _sleep_now()
+    return reachy_scribe.start(on_notes=_text_owner,
+                               on_wake=lambda: _wake_now("scribe"),
+                               log=lambda m: print(m, flush=True))
+
+
+def _scribe_stop(reason: str = "stopped") -> str:
+    import reachy_scribe
+    return reachy_scribe.stop(reason)
+
+
+def _scribe_status() -> dict:
+    try:
+        import reachy_scribe
+        return reachy_scribe.status()
+    except Exception:  # noqa: BLE001
+        return {"on": False}
+
+
 def _power_down() -> None:
     """Everything that should stop when the switch goes off.
 
@@ -879,6 +914,8 @@ def _power_down() -> None:
     goto_sleep needs them to get there.
     """
     WAS_AWAKE["on"] = not STATE["asleep"]
+    if _scribe_status().get("on"):
+        threading.Thread(target=_scribe_stop, args=("switched off",), daemon=True).start()
     try:
         _sleep_now()
     except Exception as e:  # noqa: BLE001
@@ -1204,7 +1241,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             # updating STATE, and a dashboard frozen on "recording" from four
             # minutes ago is worse than no indicator at all.
             cap = reachy_denoise.capture_status()
-            self._json({**STATE, "off": OFF["on"],
+            self._json({**STATE, "off": OFF["on"], "scribe": _scribe_status(),
                        "switches": dict(SWITCHES),
                        "ears_closed": EARS_CLOSED["on"],
                        "mic_source": MIC_SOURCE,
@@ -1385,6 +1422,19 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
                 self._json(_set_dials(body))
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/scribe"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                if body.get("on"):
+                    self._json({"ok": True, **_scribe_start()})
+                else:
+                    # Summarising takes a while; the notes arrive on Telegram.
+                    threading.Thread(target=_scribe_stop, args=("turned off",),
+                                     daemon=True).start()
+                    self._json({"ok": True, "on": False, "notes": "on their way"})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/brain"):
@@ -2226,6 +2276,8 @@ def _wake_now(reason: str = "wake") -> None:
     """
     if not STATE["asleep"]:
         return
+    if reason != "scribe" and _scribe_status().get("on"):
+        threading.Thread(target=_scribe_stop, args=("woken up",), daemon=True).start()
     # Its own bedtime is not a wake-up call. Going to sleep is a motor move and
     # a chime, and the clap detector heard exactly that as clap-clap two seconds
     # after "Turn off" — so the robot put itself to bed and got straight back up.
@@ -2358,6 +2410,7 @@ def main():
         _waker = reachy_wake.WakeListener(
             on_wake=_wake_now,
             should_listen=lambda: (STATE["asleep"] and not OFF["on"]
+                                   and not _scribe_status().get("on")
                                    and (SWITCHES["wake"] or SWITCHES["claps"])),
             phrase=lambda: SWITCHES["wake"] and not OFF["on"],
             log=lambda m: print(m, flush=True))
