@@ -872,6 +872,75 @@ WAS_AWAKE = {"on": False}
 
 
 # --------------------------------------------------------------------------- #
+# Stages, for showing what each layer adds. The body stays up in all three.
+#
+#   1  robot alone   motors + the robot's own onboard face tracking. The Mac
+#                    goes silent: no voice, no wake word, no face memory, no
+#                    idle breathing, no emotes of its own.
+#   2  + the Mac     wake word (local whisper), face memory, breathing, emotes.
+#                    Saying "hey Vibey" gets a wave, not a conversation,
+#                    because a conversation needs the cloud.
+#   3  + the cloud   GPT-Live voice-to-voice, Telegram chat. Normal Vibey.
+# --------------------------------------------------------------------------- #
+STAGE = {"n": 3}
+
+
+def _mem_pause(paused: bool) -> None:
+    try:
+        import urllib.request as _u
+        _u.urlopen(_u.Request(f"{MEM_URL}/pause",
+                              data=json.dumps({"paused": paused}).encode(),
+                              method="POST",
+                              headers={"Content-Type": "application/json"}),
+                   timeout=5).read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _end_voice_session(timeout: float = 15.0) -> None:
+    """Close a live voice session without putting the body down."""
+    STATE["openai"] = False
+    deadline = time.time() + timeout
+    while STATE["mode"] == "openai" and time.time() < deadline:
+        time.sleep(0.1)
+
+
+def _set_stage(n: int) -> dict:
+    if n not in (1, 2, 3):
+        raise ValueError("stage is 1, 2 or 3")
+    if OFF["on"]:
+        raise ValueError("Vibey is OFF, switch it on first")
+    import reachy_idle
+    prev = STAGE["n"]
+    STAGE["n"] = n
+    print(f"[chat] stage {prev} → {n}", flush=True)
+    if n < 3:
+        if _scribe_status().get("on") and n == 1:
+            threading.Thread(target=_scribe_stop, args=("stage 1",), daemon=True).start()
+        _end_voice_session()
+    # Body up in every stage. From asleep that is the wake animation only.
+    _robot_post("/api/motors/set_mode/enabled", 10)
+    if STATE["asleep"] and n < 3:
+        STATE["asleep"] = False
+        _robot_post("/api/move/play/wake_up", 15)
+    if n == 1:
+        reachy_idle.stop()
+        _mem_pause(True)
+        _apply_tracking(True)     # the robot's own trick, no Mac involved
+    else:
+        _mem_pause(False)
+        _apply_tracking(bool(SWITCHES["tracking"]))
+        reachy_idle.start()
+    if n == 3:
+        if STATE["asleep"]:
+            _wake_now("manual")
+        else:
+            STATE["openai"] = bool(STATE["openai_available"])
+    threading.Thread(target=_mode_antennas, daemon=True).start()
+    return {"stage": n}
+
+
+# --------------------------------------------------------------------------- #
 # Scribe mode: asleep, listening only, notes at the end. See reachy_scribe.py.
 # --------------------------------------------------------------------------- #
 def _text_owner(text: str) -> None:
@@ -1242,6 +1311,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             # minutes ago is worse than no indicator at all.
             cap = reachy_denoise.capture_status()
             self._json({**STATE, "off": OFF["on"], "scribe": _scribe_status(),
+                        "stage": STAGE["n"],
                        "switches": dict(SWITCHES),
                        "ears_closed": EARS_CLOSED["on"],
                        "mic_source": MIC_SOURCE,
@@ -1422,6 +1492,13 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
                 self._json(_set_dials(body))
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/stage"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                self._json({"ok": True, **_set_stage(int(body.get("stage", 3)))})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/scribe"):
@@ -2274,6 +2351,15 @@ def _wake_now(reason: str = "wake") -> None:
     So the handover happens first, in one step, and the body catches up on a
     thread.
     """
+    if STAGE["n"] < 3:
+        # No cloud, so no conversation. The Mac can still show it heard you.
+        if STAGE["n"] == 2 and reason in ("phrase", "clap"):
+            try:
+                from reachy_emotes import play as play_emote
+                play_emote("wave", sound=True)
+            except Exception:  # noqa: BLE001
+                pass
+        return
     if not STATE["asleep"]:
         return
     if reason != "scribe" and _scribe_status().get("on"):
@@ -2409,7 +2495,8 @@ def main():
         # clap-to-wake *more* live, not less. Every gate belongs here.
         _waker = reachy_wake.WakeListener(
             on_wake=_wake_now,
-            should_listen=lambda: (STATE["asleep"] and not OFF["on"]
+            should_listen=lambda: ((STATE["asleep"] or STAGE["n"] == 2) and not OFF["on"]
+                                   and STAGE["n"] != 1
                                    and not _scribe_status().get("on")
                                    and (SWITCHES["wake"] or SWITCHES["claps"])),
             phrase=lambda: SWITCHES["wake"] and not OFF["on"],
@@ -2452,6 +2539,12 @@ def main():
             # connection to the microphone, so this loop can simply idle.
             reachy_denoise.set_listening(False)
             STATE["mic_mode"] = reachy_denoise.update_capture(False)
+            time.sleep(0.2)
+            continue
+
+        if STAGE["n"] < 3:
+            # Stage 1 or 2: no conversation at all, and in particular no
+            # fall-through to the old whisper-and-Claude path.
             time.sleep(0.2)
             continue
 

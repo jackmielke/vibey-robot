@@ -2482,7 +2482,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(json.dumps({"ok": False, "error": str(e)}).encode(), "application/json", 500)
             return
-        if self.path.startswith(("/wake", "/sleep", "/dials", "/brain", "/scribe")):
+        if self.path.startswith(("/wake", "/sleep", "/dials", "/brain", "/scribe", "/stage")):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}

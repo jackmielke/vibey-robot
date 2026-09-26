@@ -386,8 +386,9 @@ def _sleep_note(chat_id: int, text: str) -> None:
 
 
 def _asleep() -> bool:
+    """Asleep, or on stage 1-2, where the cloud (and so texting) is off."""
     st = _get_json(f"{CHAT_URL}/state") or {}
-    return bool(st.get("asleep"))
+    return bool(st.get("asleep")) or (st.get("stage") or 3) < 3
 
 
 def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> None:
@@ -615,6 +616,21 @@ def _handle(chat_id: int, text: str) -> None:
         return
     if cmd in ("/wave", "/whistle"):
         _act(chat_id, cmd[1:])
+        return
+    if cmd == "/stage":
+        if arg not in ("1", "2", "3"):
+            st = _get_json(f"{CHAT_URL}/state") or {}
+            _send(chat_id, f"on stage {st.get('stage', 3)}.\n/stage 1 robot alone\n"
+                           "/stage 2 + mac\n/stage 3 + cloud (voice, telegram)")
+            return
+        try:
+            out = _post_json(f"{CHAT_URL}/stage", {"stage": int(arg)}, timeout=60)
+            _send(chat_id, f"couldn't: {out['error']}" if out.get("error") else
+                  {"1": "1️⃣ robot alone. just the pi, onboard tracking",
+                   "2": "2️⃣ + mac. wake word, faces, moves. no cloud",
+                   "3": "3️⃣ + cloud. voice on, texts on"}[arg])
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"couldn't reach the chat service ({e})")
         return
     if cmd == "/now":
         _send(chat_id, _now_line())
@@ -846,6 +862,7 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
 # The "/" menu in Telegram. Owner only: guests get no commands at all.
 OWNER_COMMANDS = [
     ("now", "what i'm doing + all switches"),
+    ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("talk", "wake up and start voice (/talk off to stop)"),
     ("mute", "mute my mic"),
     ("unmute", "unmute my mic"),
