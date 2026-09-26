@@ -3,7 +3,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vibey</title>
 <style>
-  :root { --bg:#0b0b0f; --panel:#15151c; --line:#26262f; --text:#ececf1; --dim:#8b8b99; --on:#7ef0a6; --off:#3a3a46; --warn:#ffb454; --bad:#ff6b6b; }
+  /* Light by default, dark by OS setting; the ☀/☾ button pins either. */
+  :root { color-scheme:light; --bg:#f3f4f8; --panel:#ffffff; --line:#dfe0e8; --text:#17171f; --dim:#6a6a7a; --on:#1fb96a; --off:#cfd0da; --warn:#c77a12; --bad:#e04848; --field:#f6f6fa; }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) { color-scheme:dark; --bg:#0b0b0f; --panel:#15151c; --line:#26262f; --text:#ececf1; --dim:#8b8b99; --on:#7ef0a6; --off:#3a3a46; --warn:#ffb454; --bad:#ff6b6b; --field:#0f0f14; } }
+  :root[data-theme="dark"] { color-scheme:dark; --bg:#0b0b0f; --panel:#15151c; --line:#26262f; --text:#ececf1; --dim:#8b8b99; --on:#7ef0a6; --off:#3a3a46; --warn:#ffb454; --bad:#ff6b6b; --field:#0f0f14; }
   * { box-sizing:border-box }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,Inter,system-ui,sans-serif }
   a { color:inherit }
@@ -31,13 +34,13 @@
   .sw::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s }
   .sw.on { background:var(--on) } .sw.on::after { left:23px }
   .sw:disabled { opacity:.35; cursor:default }
-  select,input[type=range] { background:#0f0f14; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px }
-  .seg { display:flex; gap:6px } .seg button { flex:1; padding:8px; border-radius:9px; border:1px solid var(--line); background:#0f0f14; color:var(--text); cursor:pointer }
+  select,input[type=range] { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px }
+  .seg { display:flex; gap:6px } .seg button { flex:1; padding:8px; border-radius:9px; border:1px solid var(--line); background:var(--field); color:var(--text); cursor:pointer }
   .seg button.on { background:var(--on); color:#052; border-color:var(--on); font-weight:700 }
   .fname { width:100%; background:transparent; border:1px solid transparent; border-radius:6px; color:inherit; font:inherit; text-align:center; padding:2px 4px }
   .fname:hover, .fname:focus { border-color:var(--line); outline:none; background:rgba(127,127,127,.08) }
   .faces { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:10px }
-  .face { text-align:center; font-size:12px } .face img { width:84px; height:84px; object-fit:cover; border-radius:12px; background:#222; display:block; margin:0 auto 4px }
+  .face { text-align:center; font-size:12px } .face img { width:84px; height:84px; object-fit:cover; border-radius:12px; background:var(--off); display:block; margin:0 auto 4px }
   .face.here img { outline:3px solid var(--on) }
   .log { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:260px; overflow:auto; display:flex; flex-direction:column; gap:6px }
   .log .you { color:var(--text) } .log .bot { color:var(--on) }
@@ -53,6 +56,7 @@
   <span class=pill id=status>connecting…</span>
   <button class=ghost id=scribe title="Listen quietly and text notes to Telegram">📝 Take notes</button>
   <span class=sub id=cost></span>
+  <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
   <button class=big id=power>Turn on</button>
 </header>
 
@@ -152,6 +156,12 @@ async function poll(){
   renderLog();
   const c=await j('/cost'); if(c) $('cost').textContent=`$${(c.today||0).toFixed(2)} today`;
 }
+(function(){ const r=document.documentElement, b=$('theme');
+  const dark=()=>r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
+  try{ const t=localStorage.getItem('vibey-theme'); if(t) r.dataset.theme=t; }catch(_){}
+  const paint=()=>{ b.textContent=dark()?'☀':'☾'; }; paint();
+  b.onclick=()=>{ r.dataset.theme=dark()?'light':'dark'; try{localStorage.setItem('vibey-theme',r.dataset.theme);}catch(_){} paint(); };
+})();
 $('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
 $('power').onclick=async()=>{ const on=!(chat&&!chat.asleep&&!chat.off); want.power=on; want.at=Date.now(); poll(); const r=await j('/turn',{on}); if(r&&r.error){ want.power=null; alert(r.error);} };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; const v=!((k in want.dials)?want.dials[k]:(dials&&dials[k])); want.dials[k]=v; want.at=Date.now(); b.classList.toggle('on',v); const r=await j('/dials',{[k]:v}); if(!r||r.error){ delete want.dials[k]; } poll(); });
