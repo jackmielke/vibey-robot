@@ -154,7 +154,8 @@ def _drain() -> None:
             if channel:
                 # A text did not come from anybody in the room, so the camera
                 # and the mic array have no say in who sent it.
-                speaker, by, present = item.get("speaker"), "channel", []
+                speaker = item.get("speaker") or ("Vibey" if who == "vibey" else None)
+                by, present = "channel", []
             else:
                 speaker, by, present = _attribute(who)
             row = {"ts": ts, "who": who, "speaker": speaker, "text": text,
