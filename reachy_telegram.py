@@ -375,6 +375,30 @@ _WAKE_INTENT = re.compile(
     r"rise and shine|^wake\b|^awake\b)")
 
 
+def _sfx(chat_id: int, name: str) -> None:
+    """Owner only. Plays on the robot speaker even while asleep: asking for a
+    sound by name is as explicit as it gets. Goes through the dashboard's
+    /sfx, which owns the one speaker channel (queueing, ducking music)."""
+    import reachy_sfx
+    if not name:
+        groups: dict = {}
+        for e in reachy_sfx.catalog():
+            groups.setdefault(e.get("group") or "other", []).append(e["name"])
+        _send(chat_id, "🔊 sound effects — /sfx <name> (loose names work, "
+              "\"vader\", \"pew\")\n\n" + "\n".join(
+                  f"{g}: {', '.join(n)}" for g, n in groups.items()))
+        return
+    key = reachy_sfx.resolve(name)
+    if not key:
+        _send(chat_id, f"no sound called \"{name}\". /sfx for the list")
+        return
+    out = _post_json("http://localhost:8770/sfx", {"name": key}, timeout=15)
+    if (out or {}).get("ok"):
+        _send(chat_id, f"🔊 {key}")
+    else:
+        _send(chat_id, f"couldn't play {key} ({(out or {}).get('error', 'dashboard not answering')})")
+
+
 def _asleep() -> bool:
     """Asleep, or on stage 1-2, where the cloud (and so texting) is off."""
     st = _get_json(f"{CHAT_URL}/state") or {}
@@ -515,6 +539,7 @@ def _handle(chat_id: int, text: str) -> None:
               "anyone else who finds me can chat too, but they only get "
               "texts: no commands, nothing said in the room.\n\n"
               "say: <text> — I'll speak it verbatim\n"
+              "/sfx — list my sound effects · /sfx <name> plays one in the room\n"
               "/now — what I'm doing + every switch\n"
               "/talk, /talk off — voice on/off · /mute, /unmute\n"
               "/volume 0-100|up|down · /brain live|realtime\n"
@@ -804,6 +829,9 @@ def _handle(chat_id: int, text: str) -> None:
         _save_state(st)
         _send(chat_id, "voice notes " + ("ON — replies come as audio too" if st["voice_notes"] else "off"))
         return
+    if low == "/sfx" or low.startswith("/sfx "):
+        _sfx(chat_id, text[4:].strip())
+        return
     if low.startswith("say:"):
         line = text[4:].strip()
         try:
@@ -885,6 +913,7 @@ OWNER_COMMANDS = [
     ("thinkaloud", "narrate thoughts: on|off"),
     ("wave", "wave in the room"),
     ("whistle", "whistle a little tune"),
+    ("sfx", "sound effects: /sfx lists, /sfx <name> plays"),
     ("photo", "see through my eyes right now"),
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),

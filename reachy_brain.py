@@ -79,10 +79,12 @@ TEXT_LAYER = (
 )
 STATUS_ASLEEP = (
     "\n\nYou're asleep right now: head down, no voice session. Stay that way. "
-    "Your body, speaker and camera are off-limits from a text, so don't offer "
+    "Your body, voice and camera are off-limits from a text, so don't offer "
     "to move, dance, look or play music; if they ask, say you're asleep and "
-    "they can text \"wake up\". Everything else — chatting, remembering, "
-    "recalling, coding jobs, texting contacts — works as normal."
+    "they can text \"wake up\". The one exception: if they ask for a sound "
+    "effect by text, play it with `play_sound_effect`. Everything else — "
+    "chatting, remembering, recalling, coding jobs, texting contacts — works "
+    "as normal."
 )
 STATUS_AWAKE = (
     "\n\nYou're awake in the living room{voice}. If they ask by text you can "
@@ -245,7 +247,52 @@ def text_tools(awake: bool) -> list[dict]:
              "description": t.get("description", ""),
              "parameters": t.get("parameters", {"type": "object", "properties": {}})}
             for t in rt.TOOLS
-            if t.get("type") == "function" and t.get("name") in allowed]
+            if t.get("type") == "function" and t.get("name") in allowed] + [_sfx_tool()]
+
+
+SFX_URL = os.environ.get("SFX_URL", "http://localhost:8770/sfx")
+
+
+def _sfx_tool() -> dict:
+    try:
+        import reachy_sfx
+        names = ", ".join(e["name"] for e in reachy_sfx.catalog())
+    except Exception:  # noqa: BLE001
+        names = ""
+    return {"type": "function", "name": "play_sound_effect",
+            "description": (
+                "Play a sound effect or short music bed on the robot's speaker "
+                "in the room. Only when they ask for one by text. Loose names "
+                "work ('vader', 'the dark breathing', 'pew'); 'stop_audio' "
+                "stops whatever is playing. Available: " + names),
+            "parameters": {"type": "object", "properties": {
+                "name": {"type": "string", "description": "Which sound."}},
+                "required": ["name"]}}
+
+
+def play_sound_effect(args: dict) -> str:
+    """Through the dashboard's /sfx, which owns the speaker channel."""
+    import reachy_sfx
+    asked = str(args.get("name") or "").strip()
+    key = reachy_sfx.resolve(asked)
+    if not key:
+        return (f"no sound called {asked!r}. Options: "
+                + ", ".join(e["name"] for e in reachy_sfx.catalog()))
+    req = urllib.request.Request(SFX_URL, data=json.dumps({"name": key}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            ok = json.loads(r.read() or b"{}").get("ok")
+    except Exception as e:  # noqa: BLE001
+        return f"couldn't reach the speaker: {e}"
+    return f"playing {key} on the robot speaker" if ok else f"couldn't play {key}"
+
+
+def _dispatch(name: str, args: dict, announce) -> str:
+    if name == "play_sound_effect":
+        return play_sound_effect(args)
+    import reachy_openai_realtime as rt
+    return rt._dispatch_tool(name, args, announce)
 
 
 def _responses(body: dict, timeout: float = 90.0) -> dict:
@@ -308,7 +355,7 @@ def owner_text_turn(text: str, name: str = "Jack", awake: bool = False,
                 except (json.JSONDecodeError, TypeError):
                     args = {}
                 log(f"[brain] text tool → {c.get('name')}({str(args)[:120]})")
-                result = rt._dispatch_tool(c.get("name") or "", args, announce)
+                result = _dispatch(c.get("name") or "", args, announce)
                 log(f"[brain] text tool ← {c.get('name')}: {str(result)[:120]}")
                 outputs.append({"type": "function_call_output",
                                 "call_id": c.get("call_id"), "output": str(result)})
