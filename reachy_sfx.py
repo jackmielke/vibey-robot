@@ -53,6 +53,13 @@ SFX = [
     {"name": "shield_up", "label": "Shield Up", "icon": "Shield", "group": "space"},
     {"name": "tractor_beam", "label": "Tractor Beam", "icon": "Beam", "group": "space"},
     {"name": "airlock", "label": "Airlock Door", "icon": "Door", "group": "space"},
+    {"name": "saber_off", "label": "Light Blade Off", "icon": "Off", "group": "space"},
+    {"name": "saber_hum", "label": "Light Blade Hum", "icon": "Hum", "group": "space"},
+    {"name": "saber_clash", "label": "Light Blade Clash", "icon": "Clash", "group": "space"},
+    {"name": "blaster_stun", "label": "Stun Blast", "icon": "Stun", "group": "space"},
+    {"name": "ion_scream", "label": "Ion Fighter Flyby", "icon": "Fly", "group": "space"},
+    {"name": "dark_breath", "label": "Dark Lord Breath", "icon": "Hhh", "group": "dark"},
+    {"name": "dark_sting", "label": "Dark Side Sting", "icon": "Doom", "group": "dark"},
     {"name": "droid_yes", "label": "Droid Yes", "icon": "Yes", "group": "droid"},
     {"name": "droid_no", "label": "Droid No", "icon": "No", "group": "droid"},
     {"name": "droid_gossip", "label": "Droid Gossip", "icon": "Talk", "group": "droid"},
@@ -95,6 +102,15 @@ _ALIASES = {
     "shield": "shield_up", "shields": "shield_up",
     "beam": "tractor_beam", "door": "airlock", "hiss": "airlock",
     "scan": "scanner", "radar": "scanner",
+    "vader": "dark_breath", "darth vader": "dark_breath", "darth": "dark_breath",
+    "breathing": "dark_breath", "breath": "dark_breath", "respirator": "dark_breath",
+    "dark side": "dark_sting", "sith": "dark_sting", "doom": "dark_sting",
+    "ominous": "dark_sting", "empire": "dark_sting", "imperial": "dark_sting",
+    "saber off": "saber_off", "lightsaber off": "saber_off",
+    "hum": "saber_hum", "saber hum": "saber_hum",
+    "clash": "saber_clash", "duel": "saber_clash", "fight": "saber_clash",
+    "stun": "blaster_stun", "tie fighter": "ion_scream", "tie": "ion_scream",
+    "flyby": "ion_scream", "fighter": "ion_scream",
     "yes": "droid_yes", "affirmative": "droid_yes",
     "no": "droid_no", "negative": "droid_no",
     "chatter": "droid_gossip", "gossip": "droid_gossip", "beeping": "droid_gossip",
@@ -148,6 +164,9 @@ def resolve(spoken: str) -> str | None:
         return known[q]
     if q in _ALIASES:
         return _ALIASES[q]
+    for phrase in sorted((a for a in _ALIASES if " " in a), key=len, reverse=True):
+        if f" {phrase} " in f" {q} ":
+            return _ALIASES[phrase]
     for word in q.split():
         if word in _ALIASES:
             return _ALIASES[word]
@@ -218,6 +237,23 @@ def _noise(dur: float, vol: float = 0.18, seed: int = 1) -> list[float]:
     return out
 
 
+def _breath(dur: float, vol: float, rise: bool, seed: int) -> list[float]:
+    """Air through a mask: dark, band-limited noise under a slow swell, with a
+    faint low buzz riding it so it reads as a respirator, not wind."""
+    rnd = random.Random(seed)
+    n = int(SR * dur)
+    out, lo, hi = [], 0.0, 0.0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        env = math.sin(math.pi * frac) ** (0.6 if rise else 1.4)
+        x = rnd.uniform(-1, 1)
+        lo = lo * 0.93 + x * 0.07          # low-pass
+        hi = hi * 0.6 + lo * 0.4           # soften the top again
+        buzz = 0.25 * math.sin(2 * math.pi * (58 if rise else 52) * i / SR)
+        out.append(vol * env * (hi * 3.2 + buzz * hi * 6))
+    return out
+
+
 def _silence(dur: float) -> list[float]:
     return [0.0] * int(SR * dur)
 
@@ -279,6 +315,39 @@ def _effect(name: str) -> list[float]:
     elif name == "airlock":
         s = _mix(_sine(70, .55, .26, bend=-18), _noise(.7, .12, 51))
         s = _overlay(s, _sine(410, .09, .23, bend=-80), .58)
+    elif name == "saber_off":
+        s = _mix(_sine(120, .5, .32, bend=-80), _sine(240, .45, .14, bend=-170),
+                 _noise(.45, .06, 23))
+        s = _overlay(s, _sine(900, .16, .18, bend=-600), 0.0)
+    elif name == "saber_hum":
+        s = _mix(_sine(92, 1.6, .30, vibrato=2.5), _sine(184, 1.6, .12, vibrato=4),
+                 _sine(95, 1.6, .10), _noise(1.6, .03, 24))
+    elif name == "saber_clash":
+        s = _mix(_noise(.35, .40, 25), _sine(2400, .08, .30, bend=-1600),
+                 _sine(140, .45, .30, bend=40, vibrato=20))
+        s = _overlay(s, _sine(3200, .05, .20, bend=-2000), .06)
+    elif name == "blaster_stun":
+        s = []
+        for at in (0.0, .03, .06):
+            _overlay(s, _sine(900, .35, .16, bend=-500, vibrato=180), at)
+        s = _overlay(s, _noise(.3, .05, 26), 0.0)
+    elif name == "ion_scream":
+        s = _mix(_sine(320, 1.3, .20, bend=520, vibrato=40),
+                 _sine(655, 1.3, .12, bend=-380, vibrato=65), _noise(1.3, .10, 27))
+        n = len(s)
+        s = [v * math.sin(math.pi * i / n) ** 2 for i, v in enumerate(s)]
+    elif name == "dark_breath":
+        s = []
+        _overlay(s, _breath(1.35, .45, True, 61), 0.0)
+        _overlay(s, _sine(1900, .018, .10), 1.38)      # the valve
+        _overlay(s, _breath(1.7, .45, False, 62), 1.45)
+    elif name == "dark_sting":
+        # An original, ominous minor stab: low octaves, a flat second on top.
+        s = _mix(_sine(55, 1.6, .30), _sine(110, 1.6, .20), _sine(130.8, 1.6, .14),
+                 _sine(116.5, 1.6, .10, vibrato=3), _noise(1.6, .04, 63))
+        s = _overlay(s, _mix(_sine(41.2, 1.2, .30), _sine(82.4, 1.2, .16)), .9)
+        n = len(s)
+        s = [v * min(1.0, i / (SR * .02)) * (1 - i / n) ** .5 for i, v in enumerate(s)]
     elif name == "droid_yes":
         s = _sine(520, .08, .35) + _sine(760, .09, .36) + _sine(1060, .12, .35)
     elif name == "droid_no":
