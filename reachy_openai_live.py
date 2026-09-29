@@ -81,6 +81,13 @@ class LiveSession(RealtimeSession):
     # ----------------------------------------------------------------- #
     def _session_start(self) -> dict:
         base = self._session_update()          # reuse: instructions with lessons etc.
+        # The recent conversation, spoken and texted, for the thinking half
+        # too: a delegated "what did I text you earlier" is answered there.
+        try:
+            import reachy_brain
+            shared = reachy_brain.voice_context()
+        except Exception:  # noqa: BLE001
+            shared = ""
         instructions = (base.get("session", {}).get("instructions")
                         or DEFAULT_INSTRUCTIONS) + LIVE_RULES
         tools = base.get("session", {}).get("tools") or TOOLS
@@ -99,7 +106,7 @@ class LiveSession(RealtimeSession):
                     "You are Vibey's brain, working for the voice in the room. Use "
                     "the tools to do what was asked, then answer in one or two short "
                     "sentences the voice can say. Never invent a result — if a tool "
-                    "says it could not do something, say that."),
+                    "says it could not do something, say that." + shared),
                 "tools": fn_tools,
             }},
         }}

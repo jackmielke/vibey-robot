@@ -17,8 +17,10 @@ Each line:
      "who": "vibey" | "human",
      "speaker": "Jack" | null,            # null = nobody nameable in view
      "text": "...",
-     "by": "sole-face" | "doa" | null,    # HOW the speaker was decided
-     "present": ["Jack", "Ada"]}          # everyone visible, named or not
+     "by": "sole-face" | "doa" | "channel" | null,  # HOW the speaker was decided
+     "present": ["Jack", "Ada"],          # everyone visible, named or not
+     "channel": "telegram" | "guest",     # only on texts; absent = out loud
+     "to": "Jack"}                        # only on texts Vibey sent
 
 `by` matters more than it looks. A transcript that silently guesses is worse
 than one that admits it doesn't know, because a wrong name is indistinguishable
@@ -28,6 +30,7 @@ with its own provenance:
     sole-face  exactly one named person was in frame. Safe.
     doa        several people in frame; the robot's direction-of-arrival picked
                this one. A guess, and labelled as such.
+    channel    a text: the sender is known from the chat, not the room.
     null       nobody named in view, or the room was too ambiguous to call.
 
 WRITES ARE OFF THE HOT PATH. _log_turn is called from the realtime receive loop,
@@ -147,9 +150,19 @@ def _drain() -> None:
         item = _q.get()
         try:
             who, text, ts = item["who"], item["text"], item["ts"]
-            speaker, by, present = _attribute(who)
+            channel = item.get("channel")
+            if channel:
+                # A text did not come from anybody in the room, so the camera
+                # and the mic array have no say in who sent it.
+                speaker, by, present = item.get("speaker"), "channel", []
+            else:
+                speaker, by, present = _attribute(who)
             row = {"ts": ts, "who": who, "speaker": speaker, "text": text,
                    "by": by, "present": present}
+            if channel:
+                row["channel"] = channel
+            if item.get("to"):
+                row["to"] = item["to"]
             os.makedirs(DIR, exist_ok=True)
             # Line-buffered append with a trailing newline per row: a crash
             # mid-session costs the current line, never the file.
@@ -161,8 +174,13 @@ def _drain() -> None:
             _q.task_done()
 
 
-def log(who: str, text: str) -> None:
+def log(who: str, text: str, channel: str | None = None,
+        speaker: str | None = None, to: str | None = None) -> None:
     """Queue one line. Returns immediately; safe from any thread.
+
+    `channel` is None for anything said out loud in the room. Texts pass
+    "telegram" (the owner) or "guest", with `speaker` and `to` naming who sent
+    it and who it went to, since there is no face to read that off.
 
     `who` is normalised here rather than at the call sites, because the rest of
     the repo says "wonder"/"you" for historical reasons and a transcript read
@@ -180,7 +198,8 @@ def log(who: str, text: str) -> None:
             _writer = threading.Thread(target=_drain, daemon=True)
             _writer.start()
     try:
-        _q.put_nowait({"who": who, "text": text,
+        _q.put_nowait({"who": who, "text": text, "channel": channel,
+                       "speaker": speaker, "to": to,
                        "ts": datetime.now(timezone.utc).astimezone().isoformat(
                            timespec="seconds")})
     except queue.Full:

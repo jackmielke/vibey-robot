@@ -1701,6 +1701,14 @@ class RealtimeSession:
         if skills:
             instructions += ("\n\nThings you've been taught in earlier "
                              "conversations — honour these:\n" + skills)
+        # What was said lately on either side, texts included, so a voice
+        # session that starts after a text already knows about it. Texts that
+        # arrive mid-session come in through note(). See reachy_brain.
+        try:
+            import reachy_brain
+            instructions += reachy_brain.voice_context()
+        except Exception as e:  # noqa: BLE001 — context is a nice-to-have
+            print(f"[openai-rt] shared context unavailable: {e}", flush=True)
 
         # Incognito. Taking `remember_face` away is not enough on its own: the
         # prompt tells it to ask for names in plain English, and a model that

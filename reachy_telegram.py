@@ -3,9 +3,10 @@
 reachy_telegram.py — text Vibey from anywhere (@vibey_ai_bot).
 
 A stdlib-only Telegram bridge:
-- Messages go through whichever brain is active (Vibey/fast/🎮 Vibe agent) via the
-  chat service's /ask — the reply comes back in Telegram AND is spoken aloud
-  on the robot, so texting it makes the robot talk in the room.
+- Messages go to the chat service's /ask, which answers with the same brain as
+  the voice (reachy_brain: same persona, lessons, tools and recent conversation,
+  spoken or texted). The reply is a text, never spoken; a live voice session is
+  told quietly. Texting works while Vibey is asleep, without waking it.
 - `say: something` speaks the text verbatim on the robot.
 - /photo sends a live frame from Vibey's camera.
 - /status sends a one-line health check of the whole stack.
@@ -338,9 +339,7 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
     if not raw or raw.startswith("/"):
         _send(chat_id, "here you can /photo, /wave or /whistle. otherwise just text me")
         return
-    if _asleep():
-        _sleep_note(chat_id, "vibey's asleep rn 😴 try me later")
-        return
+    # Asleep is fine: a guest turn is text only and touches nothing in the room.
     now = time.time()
     recent = [t for t in _guest_sent.get(chat_id, []) if now - t < 3600]
     if len(recent) >= GUEST_PER_HOUR:
@@ -374,15 +373,6 @@ _WAKE_INTENT = re.compile(
     r"you there\b|get up\b|^good morning|morning vibey|come back|"
     r"turn (yourself )?on\b|switch (yourself )?on\b|boot up|"
     r"rise and shine|^wake\b|^awake\b)")
-
-
-_sleep_noted: dict = {}
-
-
-def _sleep_note(chat_id: int, text: str) -> None:
-    if time.time() - _sleep_noted.get(chat_id, 0) > 3600:
-        _sleep_noted[chat_id] = time.time()
-        _send(chat_id, text)
 
 
 def _asleep() -> bool:
@@ -520,7 +510,8 @@ def _handle(chat_id: int, text: str) -> None:
     if low in ("/start", "/help"):
         _send(chat_id,
               "hey it's vibey, the actual robot on your desk 🤖\n\n"
-              "just text me and i'll answer (and say it out loud in the room). "
+              "just text me and i'll text back, same brain as when we talk out "
+              "loud, and i remember both. texts aren't said in the room. "
               "anyone else who finds me can chat too, but they only get "
               "texts: no commands, nothing said in the room.\n\n"
               "say: <text> — I'll speak it verbatim\n"
@@ -831,11 +822,10 @@ def _handle(chat_id: int, text: str) -> None:
     if _asleep() and _WAKE_INTENT.search(low):
         _power(chat_id, wake=True)
         return
-    # Asleep means asleep: no chat replies until it's up. One short note per
-    # hour so a text never just vanishes, and commands above still work.
-    if _asleep():
-        _sleep_note(chat_id, "😴 asleep rn. text \"wake up\" to get me up")
-        return
+    # Asleep (or stage 1-2) still texts back. The text brain runs in the chat
+    # service, not the voice session, and is told the robot is asleep so it
+    # won't reach for the body, the speaker or the camera. Only "wake up"
+    # above wakes it.
 
     # A text that arrives DURING a conversation is a text, not a new
     # conversation.
@@ -853,7 +843,8 @@ def _handle(chat_id: int, text: str) -> None:
             _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
         except Exception:  # noqa: BLE001 — cosmetic
             pass
-        out = _post_json(f"{CHAT_URL}/ask", {"text": text, "channel": "telegram"})
+        out = _post_json(f"{CHAT_URL}/ask", {"text": text, "channel": "telegram",
+                                             "name": _state().get("owner_name") or "Jack"})
         reply = (out or {}).get("reply") or "(no reply)"
         _send(chat_id, reply)
         _note_voice_session(text, reply)
