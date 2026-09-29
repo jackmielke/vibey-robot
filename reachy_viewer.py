@@ -106,6 +106,168 @@ TURNING = {"to": None}
 _PEOPLE_CACHE: dict = {"at": 0.0, "data": None}
 
 
+# --------------------------------------------------------------------------- #
+# /memory — what Vibey remembers, grouped by WHERE it physically lives.
+#
+# The dashboard's stage picker says which layer is running; this says what each
+# layer holds, so the memory panel can show only what the current stage can
+# actually reach. READ ONLY, all of it: nothing here writes, renames or deletes.
+#
+#   robot  the Pi's own daemon: saved Wi-Fi, installed apps, uploaded sounds.
+#          Its face tracking follows *a* face and remembers nobody.
+#   mac    files in this repo: SKILLS.md, transcripts/, notes/, captures/,
+#          IDENTITY.md, alarms.json.
+#   cloud  Supermemory (space `vibey` only) and Supabase (faces, samples,
+#          journal). Faces are matched on the Mac but STORED in Supabase —
+#          the panel says so rather than pretending they are local.
+# --------------------------------------------------------------------------- #
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_MEM_CACHE: dict = {"robot": (0.0, None), "mac": (0.0, None), "cloud": (0.0, None)}
+
+
+def _cached(layer: str, ttl: float, fn):
+    at, val = _MEM_CACHE[layer]
+    if val is None or time.time() - at > ttl:
+        try:
+            val = fn()
+        except Exception as e:  # noqa: BLE001 — one layer failing must not blank the others
+            val = {"error": str(e)[:200]}
+        _MEM_CACHE[layer] = (time.time(), val)
+    return val
+
+
+def _mem_robot() -> dict:
+    wifi = _get(f"{REACHY_URL}/wifi/status", timeout=4.0)
+    if wifi is None:
+        return {"online": False}
+    apps = _get(f"{REACHY_URL}/api/apps/list-available/installed", timeout=4.0) or []
+    sounds = (_get(f"{REACHY_URL}/api/media/sounds", timeout=4.0) or {}).get("files") or []
+    return {
+        "online": True,
+        "wifi": {"connected": wifi.get("connected_network"),
+                 "known": list(wifi.get("known_networks") or [])},
+        "apps": [a.get("name") for a in apps if isinstance(a, dict)],
+        "sounds": len(sounds),
+    }
+
+
+def _read(path: str) -> str:
+    try:
+        with open(os.path.join(_HERE, path), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _mem_mac() -> dict:
+    skills: list[str] = []
+    for l in _read("SKILLS.md").splitlines():   # entries wrap onto indented lines
+        if l.startswith("- "):
+            skills.append(l[2:].strip())
+        elif skills and l.startswith("  ") and l.strip():
+            skills[-1] += " " + l.strip()
+    tdir = os.path.join(_HERE, "transcripts")
+    days = sorted(f for f in (os.listdir(tdir) if os.path.isdir(tdir) else [])
+                  if f.endswith(".jsonl"))
+    lines = 0
+    for d in days:
+        try:
+            with open(os.path.join(tdir, d), "rb") as f:
+                lines += sum(1 for _ in f)
+        except OSError:
+            pass
+    ndir = os.path.join(_HERE, "notes")
+    notes = sorted((f for f in (os.listdir(ndir) if os.path.isdir(ndir) else [])
+                    if f.endswith(".md")), reverse=True)
+    latest_note = None
+    if notes:
+        body = [l.strip() for l in _read(os.path.join("notes", notes[0])).splitlines() if l.strip()]
+        latest_note = {"file": notes[0], "head": body[0] if body else "",
+                       "gist": body[1] if len(body) > 1 else ""}
+    cdir = os.path.join(_HERE, "captures")
+    caps = [f for f in (os.listdir(cdir) if os.path.isdir(cdir) else []) if not f.startswith(".")]
+    try:
+        alarms = len(json.loads(_read("alarms.json") or "[]"))
+    except ValueError:
+        alarms = 0
+    ident = [l for l in _read("IDENTITY.md").splitlines() if l.strip()]
+    return {
+        "skills": {"count": len(skills), "recent": skills[-4:][::-1]},
+        "transcripts": {"days": len(days), "lines": lines,
+                        "first": days[0][:-6] if days else None,
+                        "last": days[-1][:-6] if days else None},
+        "notes": {"count": len(notes), "latest": latest_note},
+        "captures": len(caps),
+        "alarms": alarms,
+        "identity": {"lines": len(ident)},
+    }
+
+
+def _mem_cloud() -> dict:
+    out: dict = {}
+    # Supermemory — Vibey's own space ONLY. Plural `containerTags` (the singular
+    # is silently ignored and returns the account default, i.e. Jack's personal
+    # notes), and every row is re-checked for the tag before it is shown.
+    import reachy_supermemory as sm
+    if not sm.available():
+        out["supermemory"] = {"available": False, "space": sm.SPACE}
+    else:
+        try:
+            d = sm._post("/v3/documents/list", {"containerTags": list(sm._TAGS), "limit": 50})
+            rows = [m for m in (d.get("memories") or [])
+                    if sm.SPACE in (m.get("containerTags") or [])]
+            rows.sort(key=lambda m: m.get("createdAt") or "", reverse=True)
+            out["supermemory"] = {
+                "available": True, "space": sm.SPACE, "count": len(rows),
+                "recent": [{"title": m.get("title") or "", "at": (m.get("createdAt") or "")[:10]}
+                           for m in rows[:5]],
+            }
+        except Exception as e:  # noqa: BLE001
+            out["supermemory"] = {"available": True, "space": sm.SPACE, "error": str(e)[:160]}
+    # Supabase — faces, samples, the half-hourly journal. HEAD-style counts.
+    url, key = os.environ.get("SUPABASE_URL", "").rstrip("/"), os.environ.get("SUPABASE_KEY", "")
+    if not (url and key):
+        out["supabase"] = {"available": False}
+        return out
+
+    def _count(table: str, q: str = "") -> int | None:
+        req = urllib.request.Request(
+            f"{url}/rest/v1/{table}?select=id{q}&limit=1",
+            headers={"apikey": key, "Authorization": f"Bearer {key}", "Prefer": "count=exact"})
+        try:
+            with urllib.request.urlopen(req, timeout=6.0) as r:
+                rng = r.headers.get("Content-Range") or ""
+                return int(rng.split("/")[-1]) if "/" in rng and rng.split("/")[-1].isdigit() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    journal = []
+    try:
+        req = urllib.request.Request(
+            f"{url}/rest/v1/vibey_journal_entries?select=body,created_at"
+            "&source_summary=eq.reachy-robot&order=created_at.desc&limit=2",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=6.0) as r:
+            journal = [{"body": (j.get("body") or "")[:240], "at": (j.get("created_at") or "")[:16]}
+                       for j in json.loads(r.read() or b"[]")]
+    except Exception:  # noqa: BLE001
+        pass
+    out["supabase"] = {
+        "available": True,
+        "faces": _count("faces"),
+        "samples": _count("face_samples"),
+        "journal": _count("vibey_journal_entries", "&source_summary=eq.reachy-robot"),
+        "journal_recent": journal,
+    }
+    return out
+
+
+def memory_layers() -> dict:
+    return {"robot": _cached("robot", 20, _mem_robot),
+            "mac": _cached("mac", 10, _mem_mac),
+            "cloud": _cached("cloud", 60, _mem_cloud)}
+
+
 def _turn(on: bool) -> None:
     try:
         if on:
@@ -2081,6 +2243,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/perception"):
             self._send(json.dumps(gather()).encode(), "application/json")
+        elif self.path.split("?")[0] == "/memory":
+            # Read-only, grouped by layer (robot / mac / cloud). See memory_layers.
+            self._send(json.dumps(memory_layers()).encode(), "application/json")
         elif self.path.startswith("/modes"):
             self._send(json.dumps(reachy_modes.status()).encode(),
                        "application/json")

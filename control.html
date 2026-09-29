@@ -53,6 +53,47 @@
   .kv { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); font-size:12px } .kv b { color:var(--text) }
   .ghost { background:transparent; border:1px solid var(--line); color:var(--text); border-radius:9px; padding:6px 10px; cursor:pointer }
   .ghost:hover { border-color:var(--dim) }
+  /* Memory: one block per layer, numbered like the stage buttons. */
+  .layer { padding:10px 0 4px; border-top:1px solid var(--line) }
+  .layer:first-child { border-top:0; padding-top:0 }
+  .layer h3 { margin:0 0 4px; font-size:13px; display:flex; align-items:center; gap:8px }
+  .layer h3 .n { width:20px; height:20px; border-radius:6px; display:grid; place-items:center; background:var(--on); color:#052; font-size:12px }
+  .layer h3 .where { margin-left:auto; font-weight:400; color:var(--dim); font-size:11px }
+  .layer .row { padding:6px 0; align-items:flex-start; gap:10px }
+  .layer .row > b { text-align:right; font-weight:600; white-space:nowrap }
+  .mlist { margin:4px 0 2px; padding:0 0 0 16px; color:var(--dim); font-size:12px }
+  .mlist li { margin:2px 0 }
+  .tag { font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; border:1px solid var(--warn); color:var(--warn); white-space:nowrap }
+  .memnext { color:var(--dim); font-size:12px; padding-top:8px; border-top:1px dashed var(--line) }
+
+  /* Wide screens: everything at once. Three columns, stage + memory in the
+     middle so the picker and what it unlocks sit together. Below 1280px the
+     original auto-fit grid (DOM order) takes over unchanged. */
+  @media (min-width:1280px){
+    .wrap { max-width:none; padding:14px 20px 16px }
+    header { margin-bottom:12px }
+    .grid { grid-template-columns:1.5fr 1fr 1fr; grid-template-rows:auto auto auto minmax(0,1fr) auto;
+      grid-template-areas:"eyes stage brain" "eyes memory senses" "dj memory senses" "log memory friends" "else else else" }
+    .grid > .panel.wide { grid-column:auto }
+    #p-eyes{grid-area:eyes} #p-stage{grid-area:stage} #p-brain{grid-area:brain} #p-senses{grid-area:senses}
+    #p-dj{grid-area:dj} #p-friends{grid-area:friends} #p-log{grid-area:log} #p-memory{grid-area:memory} #p-else{grid-area:else}
+    #p-log,#p-friends,#p-memory { display:flex; flex-direction:column; min-height:0 }
+    #p-log .log { max-height:none; flex:1; min-height:120px }
+    #faces,#memory { overflow:auto; flex:1; min-height:0 }
+    #p-friends #faces { min-height:110px }
+    .stagebar { margin-bottom:0 }
+    #p-eyes,#p-stage { display:flex; flex-direction:column }
+    #p-eyes .eyes { flex:1; aspect-ratio:auto; min-height:240px }
+    #p-stage #stages { flex:1 }
+    .mlist li { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden }
+    .stages button small { font-size:10.5px }
+  }
+  /* Tall enough: pin the page to the viewport and let the long panels scroll
+     inside themselves, so nothing needs a page scroll. */
+  @media (min-width:1280px) and (min-height:760px){
+    .wrap { height:100vh; display:flex; flex-direction:column }
+    .grid { flex:1; min-height:0 }
+  }
 </style>
 
 <div class=wrap>
@@ -65,18 +106,18 @@
   <button class=big id=power>Turn on</button>
 </header>
 
-<div class="panel stagebar">
-  <h2><span>Stage</span><span class=sub id=stagesub></span></h2>
-  <div class="seg stages" id=stages>
-    <button data-stage=1><b>1</b> Robot alone<small>body, camera, onboard tracking</small></button>
-    <button data-stage=2><b>2</b> + Mac<small>wake word, faces, moves, notes</small></button>
-    <button data-stage=3><b>3</b> + Cloud<small>GPT-Live voice, Telegram</small></button>
-  </div>
-</div>
-
 <div class=grid>
 
-  <div class="panel wide">
+  <div class="panel stagebar wide" id=p-stage>
+    <h2><span>Stage</span><span class=sub id=stagesub></span></h2>
+    <div class="seg stages" id=stages>
+      <button data-stage=1><b>1</b> Robot alone<small>body, camera, onboard tracking</small></button>
+      <button data-stage=2><b>2</b> + Mac<small>wake word, faces, moves, notes</small></button>
+      <button data-stage=3><b>3</b> + Cloud<small>GPT-Live voice, Telegram</small></button>
+    </div>
+  </div>
+
+  <div class="panel wide" id=p-eyes>
     <h2><span>Eyes</span><span class=sub id=eyesub></span></h2>
     <div class=eyes>
       <img id=cam alt="">
@@ -85,14 +126,14 @@
     </div>
   </div>
 
-  <div class=panel>
+  <div class=panel id=p-brain>
     <h2>Brain</h2>
     <div class=seg id=brain></div>
     <div class=sub id=brainsub style="margin-top:8px"></div>
     <div class=row style="margin-top:8px"><div class=l>Think aloud<small>say what it's doing as it goes</small></div><button class=sw data-dial=think_aloud></button></div>
   </div>
 
-  <div class=panel>
+  <div class=panel id=p-senses>
     <h2>Senses</h2>
     <div class=row><div class=l>Voice<small>talk back via GPT-Live (off = stage 2)</small></div><button class=sw data-dial=voice></button></div>
     <div class=row><div class=l>Mouth<small>where the voice comes out</small></div><div class=seg id=spk style="width:180px"><button data-spk=robot>Robot</button><button data-spk=laptop>MacBook</button></div></div>
@@ -104,7 +145,7 @@
     <div class=row><div class=l>Volume <small id=volv></small></div><input type=range id=vol min=0 max=100 step=5 style="width:140px"></div>
   </div>
 
-  <div class="panel wide">
+  <div class="panel wide" id=p-dj>
     <h2><span>DJ &nbsp;<span id=djtitle style="text-transform:none;letter-spacing:0;color:var(--text)">nothing loaded</span></span><span class=sub id=djbpm></span></h2>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class=dot id=djdot></span>
@@ -118,17 +159,22 @@
     </div>
   </div>
 
-  <div class=panel>
+  <div class=panel id=p-friends>
     <h2><span>Friends</span><span class=sub id=friendsub>loading…</span></h2>
     <div class=faces id=faces></div>
   </div>
 
-  <div class=panel>
+  <div class=panel id=p-log>
     <h2>What it's saying</h2>
     <div class=log id=log></div>
   </div>
 
-  <div class="panel wide">
+  <div class=panel id=p-memory>
+    <h2><span>Memory</span><span class=sub id=memsub>loading…</span></h2>
+    <div id=memory></div>
+  </div>
+
+  <div class="panel wide" id=p-else>
     <h2>Everything else</h2>
     <div class=kv>
       <span><a href="/full">Full dashboard</a> — alarms, captures, mic check, VibeVerse, robot Wi-Fi</span>
@@ -251,5 +297,45 @@ $('djdown').onclick=async()=>{ await djp('/nudge',{percent:-4}); djPoll(); };
 $('djslider').oninput=()=>{sliding=true}; $('djslider').onchange=async e=>{ sliding=false; if(dj&&dj.bpm) await djp('/tempo',{bpm:dj.bpm*e.target.value/100}); djPoll(); };
 $('djtrack').onchange=async e=>{ await djp('/load',{track:e.target.value}); djPoll(); };
 
-poll(); setInterval(poll,1500); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
+// ---- memory ---------------------------------------------------------------
+// What each layer remembers, shown only up to the current stage: at stage 1
+// the Mac and the cloud aren't in play, so their memory isn't either.
+// Read-only. /memory never writes anything.
+let mem=null, memStage=null;
+async function memPoll(){ const m=await j('/memory'); if(m){ mem=m; memStage=null; } renderMemory(); }
+function renderMemory(){
+  const stg=(chat&&(want.stage??chat.stage))||3; if(!mem){ return; } if(memStage===stg) return; memStage=stg;
+  const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const row=(l,sm,v,extra)=>`<div class=row><div class=l>${l}${sm?`<small>${sm}</small>`:''}${extra||''}</div><b>${v}</b></div>`;
+  const list=a=>a&&a.length?`<ul class=mlist>${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'';
+  const layer=(n,name,where,body)=>`<div class=layer><h3><span class=n>${n}</span>${name}<span class=where>${where}</span></h3>${body}</div>`;
+  let h='';
+  const r=mem.robot||{};
+  h+=layer(1,'Robot','on the Raspberry Pi', r.online===false?'<div class=sub>robot not answering</div>':r.error?`<div class=sub>${esc(r.error)}</div>`:
+    row('Saved Wi-Fi','networks it rejoins on its own',(r.wifi?.known||[]).length,`<small title="${esc((r.wifi?.known||[]).join(', '))}">on ${esc(r.wifi?.connected||'—')}</small>`)
+   +row('Installed apps','',(r.apps||[]).length,`<small>${esc((r.apps||[]).join(', '))}</small>`)
+   +row('Uploaded sounds','clips cached on the robot',r.sounds??0)
+   +row('Faces','tracks a face, never knows whose','none'));
+  if(stg>=2){ const m=mem.mac||{}, fr=(mem.cloud||{}).supabase||{};
+    h+=layer(2,'Mac','files in ~/dev/vibey-robot', m.error?`<div class=sub>${esc(m.error)}</div>`:
+      row('Friends','recognised here on the Mac',fr.faces??'?',` <span class=tag title="Photos and face embeddings live in Supabase; the Mac matches against them">stored in Supabase</span>`)
+     +row('Taught rules','SKILLS.md · read into every conversation',m.skills?.count??0)+list(m.skills?.recent)
+     +row('Transcripts','transcripts/ · every line, both sides',`${m.transcripts?.lines??0} lines`,`<small>${m.transcripts?.days??0} days · ${esc(m.transcripts?.first||'')} → ${esc(m.transcripts?.last||'')}</small>`)
+     +row('Scribe notes','notes/',m.notes?.count??0,m.notes?.latest?`<small>${esc(m.notes.latest.head)}</small>`:'')
+     +row('Captures','captures/ · clips + timelapses',m.captures??0)
+     +row('Self-portrait','IDENTITY.md · <a href="/about">read it</a>',`${m.identity?.lines??0} lines`)); }
+  if(stg>=3){ const c=mem.cloud||{}, sm=c.supermemory||{}, sb=c.supabase||{};
+    h+=layer(3,'Cloud','hosted, leaves the house', c.error?`<div class=sub>${esc(c.error)}</div>`:
+      (sm.available===false?row('Supermemory','no API key','off'):sm.error?row('Supermemory',esc(sm.error),'?'):
+        row('Conversations','Supermemory · space “'+esc(sm.space)+'” only',sm.count??0)+list((sm.recent||[]).map(x=>x.title+' · '+x.at)))
+     +(sb.available===false?row('Supabase','not configured','off'):
+        row('Face library','Supabase · faces + samples',`${sb.faces??'?'} · ${sb.samples??'?'}`)
+       +row('Journal','Supabase · a paragraph every half hour',sb.journal??'?')+list((sb.journal_recent||[]).slice(0,1).map(x=>x.body+'…')))); }
+  const next={1:'Stage 2 adds what the Mac remembers · stage 3 adds the cloud',2:'Stage 3 adds the cloud: Supermemory + the journal'}[stg];
+  if(next) h+=`<div class=memnext>${next}</div>`;
+  $('memory').innerHTML=h;
+  $('memsub').textContent={1:'robot only',2:'robot + Mac',3:'robot + Mac + cloud'}[stg];
+}
+
+poll(); setInterval(poll,1500); setInterval(renderMemory,1500); memPoll(); setInterval(memPoll,15000); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
 </script>
