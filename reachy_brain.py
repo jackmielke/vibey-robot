@@ -130,12 +130,10 @@ def _voice_base() -> str:
 
 def _lessons() -> str:
     try:
-        import reachy_agent
-        skills = reachy_agent.load_skills()
+        import reachy_openai_realtime as rt
+        return rt.memory_block()
     except Exception:  # noqa: BLE001
         return ""
-    return ("\n\nThings you've been taught in earlier conversations — honour "
-            "these:\n" + skills) if skills else ""
 
 
 def owner_text_instructions(name: str, awake: bool, voice_live: bool) -> str:

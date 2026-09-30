@@ -97,6 +97,9 @@ class LiveSession(RealtimeSession):
     # Session
     # ----------------------------------------------------------------- #
     def _session_start(self) -> dict:
+        # Both halves get the memories: the voice layer says "one moment" and
+        # delegates questions like "what's in your memory?" to the backend,
+        # which used to have no memories at all and went searching instead.
         base = self._session_update()          # reuse: instructions with lessons etc.
         # The recent conversation, spoken and texted, for the thinking half
         # too: a delegated "what did I text you earlier" is answered there.
@@ -123,7 +126,8 @@ class LiveSession(RealtimeSession):
                     "You are Vibey's brain, working for the voice in the room. Use "
                     "the tools to do what was asked, then answer in one or two short "
                     "sentences the voice can say. Never invent a result — if a tool "
-                    "says it could not do something, say that." + shared),
+                    "says it could not do something, say that."
+                    + rt.memory_block() + shared),
                 "tools": fn_tools,
             }},
         }}

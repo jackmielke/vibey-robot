@@ -344,7 +344,8 @@ TOOLS = [
         "name": "remember",
         "description": (
             "Store a small durable fact or preference learned in conversation "
-            "(names, habits, how someone wants you to behave). Instant. Use this "
+            "(names, habits, how someone wants you to behave). Instant: it goes "
+            "into your memory list on your chip. Use this "
             "rather than improve_yourself when no code needs to change."),
         "parameters": {
             "type": "object",
@@ -1058,6 +1059,23 @@ def _tool_check(args: dict) -> str:
     return f"job {snap.get('id', '?')}: {snap['state']} — {snap.get('spoken', '')}"
 
 
+MEMORY_HEADER = (
+    "\n\nYOUR MEMORIES. This is the complete list, stored as plain text files "
+    "on your own chip and editable by Jack on your dashboard. It is always "
+    "loaded, so never search for these: when someone asks what you remember "
+    "or what's in your memory, answer straight from this list, naming the "
+    "specific things. Honour them:\n")
+
+
+def memory_block() -> str:
+    """Every memory, read fresh, as a prompt block. Empty string if none."""
+    try:
+        skills = reachy_agent.load_skills()
+    except Exception:  # noqa: BLE001
+        return ""
+    return MEMORY_HEADER + skills if skills else ""
+
+
 def _tool_remember(args: dict) -> str:
     """Writes to BOTH stores, on purpose and for now.
 
@@ -1077,7 +1095,7 @@ def _tool_remember(args: dict) -> str:
     kept = reachy_agent.remember(note)
     try:
         import reachy_supermemory
-        if reachy_supermemory.available():
+        if SUPERMEMORY_RECALL and reachy_supermemory.available():
             reachy_supermemory.remember(note, person=_current_person())
     except Exception as e:  # noqa: BLE001 — never lose the turn over a write
         print(f"[openai-rt] supermemory write failed: {e}", flush=True)
@@ -1102,6 +1120,13 @@ def _tool_vibe(args: dict) -> str:
                      else f"Didn't save it — {r.get('log_status', 'no reason')}.")
     return " ".join(parts)
 
+
+# One memory system: the memories/ list, always in the prompt. Supermemory
+# search (`recall`) is off unless asked for — with it on, "what do you
+# remember?" went to a search over a different store and came back thin.
+SUPERMEMORY_RECALL = os.environ.get("VIBEY_SUPERMEMORY_RECALL") == "1"
+if not SUPERMEMORY_RECALL:
+    TOOLS = [t for t in TOOLS if t.get("name") != "recall"]
 
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://localhost:8773").rstrip("/")
 
@@ -1743,10 +1768,7 @@ class RealtimeSession:
                         or DEFAULT_INSTRUCTIONS)
         # Lessons taught in earlier conversations ride along in the prompt, so
         # a `remember` from last night is in force on tonight's first word.
-        skills = reachy_agent.load_skills()
-        if skills:
-            instructions += ("\n\nThings you've been taught in earlier "
-                             "conversations — honour these:\n" + skills)
+        instructions += memory_block()
         # What was said lately on either side, texts included, so a voice
         # session that starts after a text already knows about it. Texts that
         # arrive mid-session come in through note(). See reachy_brain.
