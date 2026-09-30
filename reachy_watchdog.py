@@ -72,6 +72,53 @@ SERVICES = {
     "dj":        ("http://localhost:8778/status",  "reachy_dj.py",        "reachy_env/bin/python3", "/tmp/reachy_dj.log"),
 }
 
+# --- Robot-native mode (VIBEY_ON_ROBOT=1, see ROBOT_NATIVE.md) --------------
+# On the robot, systemd user units own the processes (Restart=always), so this
+# checks health the same way but restarts through systemctl, and it also guards
+# the one thing that matters most there: the motor control loop's rate.
+ON_ROBOT = os.environ.get("VIBEY_ON_ROBOT", "").strip() == "1"
+LOOP_MIN_HZ = float(os.environ.get("VIBEY_LOOP_MIN_HZ", "40"))
+LOOP_BAD_CHECKS = 3            # consecutive low readings before it is news
+if ON_ROBOT:
+    # name → (health url or None, systemd unit). Only services deployed there;
+    # a unit that is not installed simply reads as absent and is skipped.
+    ROBOT_UNITS = {
+        "robot_mic": ("http://localhost:8775/status",  "vibey-mic.service"),
+        "chat":      ("http://localhost:8772/state",   "vibey-chat.service"),
+        "telegram":  (None,                            "vibey-telegram.service"),
+        "alarm":     (None,                            "vibey-alarm.service"),
+        "viewer":    ("http://localhost:8770/perception", "vibey-viewer.service"),
+        "camera":    ("http://localhost:8771/status",  "vibey-camera.service"),
+        "memory":    ("http://localhost:8773/current", "vibey-memory.service"),
+    }
+    SERVICES = {n: (url, unit, None, f"journalctl --user -u {unit}")
+                for n, (url, unit) in ROBOT_UNITS.items()}
+
+
+def _on_robot_now() -> set:
+    """Mac side of a partial move: services listed in .robot_services (written
+    by robot/deploy.sh) now run on the robot, so the Mac must not resurrect its
+    own copy (two Telegram pollers 409 each other; two brains fight over one
+    speaker). Re-read every check, because deploy.sh moves a service while this
+    process is running. No file = exactly the old behaviour."""
+    if ON_ROBOT:
+        return set()
+    try:
+        with open(os.path.join(HERE, ".robot_services")) as f:
+            return {w for w in f.read().split() if not w.startswith("#")}
+    except FileNotFoundError:
+        return set()
+
+
+def _unit_installed(unit: str) -> bool:
+    r = subprocess.run(["systemctl", "--user", "is-enabled", unit],
+                       capture_output=True, text=True)
+    return r.stdout.strip() in ("enabled", "enabled-runtime", "static")
+
+
+if ON_ROBOT:
+    SERVICES = {n: v for n, v in SERVICES.items() if _unit_installed(v[1])}
+
 _misses: dict[str, int] = {n: 0 for n in SERVICES}
 _restarts: dict[str, list[float]] = {n: [] for n in SERVICES}
 _gave_up: set[str] = set()
@@ -102,12 +149,22 @@ def _alive(name: str) -> bool:
             return True
         except Exception:  # noqa: BLE001
             return False
+    if ON_ROBOT:
+        r = subprocess.run(["systemctl", "--user", "is-active", script],
+                           capture_output=True, text=True)
+        return r.stdout.strip() == "active"
     # portless services: a live process counts
     r = subprocess.run(["pgrep", "-f", script], capture_output=True)
     return r.returncode == 0
 
 
 def _restart(name: str) -> None:
+    if ON_ROBOT:
+        unit = SERVICES[name][1]
+        subprocess.run(["systemctl", "--user", "restart", unit], capture_output=True)
+        _started_at[name] = time.time()
+        print(f"[watchdog] restarted {unit}", flush=True)
+        return
     _, script, interp, log = SERVICES[name]
     subprocess.run(["pkill", "-f", script], capture_output=True)
     time.sleep(1)
@@ -140,10 +197,54 @@ def _robot_up() -> bool:
 
 
 _last_alert: dict = {}   # service -> date of last Telegram give-up alert
+_loop_low = [0]
+
+
+def _find(d, key):
+    """First value for `key` anywhere in a nested dict (the daemon has moved
+    control_loop_stats around between versions)."""
+    if isinstance(d, dict):
+        if key in d:
+            return d[key]
+        for v in d.values():
+            hit = _find(v, key)
+            if hit is not None:
+                return hit
+    return None
+
+
+def _check_control_loop() -> None:
+    """Robot mode only. The motor loop is nominally 50Hz; under ~30Hz the robot
+    feels glitchy. Everything this repo runs on the CM4 is niced below the
+    daemon, and this is the proof: log every low reading, alert once a day."""
+    try:
+        with urllib.request.urlopen("http://localhost:8000/api/daemon/status",
+                                    timeout=4) as r:
+            status = json.loads(r.read())
+    except Exception:  # noqa: BLE001
+        return
+    hz = _find(status, "mean_control_loop_frequency")
+    if not isinstance(hz, (int, float)):
+        return
+    if hz >= LOOP_MIN_HZ:
+        _loop_low[0] = 0
+        return
+    _loop_low[0] += 1
+    worst = _find(status, "max_control_loop_interval")
+    print(f"[watchdog] control loop {hz:.1f}Hz < {LOOP_MIN_HZ:g}Hz "
+          f"(max gap {worst}) [{_loop_low[0]}/{LOOP_BAD_CHECKS}]", flush=True)
+    if _loop_low[0] == LOOP_BAD_CHECKS:
+        today = time.strftime("%Y-%m-%d")
+        if _last_alert.get("_loop") != today:
+            _last_alert["_loop"] = today
+            _telegram(f"⚠️ Vibey's motor loop is at {hz:.0f}Hz (want ≥{LOOP_MIN_HZ:g}). "
+                      "Something on the robot is using too much CPU. "
+                      "robot/load_check.sh shows what.")
 
 
 def main() -> None:
-    print(f"[watchdog] guarding {', '.join(SERVICES)} every {CHECK_S}s", flush=True)
+    print(f"[watchdog] guarding {', '.join(SERVICES)} every {CHECK_S}s"
+          f"{' (on the robot, via systemd)' if ON_ROBOT else ''}", flush=True)
     # everything just booted with the stack — give it all a grace window
     now = time.time()
     for n in SERVICES:
@@ -151,8 +252,14 @@ def main() -> None:
 
     while True:
         time.sleep(CHECK_S)
+        if ON_ROBOT:
+            _check_control_loop()
         robot_up = _robot_up()
+        moved = _on_robot_now()
         for name in SERVICES:
+            if name in moved:
+                _misses[name] = 0
+                continue
             if name in NEEDS_ROBOT and not robot_up:
                 # robot is off: forget any failure history so it starts clean
                 # when he turns it back on, and say nothing.

@@ -30,3 +30,6 @@ notes/
 
 # Friends, faces and journal. Private, local only — see reachy_faces_store.py
 data/
+
+# Which services now run on the robot itself (robot/deploy.sh). Mac-local state.
+.robot_services

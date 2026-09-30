@@ -1,0 +1,28 @@
+# Vibey on the robot: Telegram bot. ONE poller only: the Mac's copy must be stopped first
+# Installed by robot/install.sh into ~/.config/systemd/user/. Niced below the
+# Pollen daemon and CPU-capped so the motor control loop stays at 40Hz or more.
+# CPUQuota is per core (the CM4 has 4, so 400% is the whole board).
+[Unit]
+Description=Vibey telegram: Telegram bot. ONE poller only: the Mac's copy must be stopped first
+PartOf=vibey.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vibey/app
+EnvironmentFile=%h/vibey/app/robot/robot.env
+Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
+ExecStart=%h/vibey/.venv/bin/python -u reachy_telegram.py
+Restart=always
+RestartSec=5
+Nice=10
+CPUWeight=20
+CPUQuota=15%
+MemoryHigh=170M
+MemoryMax=200M
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=vibey.target

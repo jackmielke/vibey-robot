@@ -21,6 +21,10 @@ in .env:  MIC_SOURCE=robot
 Env overrides:
     REACHY_HOST   derived from REACHY_URL in .env if unset
     ROBOT_MIC_PORT default 8775
+    ROBOT_MIC_BIND default 0.0.0.0 (the robot sets 127.0.0.1: only local
+                   services read it, and it is a live room mic)
+    VIBEY_ON_ROBOT=1  running ON the robot: read the mic from the daemon's
+                   local audio (SDK LOCAL backend), no WebRTC. See ROBOT_NATIVE.md.
 """
 
 from __future__ import annotations
@@ -64,6 +68,12 @@ def _default_host() -> str:
 
 REACHY_HOST = _default_host()
 MIC_PORT = int(os.environ.get("ROBOT_MIC_PORT", "8775"))
+MIC_BIND = os.environ.get("ROBOT_MIC_BIND", "0.0.0.0")
+# On the robot the daemon is on localhost, and "localhost_only" is what makes the
+# SDK pick its LOCAL media backend (GStreamer audio on the board itself) instead
+# of a WebRTC session to its own address.
+ON_ROBOT = os.environ.get("VIBEY_ON_ROBOT", "").strip() == "1"
+CONNECTION_MODE = "localhost_only" if ON_ROBOT else "network"
 TARGET_SR = 16000  # matches reachy_chat.py's SR — robot mic already 16kHz
 
 _lock = threading.Condition()
@@ -77,7 +87,7 @@ def _capture_loop():
     while True:
         try:
             print(f"[robotmic] connecting to {REACHY_HOST} …", flush=True)
-            mini = ReachyMini(host=REACHY_HOST, connection_mode="network")
+            mini = ReachyMini(host=REACHY_HOST, connection_mode=CONNECTION_MODE)
             mini.media.start_recording()
             _actual_sr = mini.media.get_input_audio_samplerate() or TARGET_SR
             _connected = True
@@ -149,8 +159,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=_capture_loop, daemon=True).start()
-    print(f"[robotmic] PCM stream  http://localhost:{MIC_PORT}/pcm", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", MIC_PORT), Handler).serve_forever()
+    print(f"[robotmic] PCM stream  http://localhost:{MIC_PORT}/pcm "
+          f"({'local audio, on the robot' if ON_ROBOT else 'WebRTC'})", flush=True)
+    ThreadingHTTPServer((MIC_BIND, MIC_PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

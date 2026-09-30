@@ -1,0 +1,9 @@
+# Everything Vibey runs on the robot itself. `systemctl --user stop vibey.target`
+# stops all of it; the Pollen daemon (a system service) is untouched.
+[Unit]
+Description=Vibey robot-native services
+Wants=network-online.target
+After=network-online.target
+
+[Install]
+WantedBy=default.target

@@ -18,6 +18,11 @@ MUST run inside the SDK venv (it needs reachy_mini + GStreamer):
 Env overrides:
     REACHY_HOST   default 192.168.1.120
     CAM_PORT      default 8771
+    CAMERA_MAX_FPS  0 = as fast as frames come (the Mac default). The robot sets
+                  a low cap: in LOCAL mode every frame is a software JPEG encode
+                  on the CM4, competing with the motor control loop.
+    VIBEY_ON_ROBOT=1  running ON the robot: read the daemon's local camera
+                  (SDK LOCAL backend), no WebRTC. See ROBOT_NATIVE.md.
 """
 
 from __future__ import annotations
@@ -63,6 +68,10 @@ def _default_host() -> str:
 
 REACHY_HOST = _default_host()
 CAM_PORT = int(os.environ.get("CAM_PORT", "8771"))
+ON_ROBOT = os.environ.get("VIBEY_ON_ROBOT", "").strip() == "1"
+CONNECTION_MODE = "localhost_only" if ON_ROBOT else "network"
+_MAX_FPS = float(os.environ.get("CAMERA_MAX_FPS", "0") or 0)
+_MIN_GAP = 1.0 / _MAX_FPS if _MAX_FPS > 0 else 0.0
 
 # Shared latest frame — one producer thread fills it, any number of HTTP
 # clients read it. A Condition lets streamers block until the next frame
@@ -94,7 +103,7 @@ def _capture_loop():
     while True:
         try:
             print(f"[camera] connecting to {REACHY_HOST} …", flush=True)
-            mini = ReachyMini(host=REACHY_HOST, connection_mode="network")
+            mini = ReachyMini(host=REACHY_HOST, connection_mode=CONNECTION_MODE)
             _connected = True
             print("[camera] connected — streaming", flush=True)
             last_frame = time.time()
@@ -127,6 +136,8 @@ def _capture_loop():
                     _frame_at = time.time()
                     _frame_seq += 1
                     _frame_lock.notify_all()
+                if _MIN_GAP:
+                    time.sleep(_MIN_GAP)
         except Exception as e:  # noqa: BLE001 - keep retrying forever
             _connected = False
             print(f"[camera] connection lost ({e}); retrying in 3s", flush=True)

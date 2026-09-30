@@ -1,0 +1,30 @@
+# Vibey on the robot: voice brain: GPT-Live/Realtime, clap wake, emotes, idle, sleep timer (:8772)
+# Installed by robot/install.sh into ~/.config/systemd/user/. Niced below the
+# Pollen daemon and CPU-capped so the motor control loop stays at 40Hz or more.
+# CPUQuota is per core (the CM4 has 4, so 400% is the whole board).
+[Unit]
+Description=Vibey chat: voice brain: GPT-Live/Realtime, clap wake, emotes, idle, sleep timer (:8772)
+PartOf=vibey.target
+After=network-online.target
+Wants=vibey-mic.service
+After=vibey-mic.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vibey/app
+EnvironmentFile=%h/vibey/app/robot/robot.env
+Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
+ExecStart=%h/vibey/.venv/bin/python -u reachy_chat.py
+Restart=always
+RestartSec=5
+Nice=10
+CPUWeight=20
+CPUQuota=60%
+MemoryHigh=425M
+MemoryMax=500M
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=vibey.target
