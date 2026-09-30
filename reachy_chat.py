@@ -855,11 +855,12 @@ def _voice_sleep() -> None:
 def _voice_wake() -> None:
     ASLEEP_VOICE["on"] = False
     _robot_post("/api/motors/set_mode/enabled", 10)
-    # Voice back on = full volume, always, whatever the last session or the
-    # night clamp left it at.
+    # Voice back on = the startup level, always, whatever the last session or
+    # the night clamp left it at. That level is a setting you can see (Senses →
+    # "Starts at"), not a leftover.
     try:
         import reachy_wakesleep
-        reachy_wakesleep.set_volume(reachy_wakesleep.WAKE_VOLUME,
+        reachy_wakesleep.set_volume(reachy_wakesleep.start_volume(),
                                     log=lambda m: print(m, flush=True),
                                     force=True)
     except Exception as e:  # noqa: BLE001
@@ -969,11 +970,12 @@ def _scribe_start() -> dict:
     import reachy_scribe
     if OFF["on"]:
         raise ValueError("Vibey is OFF, switch it on first")
-    if not STATE["asleep"]:
-        # Quiet and still: the conversation closes and the head goes down.
-        _sleep_now()
+    # Notes are a layer on top of whatever Vibey is doing, not a mode it has to
+    # be put to sleep for: awake it keeps talking and the notes include it,
+    # asleep it stays asleep. Starting notes used to sleep the robot, which
+    # read as the whole thing switching off.
     return reachy_scribe.start(on_notes=_text_owner,
-                               on_wake=lambda: _wake_now("scribe"),
+                               on_wake=lambda: STATE["asleep"] and _wake_now("scribe"),
                                log=lambda m: print(m, flush=True))
 
 
@@ -2299,8 +2301,9 @@ def _dials() -> dict:
     try:
         import reachy_wakesleep
         vol = reachy_wakesleep._last_volume.get("level")
+        start_vol = reachy_wakesleep.start_volume()
     except Exception:  # noqa: BLE001
-        vol = None
+        vol, start_vol = None, None
     return {
         "awake": not STATE["asleep"],
         "listening": rt.voice_detection_active(),
@@ -2310,6 +2313,7 @@ def _dials() -> dict:
         "incognito": bool(STATE.get("incognito")),
         "think_aloud": bool(STATE.get("think_aloud")),
         "volume": vol,
+        "start_volume": start_vol,
         "voice_brain": voice_brain(),
         "mic_source": MIC_SOURCE,
         "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
@@ -2333,6 +2337,12 @@ def _set_dials(body: dict) -> dict:
     if "volume" in body:
         import reachy_wakesleep
         reachy_wakesleep.set_volume(int(body["volume"]), log=lambda m: print(m, flush=True), force=True)
+        reachy_wakesleep.remember_volume(int(body["volume"]))
+    if "start_volume" in body:
+        # A setting, not a command: it changes the next wake, not this moment,
+        # so nothing is sent to the speaker here.
+        import reachy_wakesleep
+        reachy_wakesleep.remember_start_volume(int(body["start_volume"]))
     if "voice_brain" in body:
         set_voice_brain(str(body["voice_brain"]))
     if "mic_source" in body:

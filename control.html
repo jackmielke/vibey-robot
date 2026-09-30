@@ -24,7 +24,10 @@
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); margin:0 0 10px; display:flex; justify-content:space-between; align-items:center }
   .sub { color:var(--dim); font-size:12px }
   .eyes { position:relative; background:#000; border-radius:10px; overflow:hidden; aspect-ratio:16/9 }
-  .eyes img,.eyes canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:cover }
+  /* contain, not cover: the frame keeps its own shape whatever the box is, and
+     the overlay canvas (sized to the same frame in JS) letterboxes with it, so
+     the face circles stay on the faces. */
+  .eyes img,.eyes canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain }
   .eyes .noc { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim) }
   .row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--line) }
   .row:last-child { border-bottom:0 }
@@ -34,7 +37,12 @@
   .sw::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s }
   .sw.on { background:var(--on) } .sw.on::after { left:23px }
   .sw:disabled { opacity:.35; cursor:default }
-  select,input[type=range] { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px }
+  select { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px }
+  /* Sliders flex with their column instead of holding a fixed pixel width that
+     crowds the label once the layout goes three-column. */
+  input[type=range] { background:transparent; border:0; padding:0; height:22px; accent-color:var(--on);
+    flex:1 1 120px; min-width:90px; max-width:180px; cursor:pointer; vertical-align:middle }
+  #djslider { max-width:220px } #djtrack { flex:1 1 160px; min-width:0 }
   .seg { display:flex; gap:6px } .seg button { flex:1; padding:8px; border-radius:9px; border:1px solid var(--line); background:var(--field); color:var(--text); cursor:pointer }
   .seg button.on { background:var(--on); color:#052; border-color:var(--on); font-weight:700 }
   .fname { width:100%; background:transparent; border:1px solid transparent; border-radius:6px; color:inherit; font:inherit; text-align:center; padding:2px 4px }
@@ -53,6 +61,12 @@
   .kv { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); font-size:12px } .kv b { color:var(--text) }
   .ghost { background:transparent; border:1px solid var(--line); color:var(--text); border-radius:9px; padding:6px 10px; cursor:pointer }
   .ghost:hover { border-color:var(--dim) }
+  /* Group headings inside a panel: which sense a row belongs to, so "listening"
+     and "take notes" can't read as two names for the same thing. */
+  .grp { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim);
+         margin:12px 0 0; padding-top:10px; border-top:1px solid var(--line) }
+  .grp:first-of-type { margin-top:0; padding-top:0; border-top:0 }
+  .grp .warn { color:var(--warn); text-transform:none; letter-spacing:0; font-weight:600 }
   /* Memory: one block per layer, numbered like the stage buttons. */
   .layer { padding:10px 0 4px; border-top:1px solid var(--line) }
   .layer:first-child { border-top:0; padding-top:0 }
@@ -72,7 +86,7 @@
   @media (min-width:1280px){
     .wrap { max-width:none; padding:14px 20px 16px }
     header { margin-bottom:12px }
-    .grid { grid-template-columns:1.5fr 1fr 1fr; grid-template-rows:auto auto auto minmax(0,1fr) auto;
+    .grid { grid-template-columns:var(--c1,1.5fr) 1fr 1fr; grid-template-rows:auto auto auto minmax(0,1fr) auto;
       grid-template-areas:"eyes stage brain" "eyes memory senses" "dj memory senses" "log memory friends" "else else else" }
     .grid > .panel.wide { grid-column:auto }
     #p-eyes{grid-area:eyes} #p-stage{grid-area:stage} #p-brain{grid-area:brain} #p-senses{grid-area:senses}
@@ -83,7 +97,13 @@
     #p-friends #faces { min-height:110px }
     .stagebar { margin-bottom:0 }
     #p-eyes,#p-stage { display:flex; flex-direction:column }
-    #p-eyes .eyes { flex:1; aspect-ratio:auto; min-height:240px }
+    /* The camera is 16:9; the box follows the column width, never the row
+       height, so it is never squashed or cropped. Drag the column edge to
+       make it bigger. */
+    #p-eyes .eyes { flex:none; aspect-ratio:16/9 }
+    #p-eyes { position:relative }
+    .colgrip { position:absolute; top:0; bottom:0; right:-10px; width:8px; cursor:col-resize; border-radius:4px; z-index:2 }
+    .colgrip:hover,.colgrip.drag { background:var(--line) }
     #p-stage #stages { flex:1 }
     .mlist li { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden }
     .stages button small { font-size:10.5px }
@@ -92,7 +112,10 @@
      inside themselves, so nothing needs a page scroll. */
   @media (min-width:1280px) and (min-height:760px){
     .wrap { height:100vh; display:flex; flex-direction:column }
-    .grid { flex:1; min-height:0 }
+    .grid { flex:1; min-height:0; overflow:auto }
+    /* Cap the camera by height too, so a wide column can't push the DJ and the
+       log off the bottom. Width follows from 16:9, so nothing gets squashed. */
+    #p-eyes .eyes { align-self:center; width:min(100%,calc(46vh * 16 / 9)) }
   }
 </style>
 
@@ -100,7 +123,7 @@
 <header>
   <h1>Vibey</h1>
   <span class=pill id=status>connecting…</span>
-  <button class=ghost id=scribe title="Listen quietly and text notes to Telegram">📝 Take notes</button>
+  <button class=ghost id=scribe title="Keep notes of the room and text them to Telegram">📝 Take notes</button>
   <span class=sub id=cost></span>
   <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
   <button class=big id=power>Turn on</button>
@@ -135,25 +158,34 @@
 
   <div class=panel id=p-senses>
     <h2>Senses</h2>
+    <div class=grp>Hearing <span class=warn id=scribesub></span></div>
+    <div class=row><div class=l>Ears<small>which mic picks up the room</small></div><div class=seg id=mic style="width:180px"><button data-mic=robot>Robot</button><button data-mic=laptop>MacBook</button></div></div>
+    <div class=row><div class=l>Listening<small>hears you and answers out loud · nothing written down</small></div><button class=sw data-dial=listening></button></div>
+    <div class=row><div class=l>Take notes (scribe)<small>stays silent · writes down everything said · texts you a summary</small></div><button class=sw id=scribe2 aria-label="Take notes"></button></div>
+
+    <div class=grp>Talking</div>
     <div class=row><div class=l>Voice<small>talk back via GPT-Live (off = stage 2)</small></div><button class=sw data-dial=voice></button></div>
     <div class=row><div class=l>Mouth<small>where the voice comes out</small></div><div class=seg id=spk style="width:180px"><button data-spk=robot>Robot</button><button data-spk=laptop>MacBook</button></div></div>
-    <div class=row><div class=l>Ears<small>which mic Vibey listens with</small></div><div class=seg id=mic style="width:180px"><button data-mic=robot>Robot</button><button data-mic=laptop>MacBook</button></div></div>
-    <div class=row><div class=l>Listening<small>hears the room</small></div><button class=sw data-dial=listening></button></div>
+    <div class=row><div class=l>Volume <small id=volv></small></div><input type=range id=vol min=0 max=100 step=5></div>
+    <div class=row><div class=l>Starts at<small id=svolv></small></div><input type=range id=svol min=0 max=100 step=5></div>
+
+    <div class=grp>Seeing</div>
     <div class=row><div class=l>Face tracking<small>turns to follow you</small></div><button class=sw data-dial=face_tracking></button></div>
-    <div class=row><div class=l>Mic muted<small>hears nothing at all</small></div><button class=sw data-dial=muted></button></div>
+
+    <div class=grp>Privacy</div>
+    <div class=row><div class=l>Mic muted<small>hears nothing at all — nothing written down</small></div><button class=sw data-dial=muted></button></div>
     <div class=row><div class=l>Incognito<small>remembers nothing tonight</small></div><button class=sw data-dial=incognito></button></div>
-    <div class=row><div class=l>Volume <small id=volv></small></div><input type=range id=vol min=0 max=100 step=5 style="width:140px"></div>
   </div>
 
   <div class="panel wide" id=p-dj>
     <h2><span>DJ &nbsp;<span id=djtitle style="text-transform:none;letter-spacing:0;color:var(--text)">nothing loaded</span></span><span class=sub id=djbpm></span></h2>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class=dot id=djdot></span>
-      <select id=djtrack style="min-width:180px"></select>
+      <select id=djtrack></select>
       <button class=ghost id=djplay>▶ Play</button>
       <button class=ghost id=djstop>■ Stop</button>
       <button class=ghost id=djdown>−4%</button>
-      <input type=range id=djslider min=80 max=125 value=100 style="width:180px">
+      <input type=range id=djslider min=80 max=125 value=100>
       <button class=ghost id=djup>+4%</button>
       <span class=sub id=djpos></span>
     </div>
@@ -217,11 +249,15 @@ async function poll(){
   $('stagesub').textContent=want.stage?'switching…':chat.off?'switched off':({1:'only the Raspberry Pi is doing anything',2:'the Mac is thinking, nothing leaves the house',3:'everything on'})[stg];
   if(want.stage&&chat.stage===want.stage) want.stage=null;
   const sb=$('scribe'); sb.textContent=sc.on?'■ Stop notes':'📝 Take notes'; sb.disabled=busy||chat.off;
+  const sb2=$('scribe2'); sb2.classList.toggle('on',!!sc.on); sb2.disabled=busy||chat.off;
+  // Say out loud in the Hearing group when the room is being written down.
+  $('scribesub').textContent=sc.on?`● writing this down · ${sc.minutes||0} min`:(dials&&dials.muted?'mic muted':'');
   p.disabled=busy; p.textContent=busy?'…':awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
   if(dials){ const sp=want.dials.speaker_source??dials.speaker_source; document.querySelectorAll('#spk button').forEach(b=>b.classList.toggle('on',b.dataset.spk===sp)); }
   if(dials){ const m=want.dials.mic_source??dials.mic_source; document.querySelectorAll('#mic button').forEach(b=>b.classList.toggle('on',b.dataset.mic===m)); }
   if(dials){ document.querySelectorAll('.sw[data-dial]').forEach(b=>{ const k=b.dataset.dial; const v=(k in want.dials)?want.dials[k]:!!dials[k]; b.classList.toggle('on',v); b.disabled=!awake&&(k==='listening'||k==='face_tracking'); });
-    if(dials.volume!=null&&document.activeElement!==$('vol')){ $('vol').value=dials.volume; $('volv').textContent=dials.volume+'%'; } }
+    if(document.activeElement!==$('vol')){ if(dials.volume!=null){ const v=volToSlider(dials.volume); $('vol').value=v; $('volv').textContent=v+'%'; $('vol').disabled=false; } else { $('volv').textContent='–'; $('vol').disabled=true; } }
+    if(document.activeElement!==$('svol')){ if(dials.start_volume!=null){ const v=volToSlider(dials.start_volume); $('svol').value=v; $('svolv').textContent=v+'% on every wake'; $('svol').disabled=false; } else { $('svolv').textContent='–'; $('svol').disabled=true; } } }
   if(brainInfo) renderBrain();
   renderLog();
   const c=await j('/cost'); if(c) $('cost').textContent=`$${(c.today||0).toFixed(2)} today`;
@@ -235,11 +271,20 @@ async function poll(){
 document.querySelectorAll('#stages button').forEach(b=>b.onclick=async()=>{ const n=+b.dataset.stage; want.stage=n; want.at=Date.now(); poll(); const r=await j('/stage',{stage:n}); if(!r||r.error){ want.stage=null; if(r&&r.error) alert(r.error); } poll(); });
 document.querySelectorAll('#spk button').forEach(b=>b.onclick=async()=>{ want.dials.speaker_source=b.dataset.spk; want.at=Date.now(); poll(); const r=await j('/dials',{speaker_source:b.dataset.spk}); if(!r||r.error) delete want.dials.speaker_source; poll(); });
 document.querySelectorAll('#mic button').forEach(b=>b.onclick=async()=>{ want.dials.mic_source=b.dataset.mic; want.at=Date.now(); poll(); const r=await j('/dials',{mic_source:b.dataset.mic}); if(!r||r.error) delete want.dials.mic_source; poll(); });
+$('scribe2').onclick=()=>$('scribe').onclick();
 $('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
 $('power').onclick=async()=>{ const on=!(chat&&!chat.asleep&&!chat.off); want.power=on; want.at=Date.now(); poll(); const r=await j('/turn',{on}); if(r&&r.error){ want.power=null; alert(r.error);} };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; const v=!((k in want.dials)?want.dials[k]:(dials&&dials[k])); want.dials[k]=v; want.at=Date.now(); b.classList.toggle('on',v); const r=await j('/dials',{[k]:v}); if(!r||r.error){ delete want.dials[k]; } poll(); });
+// The robot's bottom half is near-silent (its volume curve is not even), so the
+// slider spans only the audible 50-100. Slider 0 still means off.
+const sliderToVol=s=>s<=0?0:Math.round(50+s/2), volToSlider=v=>v<=0?0:Math.max(5,Math.round((v-50)*2/5)*5);
 $('vol').oninput=e=>$('volv').textContent=e.target.value+'%';
-$('vol').onchange=async e=>{ await j('/dials',{volume:+e.target.value}); poll(); };
+$('vol').onchange=async e=>{ await j('/dials',{volume:sliderToVol(+e.target.value)}); poll(); };
+// "Starts at" changes the next wake, not this moment — no whistle, nothing
+// audible happens when you move it. That is why it is a second slider and not
+// a mode on the first one.
+$('svol').oninput=e=>$('svolv').textContent=e.target.value+'% on every wake';
+$('svol').onchange=async e=>{ await j('/dials',{start_volume:sliderToVol(+e.target.value)}); poll(); };
 
 // ---- brain ----------------------------------------------------------------
 function renderBrain(){
@@ -252,15 +297,33 @@ function renderBrain(){
 }
 
 // ---- eyes -----------------------------------------------------------------
-$('cam').src=CAM+'/stream'; $('cam').onerror=()=>{$('noc').style.display='grid'}; $('cam').onload=()=>{$('noc').style.display='none'};
+(()=>{ // drag the camera column's right edge; remembered per browser
+  const g=document.querySelector('.grid'), eyes=$('p-eyes'); if(!g||!eyes) return;
+  const grip=document.createElement('div'); grip.className='colgrip'; grip.title='drag to resize'; eyes.appendChild(grip);
+  try{ const w=localStorage.getItem('vibey.c1'); if(w) g.style.setProperty('--c1',w); }catch(_){}
+  grip.onpointerdown=e=>{ e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('drag');
+    const left=g.getBoundingClientRect().left;
+    grip.onpointermove=m=>{ const px=Math.max(420,Math.min(g.clientWidth*0.7,m.clientX-left)); g.style.setProperty('--c1',px+'px'); };
+    grip.onpointerup=()=>{ grip.onpointermove=null; grip.classList.remove('drag'); try{localStorage.setItem('vibey.c1',g.style.getPropertyValue('--c1'));}catch(_){} };
+  };
+  grip.ondblclick=()=>{ g.style.removeProperty('--c1'); try{localStorage.removeItem('vibey.c1');}catch(_){} };
+})();
+$('cam').src=CAM+'/stream'; $('cam').onerror=()=>{$('noc').style.display='grid'};
+// Match the overlay to the real frame size, so "contain" letterboxes both the
+// same way and a circle drawn at 0.5,0.5 lands in the middle of the picture.
+$('cam').onload=e=>{ $('noc').style.display='none';
+  const c=$('fov'), w=e.target.naturalWidth, h=e.target.naturalHeight;
+  if(w&&h&&(c.width!==w||c.height!==h)){ c.width=w; c.height=h; } };
 async function eyes(){
   const p=await j('/perception'); if(!p) return;
   const c=$('fov'), x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height);
   const people=p.people||[]; $('eyesub').textContent=people.length?people.map(q=>q.name||'someone new').join(', '):'nobody in view';
   // Memory reports each face as a centre-origin offset (-1..1), not a box.
+  // Sizes in frame pixels, so they look the same whatever the camera's size.
+  const r=c.width*0.048, fs=Math.round(c.width*0.019);
   for(const q of people){ const cx=(q.x/2+0.5)*c.width, cy=(q.y/2+0.5)*c.height;
-    x.strokeStyle=q.name?'#7ef0a6':'#ffb454'; x.lineWidth=3; x.beginPath(); x.arc(cx,cy,46,0,Math.PI*2); x.stroke();
-    x.fillStyle=x.strokeStyle; x.font='bold 18px system-ui'; x.fillText(q.name||'?',cx-x.measureText(q.name||'?').width/2,cy-56); }
+    x.strokeStyle=q.name?'#7ef0a6':'#ffb454'; x.lineWidth=c.width*0.003; x.beginPath(); x.arc(cx,cy,r,0,Math.PI*2); x.stroke();
+    x.fillStyle=x.strokeStyle; x.font=`bold ${fs}px system-ui`; x.fillText(q.name||'?',cx-x.measureText(q.name||'?').width/2,cy-r-fs*0.55); }
 }
 
 // ---- friends --------------------------------------------------------------

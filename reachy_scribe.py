@@ -2,9 +2,10 @@
 """
 reachy_scribe.py — Vibey as a quiet note-taker.
 
-Scribe mode is the opposite of a conversation. The robot is asleep, head down,
-no realtime socket open, so nothing is paid per minute and nothing talks back.
-It just listens through its own mic, transcribes locally with faster-whisper,
+Scribe mode runs alongside whatever the robot is doing. Started while asleep,
+the robot stays asleep with no realtime socket open, so nothing is paid per
+minute and nothing talks back; started while awake, the conversation goes on
+and ends up in the notes too. Either way it listens through its own mic, transcribes locally with faster-whisper,
 and at the end turns the whole thing into Granola-style notes that get texted
 to Jack on Telegram.
 
@@ -13,7 +14,7 @@ to Jack on Telegram.
     status()           {"on", "started", "minutes", "lines"}
 
 Ways it ends: /scribe off on Telegram, the dashboard, saying "stop taking
-notes", or "hey Vibey", which also wakes it up for a real conversation.
+notes". "Hey Vibey" wakes it for a conversation without ending the notes.
 
 Lines go to the day's transcript (reachy_transcript) as well, so nothing said
 while scribing is lost if the summary step fails. Notes are saved under
@@ -168,7 +169,8 @@ def _handle(pcm: bytes) -> None:
         import reachy_wake
         if reachy_wake.wake_score(text) >= reachy_wake.WAKE_THRESHOLD:
             def _wake_after():
-                stop("woken up")
+                # "Hey Vibey" wakes it for a conversation; the notes carry on
+                # through it rather than ending.
                 if _S.get("on_wake"):
                     _S["on_wake"]()
             threading.Thread(target=_wake_after, daemon=True).start()

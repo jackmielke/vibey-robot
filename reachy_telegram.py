@@ -16,6 +16,10 @@ A stdlib-only Telegram bridge:
   and replies YES, the owner runs `/allow <id> <nickname>`, and from then on the
   voice brain's `send_text_message` tool can reach them by nickname. See
   `send_to_contact` below. Anyone can reply STOP to be forgotten.
+- Vibey can start a conversation with its owner rather than only answering one:
+  auto-sleep notices, VibeVerse happenings, and whatever the voice brain
+  decides is worth a text. Bounded and switchable — see `notify_owner` and
+  `/proactive`.
 
 Pairing: the FIRST person to message the bot becomes the owner (saved to
 .telegram_state.json); everyone else gets a walled-off guest chat. Delete that
@@ -256,6 +260,62 @@ def send_to_contact(name: str, text: str) -> str:
             + (" I trimmed it to fit." if len(body) > MSG_MAX_CHARS else ""))
 
 
+# --------------------------------------------------------------------------- #
+# Proactive: Vibey starting the conversation instead of answering it.
+#
+# Everything else in this file replies to something. This is the other
+# direction — Vibey deciding on its own that Jack wants to know a thing while
+# he is nowhere near the robot. That is a notification nobody installed, so it
+# gets three bounds:
+#
+#   opt-in  pairing IS the consent — Telegram won't let a bot open a chat, the
+#           owner messaged it first — and `/proactive off` revokes it in one
+#           word, the way STOP does for guests. Only the paired owner is ever
+#           pushed to; contacts keep the stricter approval flow above.
+#   quiet   nothing overnight unless it is marked urgent.
+#   rate    a handful an hour, then it holds its tongue.
+#
+# Privacy: only things the owner could already read off his own dashboard go
+# out here. Room transcripts and anything a guest said never do.
+# --------------------------------------------------------------------------- #
+QUIET_HOURS = (23, 8)       # from 23:00 until 08:00, local time
+PROACTIVE_PER_HOUR = 6
+_proactive_sent: list = []
+
+
+def proactive_on() -> bool:
+    """Default on: the owner paired with the bot, and the sleep and VibeVerse
+    notices have always worked this way. The switch is here to turn it off."""
+    return bool(_state().get("proactive", True))
+
+
+def notify_owner(text: str, urgent: bool = False) -> str:
+    """Text the owner unprompted. Returns a line that is safe to say out loud."""
+    body = " ".join(str(text or "").split())[:MSG_MAX_CHARS]
+    if not body:
+        return "There's nothing to send."
+    owner = _state().get("owner")
+    if not owner:
+        return "Nobody's paired with my Telegram bot, so there's no one to text."
+    if not proactive_on():
+        return "Jack's switched my unprompted texts off, so I'll keep it to myself."
+    hour = time.localtime().tm_hour
+    if not urgent and (hour >= QUIET_HOURS[0] or hour < QUIET_HOURS[1]):
+        return "It's the middle of the night — that can wait until morning."
+    now = time.time()
+    _proactive_sent[:] = [t for t in _proactive_sent if now - t < 3600]
+    if len(_proactive_sent) >= PROACTIVE_PER_HOUR:
+        return (f"I've already texted Jack {PROACTIVE_PER_HOUR} times this hour, "
+                "so I'm holding off rather than pestering him.")
+    try:
+        _tg("sendMessage", {"chat_id": owner, "text": body}, timeout=15)
+    except Exception as e:  # noqa: BLE001
+        return f"That didn't go through — {e}"
+    _proactive_sent.append(now)
+    print(f"[tg] proactive note to owner, {len(body)} chars", flush=True)  # never the text
+    return "Texted Jack."
+
+
 GUEST_PER_HOUR = 30
 GUEST_PHOTOS_PER_HOUR = 5
 GUEST_ACTIONS_PER_HOUR = 10
@@ -432,11 +492,21 @@ ACTIONS = {"wave": "👋", "whistle": "🎶"}
 
 
 def _act(chat_id: int, emote: str) -> bool:
-    """Wave or whistle in the room. Only while awake: asleep the motors are
-    off and a gesture would just be a noise from a limp robot."""
-    if _asleep():
-        _send(chat_id, "😴 asleep rn, can't " + emote)
-        return False
+    """Wave or whistle in the room. Stage 1-2 keep the body up, so only a real
+    sleep (motors off) is in the way — and asking for a wave is asking it to
+    get up, so it wakes first rather than refusing."""
+    st = _get_json(f"{CHAT_URL}/state") or {}
+    if st.get("asleep"):
+        try:
+            _post_json(f"{CHAT_URL}/wake", {}, timeout=30)
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"couldn't wake up to {emote} ({e})")
+            return False
+        for _ in range(20):   # wait out the wake-up animation
+            time.sleep(1)
+            if not (_get_json(f"{CHAT_URL}/state") or {}).get("asleep"):
+                break
+        time.sleep(2)
     try:
         out = _post_json("http://localhost:8770/emote", {"name": emote}, timeout=15)
         if not (out or {}).get("ok"):
@@ -542,7 +612,8 @@ def _handle(chat_id: int, text: str) -> None:
               "/sfx — list my sound effects · /sfx <name> plays one in the room\n"
               "/now — what I'm doing + every switch\n"
               "/talk, /talk off — voice on/off · /mute, /unmute\n"
-              "/volume 0-100|up|down · /brain live|realtime\n"
+              "/volume 0-100|up|down (/volume start N = the level I wake at)\n"
+              "/brain live|realtime\n"
               "/listening, /tracking, /incognito, /thinkaloud on|off\n"
               "/photo — see through my eyes right now\n"
               "/clip — an 8-second video through my eyes\n"
@@ -555,6 +626,7 @@ def _handle(chat_id: int, text: str) -> None:
               "/jobs — what Claude Code is doing\n"
               "/voicenotes on|off — replies as voice messages too\n"
               "/contacts — who I'm allowed to text (and how to add someone)\n"
+              "/proactive on|off — whether I start conversations or only reply\n"
               "/cost — what I've cost you today\n"
               "/verse — what's happening in my VibeVerse lobby")
         return
@@ -592,7 +664,21 @@ def _handle(chat_id: int, text: str) -> None:
                if cmd == "/mute" else "🎙️ mic's back on")
         return
     if cmd == "/volume":
-        cur = (_get_json(f"{CHAT_URL}/dials") or {}).get("volume") or 70
+        d = _get_json(f"{CHAT_URL}/dials") or {}
+        cur, start = d.get("volume") or 70, d.get("start_volume")
+        # `/volume start 85` sets what every WAKE comes back to, which is a
+        # different question from how loud it is right now and used to have no
+        # answer at all — you found out the next morning.
+        head, _, tail = arg.partition(" ")
+        if head == "start":
+            if not tail.strip().isdigit():
+                _send(chat_id, f"🔊 I wake up at {start if start is not None else '?'}. "
+                               "/volume start 0-100 to change that")
+                return
+            v = max(0, min(100, int(tail.strip())))
+            _dials(chat_id, {"start_volume": v},
+                   f"🔊 I'll wake up at {v} from now on (I'm at {cur} right now)")
+            return
         if arg in ("up", "+"):
             v = cur + 15
         elif arg in ("down", "-"):
@@ -600,7 +686,9 @@ def _handle(chat_id: int, text: str) -> None:
         elif arg.isdigit():
             v = int(arg)
         else:
-            _send(chat_id, f"🔊 volume's at {cur}. /volume 0-100, up or down")
+            _send(chat_id, f"🔊 volume's at {cur}, and I wake up at "
+                           f"{start if start is not None else '?'}. "
+                           "/volume 0-100, up or down · /volume start 0-100")
             return
         v = max(0, min(100, v))
         _dials(chat_id, {"volume": v}, f"🔊 volume {v}")
@@ -668,6 +756,22 @@ def _handle(chat_id: int, text: str) -> None:
         return
     if cmd == "/now":
         _send(chat_id, _now_line())
+        return
+    if cmd == "/proactive":
+        if arg not in onoff:
+            _send(chat_id,
+                  f"🔔 unprompted texts: {'on' if proactive_on() else 'off'}. "
+                  f"/proactive on|off.\n\nOn, I'll start a conversation when "
+                  f"something happens you'd want to know — at most "
+                  f"{PROACTIVE_PER_HOUR} an hour, and nothing between "
+                  f"{QUIET_HOURS[0]}:00 and 0{QUIET_HOURS[1]}:00 unless it "
+                  f"can't wait. Off, I only ever reply.")
+            return
+        st = _state()
+        st["proactive"] = onoff[arg]
+        _save_state(st)
+        _send(chat_id, "🔔 ok, i'll bring things up as they happen"
+              if onoff[arg] else "🔕 ok, i'll only speak when spoken to")
         return
     if low.startswith("/contacts"):
         d = _contacts()
@@ -905,7 +1009,7 @@ OWNER_COMMANDS = [
     ("talk", "wake up and start voice (/talk off to stop)"),
     ("mute", "mute my mic"),
     ("unmute", "unmute my mic"),
-    ("volume", "0-100, up or down"),
+    ("volume", "0-100, up or down · start N = the level I wake at"),
     ("brain", "live or realtime"),
     ("listening", "hear the room: on|off"),
     ("tracking", "follow faces: on|off"),
@@ -926,6 +1030,7 @@ OWNER_COMMANDS = [
     ("jobs", "what Claude Code is doing"),
     ("voicenotes", "replies as voice messages too: on|off"),
     ("contacts", "who I'm allowed to text"),
+    ("proactive", "do I start conversations: on|off"),
     ("cost", "what I've cost you today"),
     ("verse", "what's happening in my VibeVerse lobby"),
     ("help", "everything I can do"),
@@ -958,6 +1063,7 @@ def _sleep_watcher() -> None:
     about is the bill.
     """
     was_asleep = None
+    last_notice = 0.0
     while True:
         time.sleep(30)
         owner = _state().get("owner")
@@ -968,36 +1074,16 @@ def _sleep_watcher() -> None:
         if was_asleep is None:
             was_asleep = now_asleep
             continue
-        if now_asleep and not was_asleep:
+        if now_asleep and not was_asleep and time.time() - last_notice > 3 * 3600:
+            last_notice = time.time()
             c = _get_json(f"{CHAT_URL}/cost") or {}
-            _send(owner, f"😴 nobody said anything for a while, so I've gone to "
+            # urgent: this one is worth MORE at 2am, not less — a silent
+            # auto-sleep is indistinguishable from a crash, and the bill is
+            # exactly what you are awake worrying about.
+            notify_owner(f"😴 nobody said anything for a while, so I've gone to "
                          f"sleep. ${c.get('today', 0):.2f} today. "
-                         f"Text me to wake me.")
+                         f"Text me to wake me.", urgent=True)
         was_asleep = now_asleep
-
-
-def _verse_watcher() -> None:
-    """Forward new notable VibeVerse events to the owner as they happen."""
-    seen_ts = 0
-    while True:
-        time.sleep(20)
-        owner = _state().get("owner")
-        if not owner:
-            continue
-        v = _get_json(f"{VERSE_URL}/status")
-        if not v:
-            continue
-        fresh = [e for e in (v.get("events") or [])
-                 if e["ts"] > seen_ts and e["kind"] in
-                 ("join", "mention", "report", "say")]
-        if not fresh:
-            continue
-        seen_ts = max(e["ts"] for e in fresh)
-        if len(fresh) > 5:
-            fresh = fresh[-5:]
-        body = "🌐 VibeVerse:\n" + "\n".join(
-            f"· {e['kind']}: {e['text'][:100]}" for e in fresh)
-        _send(owner, body)
 
 
 def run() -> None:
@@ -1019,7 +1105,6 @@ def run() -> None:
         return
     print(f"[tg] up as @{BOT_HANDLE}", flush=True)
     _set_command_menu(_state().get("owner"))
-    threading.Thread(target=_verse_watcher, daemon=True).start()
     threading.Thread(target=_sleep_watcher, daemon=True).start()
 
     offset = 0

@@ -29,6 +29,7 @@ import struct
 import time
 import urllib.request
 import wave
+from pathlib import Path
 
 REACHY_URL = os.environ.get("REACHY_URL", "http://10.0.0.196:8000").rstrip("/")
 SR = 24000
@@ -107,14 +108,68 @@ def _upload_and_play(name: str, pcm: bytes, log=print):
 # not enough in a room with people in it — and a social robot is, by definition,
 # never in the quiet room. Every intermediate value has been tried and every one
 # of them ended with somebody asking Vibey to speak up, so: full, every time.
-# Waking is now a reset to 100 rather than a negotiation with whatever the last
-# session left behind.
 WAKE_VOLUME = max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "100"))))
+
+# Two levels live in here, and conflating them is what made waking unpredictable.
+#
+#   "volume" — where the slider is right now. Moved by the dashboard, Telegram,
+#              the voice brain. Changes all day.
+#   "start"  — the level Vibey comes UP at, every wake. A deliberate setting,
+#              changed only when somebody changes it.
+#
+# Waking used to restore "volume", so the level you ended a late-night session
+# at was the level the robot greeted the room with the next morning — quiet
+# when you wanted loud, and no way to see why. Now waking is a reset to "start",
+# which is a number you can read off the dashboard before it happens.
+# VIBEY_VOLUME seeds "start" the first time. The night clamp writes neither.
+VOLUME_FILE = Path(__file__).resolve().parent / ".volume_state.json"
+
+
+def _volume_state() -> dict:
+    try:
+        d = json.loads(VOLUME_FILE.read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def saved_volume() -> int:
+    """Where the slider was left."""
+    try:
+        return max(0, min(100, int(_volume_state()["volume"])))
+    except Exception:  # noqa: BLE001
+        return start_volume()
+
+
+def start_volume() -> int:
+    """What Vibey wakes up at, whatever last night left behind."""
+    try:
+        return max(0, min(100, int(_volume_state()["start"])))
+    except Exception:  # noqa: BLE001
+        return WAKE_VOLUME
+
+
+def _write_volume(**fields) -> None:
+    d = _volume_state()
+    d.update({k: max(0, min(100, int(v))) for k, v in fields.items()})
+    try:
+        VOLUME_FILE.write_text(json.dumps(d))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def remember_volume(level: int) -> None:
+    _write_volume(volume=level)
+
+
+def remember_start_volume(level: int) -> None:
+    _write_volume(start=level)
 
 
 # What the daemon last told us the volume is, so we can avoid setting it to the
-# value it already has.
-_last_volume = {"level": None}
+# value it already has. Seeded from the saved level so the dashboard never
+# shows a blank or 0 before the first set.
+_last_volume = {"level": saved_volume()}
 
 
 def set_volume(level: int, log=print, force: bool = False):
@@ -185,7 +240,7 @@ def wake(log=print):
     # force: skip the "close enough, don't whistle" check. Waking is exactly the
     # moment the old level should stop mattering — one whistle is cheaper than a
     # conversation held at whatever volume last night's clamp left behind.
-    set_volume(WAKE_VOLUME, log, force=True)
+    set_volume(start_volume(), log, force=True)
     _upload_and_play("vibey_wake.wav", _tone(WAKE_NOTES), log)
     try:
         _post("/api/move/play/wake_up", timeout=15)

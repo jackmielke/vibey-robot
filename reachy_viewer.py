@@ -90,11 +90,15 @@ def _set_power(off: bool) -> None:
         # pose limp) — they must be re-enabled or wake_up silently does
         # nothing and the robot stays face-down.
         _post(f"{REACHY_URL}/api/motors/set_mode/enabled", timeout=10.0)
-        # Switched on = audible, but at the configured level rather than a
-        # hardcoded 100. This path used to silently undo VIBEY_VOLUME, so the
-        # volume you set stuck until the moment you used this button.
-        _post(f"{REACHY_URL}/api/volume/set",
-              {"volume": max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "85"))))})
+        # Switched on = audible, at the startup level rather than a hardcoded
+        # 100 or whatever last night ended on. This path used to silently undo
+        # VIBEY_VOLUME, so the volume you set stuck until you used this button.
+        try:
+            from reachy_wakesleep import start_volume
+            _vol = start_volume()
+        except Exception:  # noqa: BLE001
+            _vol = max(0, min(100, int(os.environ.get("VIBEY_VOLUME", "85"))))
+        _post(f"{REACHY_URL}/api/volume/set", {"volume": _vol})
         _post(f"{REACHY_URL}/api/move/play/wake_up", timeout=20.0)
         # face-following + speech wobble are core to feeling alive — they can
         # get dropped by daemon restarts, so re-assert on every wake.
@@ -2711,6 +2715,11 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     vol = max(0, min(100, int(body.get("volume", 50))))
                     out = _post(f"{REACHY_URL}/api/volume/set", {"volume": vol})
+                    try:
+                        from reachy_wakesleep import remember_volume
+                        remember_volume(vol)
+                    except Exception:  # noqa: BLE001
+                        pass
                 self._send(json.dumps(out or {}).encode(), "application/json")
             except Exception as e:
                 self.send_response(400)

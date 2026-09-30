@@ -25,3 +25,4 @@ transcripts/
 notes/
 .mic_source.json
 .speaker_source.json
+.volume_state.json

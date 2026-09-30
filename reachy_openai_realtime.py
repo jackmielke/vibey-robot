@@ -756,6 +756,36 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "text_jack",
+        "description": (
+            "Text Jack on Telegram, unprompted, when he is NOT in the room and "
+            "something happened he'd want to know: a coding job landed, "
+            "somebody came by and left a message for him, something is "
+            "obviously broken. This is you starting a conversation, so the bar "
+            "is 'he'd be annoyed to find out late', not 'this is mildly "
+            "interesting'. If he is in the room, say it out loud instead — "
+            "don't text the person standing in front of you. Never pass on "
+            "anything a guest told you in confidence. It goes quiet overnight "
+            "unless you mark it urgent, and he can switch it off entirely."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "One or two sentences, in your own voice.",
+                },
+                "urgent": {
+                    "type": "boolean",
+                    "description": (
+                        "true only if it genuinely cannot wait until morning; "
+                        "this is what overrides quiet hours."),
+                },
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "type": "function",
         "name": "explain_how_to",
         "description": (
             "Answer a 'how do I…' question about seeing your dashboard or "
@@ -1376,6 +1406,20 @@ def _tool_send_message(args: dict) -> str:
     return reachy_telegram.send_to_contact(to, message)
 
 
+def _tool_text_jack(args: dict) -> str:
+    """Vibey reaching Jack first.
+
+    No spoken read-back here, unlike send_text_message: the recipient is the
+    owner, the consent is the pairing, and the point of the tool is the times
+    he is not there to confirm anything. The bounds live in reachy_telegram —
+    quiet hours, a rate limit, and an off switch — so this stays a one-liner
+    and the policy stays in one place.
+    """
+    import reachy_telegram
+    return reachy_telegram.notify_owner(str(args.get("message") or ""),
+                                        urgent=bool(args.get("urgent")))
+
+
 def _tool_explain(args: dict) -> str:
     """Structured advice. Pure words — reachy_help cannot touch the network or
     the config, so the worst case of a misheard question is a wrong sentence."""
@@ -1449,6 +1493,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_contacts()
         if name == "send_text_message":
             return _tool_send_message(args)
+        if name == "text_jack":
+            return _tool_text_jack(args)
         if name == "explain_how_to":
             return _tool_explain(args)
         if name == "check_local_ui":

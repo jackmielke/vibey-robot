@@ -32,6 +32,7 @@ speakable context the model brings up itself.
 """
 from __future__ import annotations
 
+import array
 import asyncio
 import base64
 import json
@@ -60,10 +61,25 @@ LIVE_RULES = (
     "word — 'just a tick' — and nothing more."
 )
 
-# How long the output stream may go quiet before what has arrived is played.
+# How long the voice may go quiet before what has arrived is played.
 # The robot's speaker takes whole clips (upload + play), not a stream, and Live
-# streams continuously with no end-of-reply event, so gaps are the boundaries.
-FLUSH_GAP_S = 0.28
+# has no end-of-reply event. Nor does its stream ever pause: it sends 100ms
+# frames in real time the whole session, silence included, so waiting for the
+# socket to go quiet meant waiting for nothing. Pauses are read off the audio.
+FLUSH_GAP_S = 0.3
+SILENCE_RMS = 60      # a Live silence frame is exactly 0; speech runs 200-1700
+
+# That same never-pausing stream is also a free liveness signal, and the only
+# one there is: Live sends no pings and has no idle event. A socket that has
+# gone quiet for longer than this is dead, whatever TCP still believes — and
+# TCP can believe it for minutes, during which Vibey sits there mute while the
+# dashboard says "voice on · listening". Reconnecting is the whole fix.
+RX_DEAD_S = 12.0
+
+
+def _rms(pcm: bytes) -> float:
+    a = array.array("h", pcm[: len(pcm) // 2 * 2])
+    return (sum(v * v for v in a) / len(a)) ** 0.5 if a else 0.0
 
 
 class LiveSession(RealtimeSession):
@@ -74,6 +90,7 @@ class LiveSession(RealtimeSession):
         self._heard = []      # user transcript deltas for the current turn
         self._said = []       # agent transcript deltas for the current clip
         self._last_delta_at = 0.0
+        self._last_rx = 0.0
         self._minutes = 0.0
 
     # ----------------------------------------------------------------- #
@@ -131,6 +148,12 @@ class LiveSession(RealtimeSession):
                         LIVE_URL,
                         additional_headers={"Authorization": f"Bearer {API_KEY}"},
                         max_size=16 * 1024 * 1024) as ws:
+                    # Half a sentence left over from the socket that just died
+                    # is not the opening of the next conversation.
+                    self._resp_pcm.clear()
+                    self._said, self._heard = [], []
+                    self._response_active = False
+                    self._last_rx = time.time()
                     await ws.send(json.dumps(self._session_start()))
                     FATAL_REASON["why"] = None
                     sender = asyncio.ensure_future(self._sender(ws, queue, should_run, stop))
@@ -188,6 +211,9 @@ class LiveSession(RealtimeSession):
         while should_run() and not stop.is_set():
             await asyncio.sleep(0.05)
             if self._resp_pcm and time.time() - self._last_delta_at > FLUSH_GAP_S:
+                tail = int((time.time() - self._last_delta_at) * RT_SR) * 2
+                if 0 < tail < len(self._resp_pcm):
+                    del self._resp_pcm[-tail:]
                 said = "".join(self._said).strip()
                 self._said = []
                 self._response_active = False
@@ -200,9 +226,13 @@ class LiveSession(RealtimeSession):
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=0.4)
             except asyncio.TimeoutError:
+                if time.time() - self._last_rx > RX_DEAD_S:
+                    self.log(f"nothing from Live for {RX_DEAD_S:.0f}s — reconnecting")
+                    return
                 continue
             except Exception:
                 return
+            self._last_rx = time.time()
             try:
                 msg = json.loads(raw)
             except Exception:
@@ -215,10 +245,16 @@ class LiveSession(RealtimeSession):
             elif t == "session.output_audio.delta":
                 # Audio arriving while our last clip is still playing is a new
                 # sentence, not a barge-in — Live decides turns itself.
-                self._cancelled = False
-                self._response_active = True
-                self._resp_pcm.extend(base64.b64decode(msg.get("delta", "")))
-                self._last_delta_at = time.time()
+                pcm = base64.b64decode(msg.get("delta", ""))
+                if _rms(pcm) >= SILENCE_RMS:
+                    self._cancelled = False
+                    self._response_active = True
+                    self._resp_pcm.extend(pcm)
+                    self._last_delta_at = time.time()
+                elif self._resp_pcm:
+                    # Keep the pauses between words, drop the dead air around
+                    # the reply; the flusher trims whatever trails the last word.
+                    self._resp_pcm.extend(pcm)
 
             elif t == "session.output_transcript.delta":
                 self._said.append(msg.get("delta", ""))
