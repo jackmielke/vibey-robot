@@ -1128,7 +1128,15 @@ def _addressed(msg: dict) -> bool:
     return bool(rep.get("is_bot") and (rep.get("username") or "").lower() == handle)
 
 
+_group_seen: set = set()
+
+
 def _handle_group(chat_id: int, msg: dict) -> None:
+    key = (chat_id, msg.get("message_id"))
+    with _group_lock:
+        if key in _group_seen:
+            return  # an edit or a redelivery: answered once already
+        _group_seen.add(key)
     raw = (msg.get("text") or "").strip()
     frm = msg.get("from") or {}
     name = frm.get("first_name") or frm.get("username") or "someone"
