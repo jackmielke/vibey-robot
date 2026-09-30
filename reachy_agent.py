@@ -416,6 +416,15 @@ def remember(note: str) -> str:
     note = " ".join(note.split()).strip()
     if not note:
         return ""
+    # One file per memory in memories/ (see reachy_memories). SKILLS.md is
+    # kept as a read-only backup / fallback and no longer appended to.
+    try:
+        import reachy_memories
+        reachy_memories.add(note)
+        print(f"[agent] remembered: {note}", flush=True)
+        return note
+    except Exception as e:  # noqa: BLE001 — fall back to the old file
+        print(f"[agent] memories/ write failed ({e}); using SKILLS.md", flush=True)
     stamp = time.strftime("%Y-%m-%d")
     if not SKILLS_FILE.exists():
         SKILLS_FILE.write_text(SKILLS_HEADER)
@@ -426,7 +435,17 @@ def remember(note: str) -> str:
 
 
 def load_skills(limit: int = 40) -> str:
-    """The most recent lessons, as a block to paste into the voice instructions."""
+    """The most recent lessons, as a block to paste into the voice instructions.
+
+    Read fresh on every call, so dashboard edits apply on the next session or
+    text turn. memories/ wins; SKILLS.md only if memories/ is empty."""
+    try:
+        import reachy_memories
+        lines = reachy_memories.prompt_lines(limit)
+        if lines:
+            return "\n".join(lines)
+    except Exception as e:  # noqa: BLE001
+        print(f"[agent] memories/ read failed ({e}); using SKILLS.md", flush=True)
     if not SKILLS_FILE.exists():
         return ""
     lines = [ln.strip() for ln in SKILLS_FILE.read_text().splitlines()

@@ -20,7 +20,7 @@ Full-duplex behaviour:
 Tools (see TOOLS below) let the conversation reach the body and the codebase:
 
     move / dance          instant — motion fires while they keep talking
-    remember              instant — appends to SKILLS.md, reloaded next connect
+    remember              instant — new file in memories/, reloaded next connect
     vibe_check            instant — scores the conversation 1-100 (reachy_vibe.py)
     improve_yourself      minutes — hands a coding task to the Claude CLI
                           (reachy_agent.py) editing THIS repo in the background

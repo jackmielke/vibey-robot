@@ -13,7 +13,7 @@ about a text if one happened to be running when it arrived.
 This module is the shared part:
 
   * ONE persona. Texts are built from the same instructions the voice session
-    gets (DEFAULT_INSTRUCTIONS + SKILLS.md lessons), with a short texting layer
+    gets (DEFAULT_INSTRUCTIONS + memories/ lessons), with a short texting layer
     on top. The model is the Live backend's (gpt-5.5), so the thing that thinks
     behind the voice is the thing that answers a text.
   * The same tools, where they make sense by text. Body, speaker and camera

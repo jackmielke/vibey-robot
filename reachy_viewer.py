@@ -41,6 +41,7 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/
 # Every _get/_post below reads the REACHY_URL global at call time, so
 # repointing the dashboard at a new address is just a reassignment.
 import reachy_connect
+import reachy_memories
 import reachy_modes
 HANDSFREE_URL = os.environ.get("HANDSFREE_URL", "http://localhost:8765").rstrip("/")
 # Live camera MJPEG feed served by reachy_camera.py (runs in the SDK venv).
@@ -2244,8 +2245,42 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _json_body(self) -> dict:
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        return json.loads(self.rfile.read(n) or b"{}") if n else {}
+
+    def _memories(self, method: str):
+        """GET list · POST {text} adds · POST {id,text} edits · DELETE {id}
+        (or ?id=). Storage lives behind reachy_memories only."""
+        try:
+            if method == "GET":
+                out = {"memories": reachy_memories.list_all(),
+                       "where": str(reachy_memories.DIR)}
+            else:
+                body = self._json_body()
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                mid = body.get("id") or (qs.get("id") or [""])[0]
+                if method == "DELETE" or body.get("delete"):
+                    out = {"ok": reachy_memories.delete(str(mid)), "id": mid}
+                elif mid:
+                    out = {"ok": True, **reachy_memories.write(str(mid), str(body.get("text", "")))}
+                else:
+                    out = {"ok": True, **reachy_memories.add(str(body.get("text", "")))}
+            self._send(json.dumps(out).encode(), "application/json")
+        except (ValueError, FileNotFoundError) as e:
+            self._send(json.dumps({"error": str(e)}).encode(), "application/json", 400)
+
+    def do_DELETE(self):
+        if self.path.split("?")[0] == "/memories":
+            self._memories("DELETE")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def do_GET(self):
-        if self.path.startswith("/perception"):
+        if self.path.split("?")[0] == "/memories":
+            self._memories("GET")
+        elif self.path.startswith("/perception"):
             self._send(json.dumps(gather()).encode(), "application/json")
         elif self.path.split("?")[0] == "/memory":
             # Read-only, grouped by layer (robot / mac / cloud). See memory_layers.
@@ -2477,6 +2512,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if self.path.split("?")[0] == "/memories":
+            self._memories("POST")
+            return
         if self.path.startswith("/robot/connect"):
             # Point the whole stack at a robot: persist to .env (so the next
             # start sticks) and repoint this process immediately. The other

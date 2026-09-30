@@ -55,8 +55,11 @@
   .faces { display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:10px }
   .face { text-align:center; font-size:12px } .face img { width:84px; height:84px; object-fit:cover; border-radius:12px; background:var(--off); display:block; margin:0 auto 4px }
   .face.here img { outline:3px solid var(--on) }
-  .log { font-family:ui-monospace,Menlo,monospace; font-size:12px; max-height:260px; overflow:auto; display:flex; flex-direction:column; gap:6px }
+  /* Live chat: the conversation as it happens, newest at the bottom. */
+  .log { font-family:ui-monospace,Menlo,monospace; font-size:13px; height:min(60vh,560px); overflow:auto; display:flex; flex-direction:column; gap:8px; padding-right:4px }
   .log .you { color:var(--text) } .log .bot { color:var(--on) }
+  .log .who { font-weight:700; opacity:.7 }
+  .log .empty { color:var(--dim); margin:auto; font-family:inherit }
   .dot { width:14px; height:14px; border-radius:50%; background:var(--off); display:inline-block; transition:transform .06s,background .06s; vertical-align:middle }
   .kv { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); font-size:12px } .kv b { color:var(--text) }
   .ghost { background:transparent; border:1px solid var(--line); color:var(--text); border-radius:9px; padding:6px 10px; cursor:pointer }
@@ -67,7 +70,21 @@
          margin:12px 0 0; padding-top:10px; border-top:1px solid var(--line) }
   .grp:first-of-type { margin-top:0; padding-top:0; border-top:0 }
   .grp .warn { color:var(--warn); text-transform:none; letter-spacing:0; font-weight:600 }
-  /* Memory: one block per layer, numbered like the stage buttons. */
+  /* Memory: one plain file per memory, edited in place. */
+  .mem { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-bottom:1px solid var(--line) }
+  .mem:last-child { border-bottom:0 }
+  .mem textarea { flex:1; resize:none; overflow:hidden; background:transparent; border:1px solid transparent; border-radius:8px;
+    color:inherit; font:inherit; line-height:1.45; padding:5px 8px; min-height:32px }
+  .mem textarea:hover,.mem textarea:focus { border-color:var(--line); outline:none; background:var(--field) }
+  .mem .d { color:var(--dim); font-size:11px; white-space:nowrap; padding-top:7px; min-width:74px }
+  .mem .x { background:transparent; border:0; color:var(--dim); cursor:pointer; font-size:16px; padding:4px 6px; border-radius:6px; line-height:1 }
+  .mem .x:hover { color:var(--bad); background:rgba(127,127,127,.1) }
+  .mem.saved textarea { border-color:var(--on) }
+  .memadd { display:flex; gap:8px; margin-bottom:8px }
+  .memadd input { flex:1; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:9px; padding:8px 10px; font:inherit }
+  .memlist { columns:2 420px; column-gap:22px }
+  .memlist .mem { break-inside:avoid }
+  /* (legacy layer styles, unused) */
   .layer { padding:10px 0 4px; border-top:1px solid var(--line) }
   .layer:first-child { border-top:0; padding-top:0 }
   .layer h3 { margin:0 0 4px; font-size:13px; display:flex; align-items:center; gap:8px }
@@ -86,14 +103,15 @@
   @media (min-width:1280px){
     .wrap { max-width:none; padding:14px 20px 16px }
     header { margin-bottom:12px }
-    .grid { grid-template-columns:var(--c1,1.5fr) 1fr 1fr; grid-template-rows:auto auto auto minmax(0,1fr) auto;
-      grid-template-areas:"eyes stage brain" "eyes memory senses" "dj memory senses" "log memory friends" "else else else" }
+    .grid { grid-template-columns:var(--c1,1.5fr) 1fr 1fr; grid-template-rows:auto;
+      grid-template-areas:"stage stage log" "eyes brain log" "eyes senses log" "dj senses log" "memory memory friends" "else else else" }
     .grid > .panel.wide { grid-column:auto }
     #p-eyes{grid-area:eyes} #p-stage{grid-area:stage} #p-brain{grid-area:brain} #p-senses{grid-area:senses}
     #p-dj{grid-area:dj} #p-friends{grid-area:friends} #p-log{grid-area:log} #p-memory{grid-area:memory} #p-else{grid-area:else}
-    #p-log,#p-friends,#p-memory { display:flex; flex-direction:column; min-height:0 }
-    #p-log .log { max-height:none; flex:1; min-height:120px }
-    #faces,#memory { overflow:auto; flex:1; min-height:0 }
+    /* The chat fills the whole right column (as tall as the panels beside
+       it) without ever pushing the rows taller itself. */
+    #p-log { display:flex; flex-direction:column; min-height:520px }
+    #p-log .log { flex:1 1 0; height:0; min-height:0 }
     #p-friends #faces { min-height:110px }
     .stagebar { margin-bottom:0 }
     #p-eyes,#p-stage { display:flex; flex-direction:column }
@@ -108,11 +126,8 @@
     .mlist li { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden }
     .stages button small { font-size:10.5px }
   }
-  /* Tall enough: pin the page to the viewport and let the long panels scroll
-     inside themselves, so nothing needs a page scroll. */
+  /* The page scrolls normally; nothing is pinned to the viewport. */
   @media (min-width:1280px) and (min-height:760px){
-    .wrap { height:100vh; display:flex; flex-direction:column }
-    .grid { flex:1; min-height:0; overflow:auto }
     /* Cap the camera by height too, so a wide column can't push the DJ and the
        log off the bottom. Width follows from 16:9, so nothing gets squashed. */
     #p-eyes .eyes { align-self:center; width:min(100%,calc(46vh * 16 / 9)) }
@@ -138,6 +153,11 @@
       <button data-stage=2><b>2</b> + Mac<small>wake word, faces, moves, notes</small></button>
       <button data-stage=3><b>3</b> + Cloud<small>GPT-Live voice, Telegram</small></button>
     </div>
+  </div>
+
+  <div class="panel wide" id=p-log>
+    <h2><span>Live chat</span><span class=sub id=logsub></span></h2>
+    <div class=log id=log></div>
   </div>
 
   <div class="panel wide" id=p-eyes>
@@ -196,14 +216,10 @@
     <div class=faces id=faces></div>
   </div>
 
-  <div class=panel id=p-log>
-    <h2>What it's saying</h2>
-    <div class=log id=log></div>
-  </div>
-
-  <div class=panel id=p-memory>
+  <div class="panel wide" id=p-memory>
     <h2><span>Memory</span><span class=sub id=memsub>loading…</span></h2>
-    <div id=memory></div>
+    <form class=memadd id=memadd><input id=memnew placeholder="Add a memory… e.g. Jack likes short answers while coding" aria-label="New memory"><button class=ghost>Add</button></form>
+    <div class=memlist id=memory></div>
   </div>
 
   <div class="panel wide" id=p-else>
@@ -341,8 +357,14 @@ async function friends(){
 }
 
 // ---- log ------------------------------------------------------------------
-function renderLog(){ if(!chat||!chat.transcript) return; const L=$('log'); const atEnd=L.scrollTop+L.clientHeight>=L.scrollHeight-8;
-  L.innerHTML=chat.transcript.slice(-30).map(t=>`<div class="${t.who==='you'?'you':'bot'}">${t.who==='you'?'you':'vibey'} · ${t.text}</div>`).join(''); if(atEnd) L.scrollTop=L.scrollHeight; }
+let logKey='';
+function renderLog(){ if(!chat||!chat.transcript) return; const L=$('log'), T=chat.transcript.slice(-120);
+  const key=T.length+'|'+(T.length?T[T.length-1].text:''); if(key===logKey) return; logKey=key;
+  const atEnd=L.scrollTop+L.clientHeight>=L.scrollHeight-40;
+  const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  L.innerHTML=T.map(t=>`<div class="${t.who==='you'?'you':'bot'}"><span class=who>${t.who==='you'?'you':'vibey'}</span> · ${esc(t.text)}</div>`).join('')||'<div class=empty>Say something — the conversation shows up here.</div>';
+  $('logsub').textContent=T.length?T.length+' lines':'';
+  if(atEnd) L.scrollTop=L.scrollHeight; }
 
 // ---- dj -------------------------------------------------------------------
 let dj=null, lastBeat=0, sliding=false;
@@ -361,44 +383,27 @@ $('djslider').oninput=()=>{sliding=true}; $('djslider').onchange=async e=>{ slid
 $('djtrack').onchange=async e=>{ await djp('/load',{track:e.target.value}); djPoll(); };
 
 // ---- memory ---------------------------------------------------------------
-// What each layer remembers, shown only up to the current stage: at stage 1
-// the Mac and the cloud aren't in play, so their memory isn't either.
-// Read-only. /memory never writes anything.
-let mem=null, memStage=null;
-async function memPoll(){ const m=await j('/memory'); if(m){ mem=m; memStage=null; } renderMemory(); }
-function renderMemory(){
-  const stg=(chat&&(want.stage??chat.stage))||3; if(!mem){ return; } if(memStage===stg) return; memStage=stg;
-  const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const row=(l,sm,v,extra)=>`<div class=row><div class=l>${l}${sm?`<small>${sm}</small>`:''}${extra||''}</div><b>${v}</b></div>`;
-  const list=a=>a&&a.length?`<ul class=mlist>${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'';
-  const layer=(n,name,where,body)=>`<div class=layer><h3><span class=n>${n}</span>${name}<span class=where>${where}</span></h3>${body}</div>`;
-  let h='';
-  const r=mem.robot||{};
-  h+=layer(1,'Robot','on the Raspberry Pi', r.online===false?'<div class=sub>robot not answering</div>':r.error?`<div class=sub>${esc(r.error)}</div>`:
-    row('Saved Wi-Fi','networks it rejoins on its own',(r.wifi?.known||[]).length,`<small title="${esc((r.wifi?.known||[]).join(', '))}">on ${esc(r.wifi?.connected||'—')}</small>`)
-   +row('Installed apps','',(r.apps||[]).length,`<small>${esc((r.apps||[]).join(', '))}</small>`)
-   +row('Uploaded sounds','clips cached on the robot',r.sounds??0)
-   +row('Faces','tracks a face, never knows whose','none'));
-  if(stg>=2){ const m=mem.mac||{}, fr=(mem.cloud||{}).supabase||{};
-    h+=layer(2,'Mac','files in ~/dev/vibey-robot', m.error?`<div class=sub>${esc(m.error)}</div>`:
-      row('Friends','recognised here on the Mac',fr.faces??'?',` <span class=tag title="Photos and face embeddings live in Supabase; the Mac matches against them">stored in Supabase</span>`)
-     +row('Taught rules','SKILLS.md · read into every conversation',m.skills?.count??0)+list(m.skills?.recent)
-     +row('Transcripts','transcripts/ · every line, both sides',`${m.transcripts?.lines??0} lines`,`<small>${m.transcripts?.days??0} days · ${esc(m.transcripts?.first||'')} → ${esc(m.transcripts?.last||'')}</small>`)
-     +row('Scribe notes','notes/',m.notes?.count??0,m.notes?.latest?`<small>${esc(m.notes.latest.head)}</small>`:'')
-     +row('Captures','captures/ · clips + timelapses',m.captures??0)
-     +row('Self-portrait','IDENTITY.md · <a href="/about">read it</a>',`${m.identity?.lines??0} lines`)); }
-  if(stg>=3){ const c=mem.cloud||{}, sm=c.supermemory||{}, sb=c.supabase||{};
-    h+=layer(3,'Cloud','hosted, leaves the house', c.error?`<div class=sub>${esc(c.error)}</div>`:
-      (sm.available===false?row('Supermemory','no API key','off'):sm.error?row('Supermemory',esc(sm.error),'?'):
-        row('Conversations','Supermemory · space “'+esc(sm.space)+'” only',sm.count??0)+list((sm.recent||[]).map(x=>x.title+' · '+x.at)))
-     +(sb.available===false?row('Supabase','not configured','off'):
-        row('Face library','Supabase · faces + samples',`${sb.faces??'?'} · ${sb.samples??'?'}`)
-       +row('Journal','Supabase · a paragraph every half hour',sb.journal??'?')+list((sb.journal_recent||[]).slice(0,1).map(x=>x.body+'…')))); }
-  const next={1:'Stage 2 adds what the Mac remembers · stage 3 adds the cloud',2:'Stage 3 adds the cloud: Supermemory + the journal'}[stg];
-  if(next) h+=`<div class=memnext>${next}</div>`;
-  $('memory').innerHTML=h;
-  $('memsub').textContent={1:'robot only',2:'robot + Mac',3:'robot + Mac + cloud'}[stg];
+// One short file per memory in memories/ (GET/POST/DELETE /memories). Edit a
+// line and click away to save; the brain reads these fresh on its next turn.
+const escM=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const memReq=(m,b)=>fetch('/memories',{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined}).then(r=>r.json()).catch(()=>null);
+const grow=t=>{ t.style.height='auto'; t.style.height=t.scrollHeight+2+'px'; };
+async function memPoll(force){
+  const box=$('memory'); if(!force&&box.contains(document.activeElement)) return; // don't redraw mid-edit
+  const d=await memReq('GET'); if(!d||!d.memories){ $('memsub').textContent='offline'; return; }
+  const list=d.memories.slice().reverse();
+  $('memsub').textContent=`${list.length} ${list.length===1?'memory':'memories'} · memories/ on the Mac`;
+  box.innerHTML=list.map(m=>`<div class=mem data-id="${escM(m.id)}"><span class=d>${escM(m.date)}</span><textarea rows=1 aria-label="Memory">${escM(m.text)}</textarea><button class=x title="Delete" aria-label="Delete memory">×</button></div>`).join('')||'<span class=sub>No memories yet. Add one above, or tell Vibey “remember that…”.</span>';
+  box.querySelectorAll('.mem').forEach(row=>{ const t=row.querySelector('textarea'), id=row.dataset.id; let was=t.value; grow(t);
+    t.oninput=()=>grow(t);
+    t.onkeydown=e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); t.blur(); } if(e.key==='Escape'){ t.value=was; grow(t); t.blur(); } };
+    t.onblur=async()=>{ const v=t.value.trim(); if(v===was) return; if(!v){ t.value=was; grow(t); return; }
+      const r=await memReq('POST',{id,text:v}); if(r&&r.ok){ was=v; row.classList.add('saved'); setTimeout(()=>row.classList.remove('saved'),900); } else alert((r&&r.error)||'save failed'); };
+    row.querySelector('.x').onclick=async()=>{ if(!confirm('Delete this memory?\n\n'+was)) return; await memReq('DELETE',{id}); memPoll(true); };
+  });
 }
+$('memadd').onsubmit=async e=>{ e.preventDefault(); const v=$('memnew').value.trim(); if(!v) return;
+  const r=await memReq('POST',{text:v}); if(r&&r.ok){ $('memnew').value=''; memPoll(true); } else alert((r&&r.error)||'add failed'); };
 
-poll(); setInterval(poll,1500); setInterval(renderMemory,1500); memPoll(); setInterval(memPoll,15000); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
+poll(); setInterval(poll,1500); memPoll(true); setInterval(memPoll,15000); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
 </script>
