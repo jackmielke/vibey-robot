@@ -1,0 +1,28 @@
+# Vibey on the robot: dashboard on :8770, opened from a phone at http://<robot>:8770
+# Installed by robot/install.sh into ~/.config/systemd/user/. Niced below the
+# Pollen daemon and CPU-capped so the motor control loop stays at 40Hz or more.
+# CPUQuota is per core (the CM4 has 4, so 400% is the whole board).
+[Unit]
+Description=Vibey viewer: dashboard on :8770, opened from a phone at http://<robot>:8770
+PartOf=vibey.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vibey/app
+EnvironmentFile=%h/vibey/app/robot/robot.env
+Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
+ExecStart=%h/vibey/.venv/bin/python -u reachy_viewer.py
+Restart=always
+RestartSec=5
+Nice=10
+CPUWeight=20
+CPUQuota=20%
+MemoryHigh=212M
+MemoryMax=250M
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=vibey.target

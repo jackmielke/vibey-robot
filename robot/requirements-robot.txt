@@ -1,0 +1,16 @@
+# ~/vibey/.venv on the robot (aarch64, Raspberry Pi OS, Python >= 3.11).
+# Both have prebuilt manylinux aarch64 wheels, so nothing compiles on the CM4.
+#
+# Deliberately NOT here (see ROBOT_NATIVE.md, "ARM and heavy deps"):
+#   faster-whisper / ctranslate2 / onnxruntime-for-whisper  (wake phrase, scribe,
+#       whisper brain: stays on the Mac; clap wake works without it)
+#   torch, mediapipe, opencv (gestures: Mac only)
+#   face_recognition / dlib (faces: dlib builds from source on ARM, ~1h, 1GB+ RAM)
+#   sounddevice (needs PortAudio; the robot never opens a "laptop" mic)
+#
+# reachy_mini + GStreamer come from the Pollen daemon's own interpreter
+# (~/vibey/bin/sdk-python, set up by install.sh), never pip-installed here.
+numpy>=1.26,<3
+# >=14: the voice engines pass additional_headers= (the new asyncio client).
+# The Mac runs 15.0.1.
+websockets>=14,<16

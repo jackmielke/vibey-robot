@@ -1,0 +1,28 @@
+# Vibey on the robot: camera as MJPEG on :8771 from the local camera, fps capped
+# Installed by robot/install.sh into ~/.config/systemd/user/. Niced below the
+# Pollen daemon and CPU-capped so the motor control loop stays at 40Hz or more.
+# CPUQuota is per core (the CM4 has 4, so 400% is the whole board).
+[Unit]
+Description=Vibey camera: camera as MJPEG on :8771 from the local camera, fps capped
+PartOf=vibey.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vibey/app
+EnvironmentFile=%h/vibey/app/robot/robot.env
+Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
+ExecStart=%h/vibey/bin/sdk-python -u reachy_camera.py
+Restart=always
+RestartSec=5
+Nice=10
+CPUWeight=20
+CPUQuota=30%
+MemoryHigh=255M
+MemoryMax=300M
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=vibey.target
