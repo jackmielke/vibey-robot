@@ -25,3 +25,6 @@ transcripts/
 notes/
 .mic_source.json
 .speaker_source.json
+
+# Friends, faces and journal. Private, local only — see reachy_faces_store.py
+data/
