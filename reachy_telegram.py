@@ -327,6 +327,7 @@ GUEST_WELCOME = (
     "hey 👋 i'm vibey, a little robot who lives on jack's desk.\n\n"
     "text me whatever, i'm down to chat. /photo shows you what i'm looking at, "
     "/wave and /whistle and i'll do it in the room.\n\n"
+    "my whole brain is open source: https://github.com/jackmielke/vibey-robot\n\n"
     "if you're cool with me sending you the odd message later, reply YES. "
     "STOP any time and i'll leave you alone."
 )
@@ -1086,6 +1087,89 @@ def _sleep_watcher() -> None:
         was_asleep = now_asleep
 
 
+# ── Group chats ───────────────────────────────────────────────────────────
+# Vibey reads along in groups and answers only when spoken to: an @mention, a
+# reply to one of its messages, or its name in the text. Everything said is
+# kept (last GROUP_KEEP lines per group) so it can bring earlier messages up.
+# Same walled-off guest brain as strangers' DMs: no tools, none of Jack's
+# memory. Telegram only delivers every group message if the bot's privacy
+# mode is OFF (@BotFather → /setprivacy → Disable) or it's a group admin;
+# otherwise it sees just mentions, replies and commands, which still works.
+GROUP_KEEP = 200
+GROUP_CONTEXT_LINES = 30
+GROUP_PER_HOUR = 60
+GROUP_DIR = Path(__file__).parent / ".telegram_groups"
+_group_sent: dict = {}
+_group_lock = threading.Lock()
+
+
+def _group_log(chat_id: int) -> list:
+    try:
+        return json.loads((GROUP_DIR / f"{chat_id}.json").read_text())
+    except Exception:
+        return []
+
+
+def _group_append(chat_id: int, who: str, text: str) -> None:
+    with _group_lock:
+        GROUP_DIR.mkdir(exist_ok=True)
+        log = _group_log(chat_id)
+        log.append({"who": who[:40], "text": text[:600], "ts": int(time.time())})
+        (GROUP_DIR / f"{chat_id}.json").write_text(json.dumps(log[-GROUP_KEEP:]))
+
+
+def _addressed(msg: dict) -> bool:
+    text = (msg.get("text") or "")
+    low = text.lower()
+    handle = (BOT_HANDLE or "vibey_robot").lower()
+    if f"@{handle}" in low or re.search(r"\bvibey\b", low):
+        return True
+    rep = (msg.get("reply_to_message") or {}).get("from") or {}
+    return bool(rep.get("is_bot") and (rep.get("username") or "").lower() == handle)
+
+
+def _handle_group(chat_id: int, msg: dict) -> None:
+    raw = (msg.get("text") or "").strip()
+    frm = msg.get("from") or {}
+    name = frm.get("first_name") or frm.get("username") or "someone"
+    title = msg["chat"].get("title") or "the group chat"
+    _group_append(chat_id, name, raw)
+    if not raw or not _addressed(msg):
+        return
+    low = raw.lower().split("@")[0].strip("/ !.")
+    if raw.startswith("/") and low in ("photo", *ACTIONS):
+        # Reuse the guest rules (rate limits, incognito, Jack pinged).
+        m = dict(msg); m["text"] = "/" + low
+        m["chat"] = dict(msg["chat"], type="private", first_name=name)
+        _handle_guest(chat_id, m)
+        return
+    now = time.time()
+    recent = [t for t in _group_sent.get(chat_id, []) if now - t < 3600]
+    if len(recent) >= GROUP_PER_HOUR:
+        return
+    _group_sent[chat_id] = recent + [now]
+    try:
+        _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+    lines = _group_log(chat_id)[-GROUP_CONTEXT_LINES - 1:-1]
+    context = (f"You're in a Telegram group chat called \"{title}\". Keep replies "
+               "short and group-chat casual; only answer the person talking to you. "
+               "Recent messages, oldest first:\n" +
+               "\n".join(f"{l['who']}: {l['text']}" for l in lines))
+    out = _post_json(f"{CHAT_URL}/ask", {"text": raw[:800], "channel": "guest",
+                                         "chat_id": f"group:{chat_id}", "name": name,
+                                         "context": context[:4000]})
+    reply = (out or {}).get("reply") or "hmm, lost my train of thought"
+    try:
+        _tg("sendMessage", {"chat_id": chat_id, "text": reply,
+                            "reply_to_message_id": msg["message_id"]}, timeout=15)
+    except Exception:  # noqa: BLE001
+        _send(chat_id, reply)
+    _group_append(chat_id, "Vibey", reply)
+    _note_voice_session(raw[:400], reply, who=f"{name} (in the {title} group chat)")
+
+
 def run() -> None:
     global BOT_HANDLE
     if not TOKEN:
@@ -1129,6 +1213,10 @@ def run() -> None:
                 _save_state(st)
                 print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
                 _send(chat_id, "👋 paired! You're my human now.")
+            if msg["chat"].get("type") in ("group", "supergroup"):
+                threading.Thread(target=_handle_group, args=(chat_id, msg),
+                                 daemon=True).start()
+                continue
             if chat_id != st.get("owner"):
                 # Not the owner: a walled-off guest chat, plus consent.
                 threading.Thread(target=_handle_guest, args=(chat_id, msg),

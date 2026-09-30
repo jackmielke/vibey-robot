@@ -1216,7 +1216,7 @@ GUEST_HISTORY: dict = {}
 GUEST_MODEL = os.environ.get("GUEST_MODEL", "gpt-5.5")
 
 
-def _guest_turn(text: str, chat_id: str, name: str) -> str:
+def _guest_turn(text: str, chat_id: str, name: str, context: str = "") -> str:
     # A plain OpenAI chat call, NOT the Claude CLI: the CLI loads Jack's
     # CLAUDE.md and memory files, and a stranger must never be one prompt away
     # from those. This call has no tools and sees nothing but what is here.
@@ -1227,6 +1227,8 @@ def _guest_turn(text: str, chat_id: str, name: str) -> str:
     # Same character as the voice and Jack's texts, none of Jack's context:
     # no lessons, no tools, no shared conversation. See reachy_brain.
     system = reachy_brain.guest_instructions(name)
+    if context:
+        system += "\n\n" + context[:4000]
     reachy_brain.record("human", text[:800], "guest", speaker=f"{name[:40]}")
     try:
         req = urllib.request.Request(
@@ -1460,7 +1462,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     raise ValueError("text required")
                 if body.get("channel") == "guest":
                     reply = _guest_turn(text, str(body.get("chat_id")),
-                                        str(body.get("name") or "someone"))
+                                        str(body.get("name") or "someone"),
+                                        str(body.get("context") or ""))
                 elif body.get("channel") == "telegram":
                     reply = _owner_text_turn(text, str(body.get("name") or "Jack"))
                 else:
