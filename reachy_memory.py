@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-reachy_memory.py — Vibey remembers faces (Supabase-backed).
+reachy_memory.py — Vibey remembers faces (stored locally, data/vibey.db).
 
 Polls the camera on a fixed interval, detects *every* face in frame (not just
 one), and checks each against everyone Vibey already knows — so two people
@@ -34,8 +34,8 @@ Requires (one-time):
 Config (from .env / environment):
     REACHY_URL       default http://192.168.1.120:8000
     CAM_URL          default http://localhost:8771   (reachy_camera.py MJPEG server)
-    SUPABASE_URL     required  e.g. https://xxxx.supabase.co
-    SUPABASE_KEY     required  service-role key (server-side use)
+    (storage)        local only: reachy_faces_store.py -> data/vibey.db +
+                     data/snapshots/. Supabase is not used for faces any more.
     MATCH_TOLERANCE  default 0.58  (lower = stricter match; measured gap
                                     between same-person and different-person
                                     distances sits around 0.57–0.62)
@@ -49,7 +49,7 @@ Config (from .env / environment):
     MIN_BLUR_VAR     default 45    (enrollment quality gate: reject faces
                                     blurrier than this Laplacian variance)
     SAMPLES_CACHE_TTL default 20   (seconds the in-memory face gallery is
-                                    reused before refetching from Supabase)
+                                    reused before re-reading the local DB)
 
 Name someone Wonder has met:
     python3 reachy_memory.py --name <face_id> "Jack"
@@ -108,8 +108,7 @@ def _realtime_has_the_floor() -> bool:
         return bool(st.get("openai") or st.get("asleep"))
     except Exception:
         return False
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+import reachy_faces_store as store  # faces, samples, journal: local SQLite
 # 0.50, not 0.58. Measured against every sample in the database, using the live
 # rule (nearest sample across everyone):
 #
@@ -198,47 +197,15 @@ def _current_people_fresh() -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
-# Supabase REST (PostgREST) — no supabase-py dependency                        #
+# Storage: local SQLite + JPEG files (reachy_faces_store, data/vibey.db).      #
+# Moved off Supabase 2026-09-30; nothing here touches the network any more.   #
 # --------------------------------------------------------------------------- #
-def _sb_headers(extra: dict | None = None) -> dict:
-    h = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-    }
-    if extra:
-        h.update(extra)
-    return h
-
-
 def sb_get_faces() -> list[dict]:
-    """Everyone Wonder knows, id/name/times_seen only (no samples)."""
-    url = f"{SUPABASE_URL}/rest/v1/faces?select=id,name,times_seen,snapshot"
-    req = urllib.request.Request(url, headers=_sb_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read() or b"[]")
+    return store.get_faces()
 
 
 def sb_get_samples() -> list[dict]:
-    """Every embedding sample, each tagged with its person's id/name — the
-    full "face model" used for matching."""
-    url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-           "?select=id,face_id,embedding,created_at,faces(name,times_seen)")
-    req = urllib.request.Request(url, headers=_sb_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        rows = json.loads(r.read() or b"[]")
-    out = []
-    for row in rows:
-        person = row.get("faces") or {}
-        out.append({
-            "sample_id": row["id"],
-            "face_id": row["face_id"],
-            "embedding": row.get("embedding"),
-            "created_at": row.get("created_at"),
-            "name": person.get("name"),
-            "times_seen": person.get("times_seen", 1),
-        })
-    return out
+    return store.get_samples()
 
 
 # The full "face model" is small enough to hold in memory. Refetching every
@@ -291,116 +258,31 @@ def _invalidate_samples_cache() -> None:
 
 
 def sb_insert_face(snapshot: str) -> dict:
-    """Create a new person identity (no embedding — samples live separately)."""
-    url = f"{SUPABASE_URL}/rest/v1/faces"
-    body = json.dumps({"snapshot": snapshot}).encode()
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers=_sb_headers({"Prefer": "return=representation"}))
-    with urllib.request.urlopen(req, timeout=10) as r:
-        rows = json.loads(r.read() or b"[]")
-        return rows[0] if rows else {}
+    return store.insert_face(snapshot)
 
 
 def sb_add_sample(face_id: str, embedding: list[float], snapshot: str) -> None:
-    """Bank a new embedding sample for a person, capped at MAX_SAMPLES (drops
-    the oldest sample first if already at the cap)."""
-    url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-           f"?face_id=eq.{face_id}&select=id,created_at&order=created_at.asc")
-    req = urllib.request.Request(url, headers=_sb_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        existing = json.loads(r.read() or b"[]")
-    if len(existing) >= MAX_SAMPLES:
-        oldest_id = existing[0]["id"]
-        del_req = urllib.request.Request(
-            f"{SUPABASE_URL}/rest/v1/face_samples?id=eq.{oldest_id}",
-            method="DELETE", headers=_sb_headers({"Prefer": "return=minimal"}))
-        urllib.request.urlopen(del_req, timeout=10).read()
-
-    body = json.dumps({
-        "face_id": face_id, "embedding": embedding, "snapshot": snapshot,
-    }).encode()
-    ins_req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/face_samples", data=body, method="POST",
-        headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(ins_req, timeout=10).read()
+    store.add_sample(face_id, embedding, snapshot, MAX_SAMPLES)
 
 
 def sb_touch_face(face_id: str, times_seen: int) -> None:
-    url = f"{SUPABASE_URL}/rest/v1/faces?id=eq.{face_id}"
-    body = json.dumps({
-        "times_seen": times_seen + 1,
-        "last_seen": datetime.now(timezone.utc).isoformat(),
-    }).encode()
-    req = urllib.request.Request(url, data=body, method="PATCH",
-                                 headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(req, timeout=10).read()
+    store.touch_face(face_id, times_seen)
 
 
 def sb_name_face(face_id: str, name: str) -> None:
-    url = f"{SUPABASE_URL}/rest/v1/faces?id=eq.{face_id}"
-    body = json.dumps({"name": name}).encode()
-    req = urllib.request.Request(url, data=body, method="PATCH",
-                                 headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(req, timeout=10).read()
+    store.name_face(face_id, name)
 
 
 def sb_delete_face(face_id: str) -> None:
-    """Forget a person entirely — their face_samples go too (FK cascade)."""
-    url = f"{SUPABASE_URL}/rest/v1/faces?id=eq.{face_id}"
-    req = urllib.request.Request(url, method="DELETE",
-                                 headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(req, timeout=10).read()
+    store.delete_face(face_id)
 
 
 def sb_find_face_by_name(name: str) -> dict | None:
-    url = (f"{SUPABASE_URL}/rest/v1/faces"
-           f"?name=eq.{urllib.parse.quote(name)}&select=id,name,times_seen&limit=1")
-    req = urllib.request.Request(url, headers=_sb_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        rows = json.loads(r.read() or b"[]")
-    return rows[0] if rows else None
+    return store.find_face_by_name(name)
 
 
 def sb_merge_faces(src_id: str, dst_id: str) -> None:
-    """Fold identity src into dst: samples move over, sighting counts add up,
-    src disappears. Used when a face gets named after someone who already
-    exists — same name means same person, one identity, many photos."""
-    # move all samples
-    body = json.dumps({"face_id": dst_id}).encode()
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/face_samples?face_id=eq.{src_id}",
-        data=body, method="PATCH",
-        headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(req, timeout=10).read()
-
-    # add sighting counts
-    def _times(fid):
-        u = f"{SUPABASE_URL}/rest/v1/faces?id=eq.{fid}&select=times_seen"
-        rq = urllib.request.Request(u, headers=_sb_headers())
-        with urllib.request.urlopen(rq, timeout=10) as r:
-            rows = json.loads(r.read() or b"[]")
-        return rows[0]["times_seen"] if rows else 0
-    total = _times(src_id) + _times(dst_id)
-    body = json.dumps({"times_seen": total}).encode()
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/faces?id=eq.{dst_id}", data=body, method="PATCH",
-        headers=_sb_headers({"Prefer": "return=minimal"}))
-    urllib.request.urlopen(req, timeout=10).read()
-
-    sb_delete_face(src_id)
-
-    # merged person may now exceed the sample cap — trim oldest
-    url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-           f"?face_id=eq.{dst_id}&select=id,created_at&order=created_at.asc")
-    req = urllib.request.Request(url, headers=_sb_headers())
-    with urllib.request.urlopen(req, timeout=10) as r:
-        rows = json.loads(r.read() or b"[]")
-    for row in rows[:-MAX_SAMPLES] if len(rows) > MAX_SAMPLES else []:
-        dreq = urllib.request.Request(
-            f"{SUPABASE_URL}/rest/v1/face_samples?id=eq.{row['id']}",
-            method="DELETE", headers=_sb_headers({"Prefer": "return=minimal"}))
-        urllib.request.urlopen(dreq, timeout=10).read()
+    store.merge_faces(src_id, dst_id, MAX_SAMPLES)
 
 
 # --------------------------------------------------------------------------- #
@@ -655,11 +537,7 @@ def _auto_merge_pass(verbose: bool = False) -> int:
 def _auto_prune_pass() -> int:
     """Delete unnamed one-sighting identities not seen in AUTO_PRUNE_DAYS."""
     try:
-        url = (f"{SUPABASE_URL}/rest/v1/faces"
-               "?select=id,name,times_seen,last_seen")
-        req = urllib.request.Request(url, headers=_sb_headers())
-        with urllib.request.urlopen(req, timeout=10) as r:
-            faces = json.loads(r.read() or b"[]")
+        faces = store.faces_for_prune()
     except Exception:
         return 0
     from datetime import datetime as _dt, timezone as _tz
@@ -695,9 +573,9 @@ def _maybe_auto_merge() -> None:
 
 # --------------------------------------------------------------------------- #
 # Shared journal: every ~30 min with activity, the robot writes a short
-# first-person entry into vibey_journal_entries — the same diary the
-# Telegram Vibey keeps — so both Vibeys share one memory. Rows are tagged
-# source_summary='reachy-robot' (that's what the RLS policy allows).
+# first-person entry into the local journal table (data/vibey.db). Until
+# 2026-09-30 this went to Supabase vibey_journal_entries, shared with the
+# Telegram Vibey; it is private and local now.
 # --------------------------------------------------------------------------- #
 JOURNAL_COMMUNITY = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 JOURNAL_EVERY_S = 1800.0
@@ -735,17 +613,7 @@ def _journal_flush() -> None:
     if not body:
         body = f"Robot log: {facts}"
     try:
-        req = urllib.request.Request(
-            f"{SUPABASE_URL}/rest/v1/vibey_journal_entries",
-            data=json.dumps({
-                "community_id": JOURNAL_COMMUNITY,
-                "source_summary": "reachy-robot",
-                "body": body,
-                "message_count": _journal["count"],
-            }).encode(),
-            method="POST",
-            headers=_sb_headers({"Prefer": "return=minimal"}))
-        urllib.request.urlopen(req, timeout=10).read()
+        store.add_journal(body, _journal["count"], "reachy-robot", JOURNAL_COMMUNITY)
         print(f"[memory] journaled: {body[:80]!r}", flush=True)
     except Exception as e:
         print(f"[memory] journal failed: {e}", flush=True)
@@ -908,12 +776,7 @@ class _MemHandler(BaseHTTPRequestHandler):
                 face_id = (q.get("face_id") or [""])[0]
                 if not face_id:
                     raise ValueError("face_id required")
-                url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-                       f"?face_id=eq.{face_id}"
-                       "&select=id,snapshot,created_at&order=created_at.desc")
-                req = urllib.request.Request(url, headers=_sb_headers())
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    self._json(json.loads(r.read() or b"[]"))
+                self._json(store.samples_for(face_id))
             except Exception as e:
                 self._json({"error": str(e)}, 500)
         elif self.path.startswith("/people"):
@@ -921,11 +784,7 @@ class _MemHandler(BaseHTTPRequestHandler):
                 faces = sb_get_faces()
                 # sample photos (no embeddings — keep the payload sane):
                 # newest first, up to 3 shown per person as a photo clump
-                url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-                       "?select=face_id,snapshot,created_at&order=created_at.desc")
-                req = urllib.request.Request(url, headers=_sb_headers())
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    all_samples = json.loads(r.read() or b"[]")
+                all_samples = store.all_sample_photos()
                 counts: dict[str, int] = {}
                 photos: dict[str, list] = {}
                 for s in all_samples:
@@ -1034,26 +893,13 @@ class _MemHandler(BaseHTTPRequestHandler):
                 sample_id = body.get("sample_id")
                 if not sample_id:
                     raise ValueError("sample_id required")
-                url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-                       f"?id=eq.{sample_id}&select=face_id")
-                req = urllib.request.Request(url, headers=_sb_headers())
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    rows = json.loads(r.read() or b"[]")
-                if not rows:
+                face_id = store.sample_face(sample_id)
+                if not face_id:
                     raise ValueError("sample not found")
-                face_id = rows[0]["face_id"]
-                cnt_url = (f"{SUPABASE_URL}/rest/v1/face_samples"
-                           f"?face_id=eq.{face_id}&select=id")
-                req = urllib.request.Request(cnt_url, headers=_sb_headers())
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    total = len(json.loads(r.read() or b"[]"))
+                total = store.count_samples(face_id)
                 if total <= 1:
                     raise ValueError("last photo — delete the person instead")
-                dreq = urllib.request.Request(
-                    f"{SUPABASE_URL}/rest/v1/face_samples?id=eq.{sample_id}",
-                    method="DELETE",
-                    headers=_sb_headers({"Prefer": "return=minimal"}))
-                urllib.request.urlopen(dreq, timeout=10).read()
+                store.delete_sample(sample_id)
                 _invalidate_samples_cache()
                 print(f"[memory] deleted sample {sample_id} of {face_id}", flush=True)
                 self._json({"ok": True, "remaining": total - 1})
@@ -1089,13 +935,9 @@ def _start_mem_server():
 # Main loop                                                                    #
 # --------------------------------------------------------------------------- #
 def run():
-    if not (SUPABASE_URL and SUPABASE_KEY):
-        print("[memory] SUPABASE_URL / SUPABASE_KEY not set — fill them in .env "
-              "and run reachy_sql/faces.sql on your project first.", flush=True)
-        sys.exit(1)
     _start_mem_server()
     print(f"[memory] watching for faces (multi-face, {POLL_INTERVAL}s poll) "
-          f"· supabase={SUPABASE_URL} "
+          f"· local db={store.DB_PATH} ({store.counts()['faces']} friends) "
           f"· match<={MATCH_TOLERANCE} learn<={LEARN_TOLERANCE}", flush=True)
     last_greet: dict[str, float] = {}
     last_learn: dict[str, float] = {}
@@ -1118,7 +960,7 @@ def run():
         try:
             samples = get_samples_cached()
         except Exception as e:
-            print(f"[memory] supabase read failed: {e}", flush=True)
+            print(f"[memory] face db read failed: {e}", flush=True)
             time.sleep(2)
             continue
 
@@ -1200,7 +1042,7 @@ def run():
                     print(f"[memory] NEW face stored: {fid}", flush=True)
                     to_greet.append((fid, "__new__"))
                 except Exception as e:
-                    print(f"[memory] supabase insert failed: {e}", flush=True)
+                    print(f"[memory] face db insert failed: {e}", flush=True)
 
         _set_current_people(seen_now)
         for p in seen_now:

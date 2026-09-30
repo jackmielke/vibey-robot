@@ -121,10 +121,9 @@ _PEOPLE_CACHE: dict = {"at": 0.0, "data": None}
 #   robot  the Pi's own daemon: saved Wi-Fi, installed apps, uploaded sounds.
 #          Its face tracking follows *a* face and remembers nobody.
 #   mac    files in this repo: SKILLS.md, transcripts/, notes/, captures/,
-#          IDENTITY.md, alarms.json.
-#   cloud  Supermemory (space `vibey` only) and Supabase (faces, samples,
-#          journal). Faces are matched on the Mac but STORED in Supabase —
-#          the panel says so rather than pretending they are local.
+#          IDENTITY.md, alarms.json, and data/vibey.db (friends, face
+#          samples, journal — local since 2026-09-30, reachy_faces_store).
+#   cloud  Supermemory (space `vibey` only).
 # --------------------------------------------------------------------------- #
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MEM_CACHE: dict = {"robot": (0.0, None), "mac": (0.0, None), "cloud": (0.0, None)}
@@ -205,7 +204,18 @@ def _mem_mac() -> dict:
         "captures": len(caps),
         "alarms": alarms,
         "identity": {"lines": len(ident)},
+        "faces": _mem_faces(),
     }
+
+
+def _mem_faces() -> dict:
+    try:
+        import reachy_faces_store as fs
+        n = fs.counts()
+        return {"friends": n["faces"], "samples": n["face_samples"],
+                "journal": n["journal"], "journal_recent": fs.recent_journal(2)}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160]}
 
 
 def _mem_cloud() -> dict:
@@ -229,41 +239,6 @@ def _mem_cloud() -> dict:
             }
         except Exception as e:  # noqa: BLE001
             out["supermemory"] = {"available": True, "space": sm.SPACE, "error": str(e)[:160]}
-    # Supabase — faces, samples, the half-hourly journal. HEAD-style counts.
-    url, key = os.environ.get("SUPABASE_URL", "").rstrip("/"), os.environ.get("SUPABASE_KEY", "")
-    if not (url and key):
-        out["supabase"] = {"available": False}
-        return out
-
-    def _count(table: str, q: str = "") -> int | None:
-        req = urllib.request.Request(
-            f"{url}/rest/v1/{table}?select=id{q}&limit=1",
-            headers={"apikey": key, "Authorization": f"Bearer {key}", "Prefer": "count=exact"})
-        try:
-            with urllib.request.urlopen(req, timeout=6.0) as r:
-                rng = r.headers.get("Content-Range") or ""
-                return int(rng.split("/")[-1]) if "/" in rng and rng.split("/")[-1].isdigit() else None
-        except Exception:  # noqa: BLE001
-            return None
-
-    journal = []
-    try:
-        req = urllib.request.Request(
-            f"{url}/rest/v1/vibey_journal_entries?select=body,created_at"
-            "&source_summary=eq.reachy-robot&order=created_at.desc&limit=2",
-            headers={"apikey": key, "Authorization": f"Bearer {key}"})
-        with urllib.request.urlopen(req, timeout=6.0) as r:
-            journal = [{"body": (j.get("body") or "")[:240], "at": (j.get("created_at") or "")[:16]}
-                       for j in json.loads(r.read() or b"[]")]
-    except Exception:  # noqa: BLE001
-        pass
-    out["supabase"] = {
-        "available": True,
-        "faces": _count("faces"),
-        "samples": _count("face_samples"),
-        "journal": _count("vibey_journal_entries", "&source_summary=eq.reachy-robot"),
-        "journal_recent": journal,
-    }
     return out
 
 

@@ -27,3 +27,6 @@ notes/
 .speaker_source.json
 .volume_state.json
 .telegram_groups/
+
+# Friends, faces and journal. Private, local only — see reachy_faces_store.py
+data/
