@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -52,6 +53,21 @@ CHAT_URL = os.environ.get("CHAT_URL", "http://localhost:8772").rstrip("/")
 # Face-memory control API served by reachy_memory.py.
 MEM_URL = os.environ.get("MEM_URL", "http://localhost:8773").rstrip("/")
 PORT = int(os.environ.get("PORT", "8770"))
+ON_ROBOT = os.environ.get("VIBEY_ON_ROBOT", "").strip() == "1"
+
+
+def _for_browser(url: str, handler) -> str:
+    """A URL the BROWSER can reach. On the Mac the browser runs on the same
+    machine, so localhost is right. On the robot the dashboard is opened from a
+    phone or laptop, where "localhost" is that device: swap in the host the
+    page itself was loaded from."""
+    if not ON_ROBOT:
+        return url
+    host = (handler.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+    if not host:
+        return url
+    return re.sub(r"^(https?://)(localhost|127\.0\.0\.1)(?=[:/]|$)",
+                  lambda m: m.group(1) + host, url)
 
 
 def _get(url: str, timeout: float = 3.0):
@@ -2200,6 +2216,7 @@ class Handler(BaseHTTPRequestHandler):
             # request, and this app makes ~30 of them a second.
             host = os.environ.get("REACHY_HOST", "").strip()
             url = f"http://{host}:8000" if host else REACHY_URL
+            url = _for_browser(url, self)
             self._send(json.dumps({"url": url}).encode(), "application/json")
         elif self.path.split("?", 1)[0] == "/mimic":
             # Redirect to the trailing slash, or every relative href in
@@ -2299,9 +2316,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(_get(f"{CHAT_URL}/cost", timeout=4.0) or {}).encode(), "application/json")
         elif self.path == "/full" or self.path.startswith("/index"):
             html = (PAGE
-                    .replace("%REACHY%", json.dumps(REACHY_URL))
+                    .replace("%REACHY%", json.dumps(_for_browser(REACHY_URL, self)))
                     .replace("%HANDSFREE%", json.dumps(HANDSFREE_URL))
-                    .replace("%CAM%", json.dumps(CAM_URL)))
+                    .replace("%CAM%", json.dumps(_for_browser(CAM_URL, self))))
             self._send(html.encode(), "text/html; charset=utf-8")
         else:
             self.send_response(404)

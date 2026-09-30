@@ -299,6 +299,9 @@ class WakeListener(threading.Thread):
         self.last_score = 0.0
         self._pcm_for_phrase = bytearray()
         self._model = None
+        # The robot build ships without faster-whisper (too heavy for the CM4),
+        # so there the phrase half switches itself off once and claps carry on.
+        self._no_whisper = False
 
     # --- the phrase half -------------------------------------------------
 
@@ -306,7 +309,13 @@ class WakeListener(threading.Thread):
         """Loaded lazily and once: importing faster-whisper costs seconds, and a
         robot that is only ever clapped at should not pay for it."""
         if self._model is None:
-            from faster_whisper import WhisperModel
+            try:
+                from faster_whisper import WhisperModel
+            except ImportError:
+                self._no_whisper = True
+                self.log("[wake] faster-whisper not installed: 'hey vibey' off, "
+                         "clap-clap still wakes")
+                raise
             # base.en, not tiny.en. tiny is what turned "hey vibey" into "hey, if
             # I be" — the fuzzy matcher rescues that, but a model that hears the
             # name is better than a matcher that forgives it not being heard.
@@ -388,7 +397,7 @@ class WakeListener(threading.Thread):
                                          f"(peak {peak:.3f}, needs {self.clap.threshold:.3f}, "
                                          f"room {self.clap.background:.4f})")
 
-                        if self.phrase_enabled():
+                        if self.phrase_enabled() and not self._no_whisper:
                             self._pcm_for_phrase += raw
                             if len(self._pcm_for_phrase) >= window:
                                 buf = bytes(self._pcm_for_phrase)

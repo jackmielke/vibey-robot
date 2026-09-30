@@ -46,7 +46,17 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
-import sounddevice as sd
+
+# On the robot (VIBEY_ON_ROBOT=1) there is no laptop mic or speaker to open, and
+# PortAudio is not installed; everything goes through the local mic bridge and
+# the daemon. sounddevice is only ever touched on the "laptop" paths.
+ON_ROBOT = os.environ.get("VIBEY_ON_ROBOT", "").strip() == "1"
+try:
+    import sounddevice as sd
+except (ImportError, OSError):
+    if not ON_ROBOT:
+        raise
+    sd = None
 
 import reachy_denoise
 from reachy_voice import load_env, say, upload_sound, play_sound
@@ -97,6 +107,11 @@ try:
         os.environ["SPEAKER_SOURCE"] = _pref
 except Exception:  # noqa: BLE001
     pass
+if ON_ROBOT:
+    # On the robot "robot" is the only mic and speaker there is; a stale
+    # "laptop" preference must not send the voice engines to PortAudio.
+    os.environ["MIC_SOURCE"] = "robot"
+    os.environ["SPEAKER_SOURCE"] = "robot"
 MIC_SOURCE = os.environ.get("MIC_SOURCE", "robot").strip().lower()
 ROBOT_MIC_URL = os.environ.get("ROBOT_MIC_URL", "http://localhost:8775").rstrip("/")
 
@@ -2227,6 +2242,8 @@ def set_mic_source(src: str) -> str:
     global MIC_SOURCE
     if src not in ("robot", "laptop"):
         raise ValueError("mic is robot or laptop")
+    if ON_ROBOT and src != "robot":
+        raise ValueError("running on the robot: its own mic is the only one")
     with open(MIC_PREF_PATH, "w") as f:
         json.dump({"source": src}, f)
     MIC_SOURCE = src
@@ -2251,6 +2268,8 @@ def set_speaker_source(src: str) -> str:
     no session restart is needed."""
     if src not in ("robot", "laptop"):
         raise ValueError("speaker is robot or laptop")
+    if ON_ROBOT and src != "robot":
+        raise ValueError("running on the robot: its own speaker is the only one")
     with open(SPEAKER_PREF_PATH, "w") as f:
         json.dump({"source": src}, f)
     os.environ["SPEAKER_SOURCE"] = src

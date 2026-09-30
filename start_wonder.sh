@@ -80,17 +80,28 @@ fi
 stop_all >/dev/null 2>&1
 sleep 1
 
-reachy_env/bin/python3 reachy_camera.py  > /tmp/reachy_camera.log 2>&1 &
-python3                reachy_viewer.py  > /tmp/reachy_viewer.log 2>&1 &
-.venv/bin/python3      reachy_chat.py    > /tmp/reachy_chat.log   2>&1 &
-reachy_env/bin/python3 reachy_robot_mic.py > /tmp/reachy_robot_mic.log 2>&1 &
-reachy_env/bin/python3 reachy_memory.py  > /tmp/reachy_memory.log 2>&1 &
+# Services that have moved onto the robot itself (robot/deploy.sh writes this
+# file; see ROBOT_NATIVE.md). The Mac must not start its own copy. No file =
+# everything starts here, exactly as before.
+ROBOT_OWNS=" $(grep -v '^#' .robot_services 2>/dev/null | tr '\n' ' ') "
+here() { [[ "$ROBOT_OWNS" != *" $1 "* ]]; }
+[[ -n "${ROBOT_OWNS// /}" ]] && echo "on the robot, not here:${ROBOT_OWNS% }"
+# Mac-side services that talk to a moved one follow it to the robot.
+here chat   || export CHAT_URL="http://${REACHY_HOST}:8772"
+here camera || export CAM_URL="http://${REACHY_HOST}:8771"
+here memory || export MEM_URL="http://${REACHY_HOST}:8773"
+
+here camera    && reachy_env/bin/python3 reachy_camera.py  > /tmp/reachy_camera.log 2>&1 &
+here viewer    && python3                reachy_viewer.py  > /tmp/reachy_viewer.log 2>&1 &
+here chat      && .venv/bin/python3      reachy_chat.py    > /tmp/reachy_chat.log   2>&1 &
+here robot_mic && reachy_env/bin/python3 reachy_robot_mic.py > /tmp/reachy_robot_mic.log 2>&1 &
+here memory    && reachy_env/bin/python3 reachy_memory.py  > /tmp/reachy_memory.log 2>&1 &
 python3                reachy_vibeverse.py > /tmp/vibeverse.log     2>&1 &
-python3                reachy_telegram.py  > /tmp/telegram.log      2>&1 &
+here telegram  && python3                reachy_telegram.py  > /tmp/telegram.log      2>&1 &
 # Gesture bridge mirrors your handsfree session onto the robot's body —
 # fun for parties, twitchy as an always-on behavior. Opt in with BRIDGE=1.
 [[ "$BRIDGE" == "1" ]] && NO_WAKE=1 python3 reachy_bridge.py > /tmp/reachy_bridge.log 2>&1 &
-python3                reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
+here alarm     && python3                reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
 reachy_env/bin/python3 reachy_dj.py        > /tmp/reachy_dj.log     2>&1 &   # music + beat-synced dancing
 # Gesture watcher: waves back at you. Its own venv on purpose — mediapipe pins
 # numpy<2 and the robot SDK needs numpy>=2.2.5, so they cannot share one.
@@ -102,9 +113,11 @@ pgrep -x caffeinate >/dev/null || (caffeinate -dims > /dev/null 2>&1 &)   # alar
 echo "starting… (camera takes ~10s to negotiate WebRTC)"
 sleep 12
 
-ok=0
+ok=0; want=0
 for svc in "8771/status camera" "8770/perception viewer" "8772/state chat" "8773/current memory"; do
   port_path="${svc%% *}"; name="${svc##* }"
+  here "$name" || continue
+  want=$((want+1))
   # Retry rather than probe once: the camera's WebRTC handshake regularly
   # finishes a few seconds after the fixed sleep above, which used to report a
   # scary "❌ camera" for a service that was actually mid-negotiation and came
@@ -123,5 +136,6 @@ for svc in "8771/status camera" "8770/perception viewer" "8772/state chat" "8773
 done
 
 echo
-[[ $ok -eq 4 ]] && echo "🤖 Wonder is up → http://localhost:8770" \
-                || echo "partial start ($ok/4) — check logs above"
+dash="http://localhost:8770"; here viewer || dash="http://${REACHY_HOST}:8770"
+[[ $ok -eq $want ]] && echo "🤖 Wonder is up → $dash" \
+                    || echo "partial start ($ok/$want): check logs above"

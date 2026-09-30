@@ -25,3 +25,6 @@ transcripts/
 notes/
 .mic_source.json
 .speaker_source.json
+
+# Which services now run on the robot itself (robot/deploy.sh). Mac-local state.
+.robot_services
