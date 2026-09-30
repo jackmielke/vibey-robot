@@ -1128,6 +1128,28 @@ SUPERMEMORY_RECALL = os.environ.get("VIBEY_SUPERMEMORY_RECALL") == "1"
 if not SUPERMEMORY_RECALL:
     TOOLS = [t for t in TOOLS if t.get("name") != "recall"]
 
+# Self-coding is off unless asked for. It kept overhearing Jack dictating to
+# Claude Code on the Mac, spawning its own jobs on the same files, and those
+# jobs mostly failed anyway. Code changes come from Jack, not from the room.
+CODING_ENABLED = os.environ.get("VIBEY_CODING") == "1"
+if not CODING_ENABLED:
+    TOOLS = [t for t in TOOLS if t.get("name") not in ("improve_yourself", "check_progress")]
+    _code_start = DEFAULT_INSTRUCTIONS.find("You can also CHANGE YOUR OWN CODE.")
+    _code_end = DEFAULT_INSTRUCTIONS.find("\n\n", _code_start)
+    if _code_start != -1 and _code_end != -1:
+        DEFAULT_INSTRUCTIONS = (
+            DEFAULT_INSTRUCTIONS[:_code_start]
+            + "You do NOT change your own code, and you never hand work to a coding "
+              "agent or to Claude Code. People near you are often talking to their "
+              "own computer, not to you: ignore requests about code, apps or slides "
+              "unless they clearly address you by name. If someone asks you to learn "
+              "a trick or fix how you work, say Jack handles code changes and offer "
+              "to `remember` the idea for him."
+            + DEFAULT_INSTRUCTIONS[_code_end:])
+    DEFAULT_INSTRUCTIONS = DEFAULT_INSTRUCTIONS.replace(
+        "Prefer `remember` for facts, `improve_yourself` for behaviour.",
+        "Use `remember` for facts and preferences.")
+
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://localhost:8773").rstrip("/")
 
 # Incognito, as the brain sees it. The flag itself lives in reachy_memory (it
