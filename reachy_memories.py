@@ -11,7 +11,7 @@ first syncs with the robot (Mac edits made while it was offline go up, then
 the robot's copy comes down), every edit is pushed straight to it, and if the
 robot is unreachable everything keeps working from the cache.
 
-File format: `memories/<YYYY-MM-DD>-<slug>.md`, the body is the memory text.
+File format: `memories/<YYYY-MM-DD>-<HHMM>-<slug>.md` (older files have no HHMM), the body is the memory text.
 Hand-editable in any editor; a blank file is ignored.
 """
 from __future__ import annotations
@@ -88,10 +88,19 @@ def list_all() -> list[dict]:
             continue
         if not text:
             continue
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})", p.name)
-        out.append({"id": p.name, "text": text,
-                    "date": m.group(1) if m else "",
-                    "mtime": p.stat().st_mtime})
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})(?:-(\d{2})(\d{2})(?=-))?", p.name)
+        mtime = p.stat().st_mtime
+        day = m.group(1) if m else ""
+        if m and m.group(2):
+            hhmm = f"{m.group(2)}:{m.group(3)}"
+        elif day and time.strftime("%Y-%m-%d", time.localtime(mtime)) == day:
+            # Older files have no time in the name; the file's own timestamp
+            # is trustworthy only when it's from the same day as the name.
+            hhmm = time.strftime("%H:%M", time.localtime(mtime))
+        else:
+            hhmm = ""
+        out.append({"id": p.name, "text": text, "day": day, "time": hhmm,
+                    "date": f"{day} {hhmm}".strip(), "mtime": mtime})
     out.sort(key=lambda m: (m["id"][:10] if m["date"] else "9999", m["mtime"], m["id"]))
     return out
 
@@ -117,7 +126,7 @@ def add(text: str, date: str | None = None) -> dict:
         raise ValueError("empty memory")
     DIR.mkdir(parents=True, exist_ok=True)
     date = date or time.strftime("%Y-%m-%d")
-    base = f"{date}-{_slug(text)}"
+    base = f"{date}-{time.strftime('%H%M')}-{_slug(text)}"
     p, n = DIR / f"{base}.md", 2
     while p.exists():
         p, n = DIR / f"{base}-{n}.md", n + 1
