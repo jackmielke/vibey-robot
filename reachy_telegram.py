@@ -358,6 +358,11 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
     if low == "start":
         _send(chat_id, GUEST_WELCOME)
         return
+    st = _state()
+    g = st.setdefault("guests", {})
+    if g.get(str(chat_id)) != name:
+        g[str(chat_id)] = name
+        _save_state(st)
     pend = d["pending"].get(str(chat_id)) or {"name": name}
     if low in ("yes", "y", "yes please", "i consent", "start yes"):
         pend["consented"] = True
@@ -368,6 +373,13 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
         if owner:
             _send(owner, f"✅ {name} consented to being texted by me.\n"
                          f"Approve with:  /allow {chat_id} <nickname>")
+        return
+    if low == "photo" and not _state().get("guest_photos", False):
+        # Off by default since 2026-09-30: people at a demo realised they could
+        # photograph Jack's room any time. Jack turns it on with /guestphotos on.
+        _send(chat_id, "photos are just for jack rn 🙈")
+        if owner:
+            _send(owner, f"🙈 blocked a /photo from {name}. /guestphotos on to allow")
         return
     if low == "photo":
         # Anyone can peek, but it's Jack's room: rate limited, never while
@@ -630,6 +642,36 @@ def _handle(chat_id: int, text: str) -> None:
               "/proactive on|off — whether I start conversations or only reply\n"
               "/cost — what I've cost you today\n"
               "/verse — what's happening in my VibeVerse lobby")
+        return
+    if low.startswith("/guestphotos"):
+        st = _state()
+        arg = low.replace("/guestphotos", "").strip()
+        if arg in ("on", "off"):
+            st["guest_photos"] = arg == "on"
+            _save_state(st)
+        _send(chat_id, f"guest /photo is {'ON 📸' if st.get('guest_photos') else 'OFF 🙈'}")
+        return
+    if low.startswith("/guests"):
+        g = _state().get("guests", {})
+        _send(chat_id, "people who've texted me:\n" + "\n".join(sorted(set(g.values())))
+              if g else "nobody yet")
+        return
+    if low.startswith("/tell "):
+        # /tell Sam this is hilarious  ->  Sam gets "jack says: this is hilarious"
+        parts = text.split(None, 2)
+        if len(parts) < 3:
+            _send(chat_id, "usage: /tell <name> <message>")
+            return
+        who, msg = parts[1].lower(), parts[2]
+        g = _state().get("guests", {})
+        hits = [(cid, n) for cid, n in g.items() if n.lower().startswith(who)]
+        if len(hits) != 1:
+            _send(chat_id, f"{'no one' if not hits else 'more than one person'} called "
+                           f"{parts[1]}. /guests lists them")
+            return
+        cid, n = hits[0]
+        _send(int(cid), f"jack says: {msg}")
+        _send(chat_id, f"sent to {n} ✅")
         return
     if low.startswith("/scribe") or low in ("take notes", "just listen"):
         arg = low.replace("/scribe", "").strip()
@@ -1004,6 +1046,9 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
 # The "/" menu in Telegram. Owner only: guests get no commands at all.
 OWNER_COMMANDS = [
     ("now", "what i'm doing + all switches"),
+    ("tell", "message someone who texted me: /tell sam lol"),
+    ("guests", "who's texted me"),
+    ("guestphotos", "let guests use /photo: on|off (default off)"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("mic", "listen with the robot or macbook mic"),
     ("speaker", "talk through the robot or macbook"),
