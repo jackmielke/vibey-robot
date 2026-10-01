@@ -9,15 +9,13 @@ swiftc -O -o "$APP/Contents/MacOS/Vibey" Sources/*.swift \
   -framework Cocoa -framework WebKit -target arm64-apple-macos13.0
 cp Info.plist "$APP/Contents/Info.plist"
 
-if [[ ! -f "$BUILD/AppIcon.icns" ]]; then
-  ICONSET="$BUILD/AppIcon.iconset"; mkdir -p "$ICONSET"
-  swiftc -o "$BUILD/make_icon" make_icon.swift -framework Cocoa
-  for s in 16 32 128 256 512; do
-    "$BUILD/make_icon" $s "$ICONSET/icon_${s}x${s}.png"
-    "$BUILD/make_icon" $((s*2)) "$ICONSET/icon_${s}x${s}@2x.png"
-  done
-  iconutil -c icns "$ICONSET" -o "$BUILD/AppIcon.icns"
-fi
+# The icon is Vibey itself (icon/vibey-icon.svg, rendered to icon/icon-1024.png).
+ICONSET="$BUILD/AppIcon.iconset"; rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+for s in 16 32 128 256 512; do
+  sips -z $s $s icon/icon-1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) icon/icon-1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$BUILD/AppIcon.icns"
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 codesign --force --deep -s - "$APP"

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7B6DFF"/><stop offset="1" stop-color="#4A3DD8"/>
+    </linearGradient>
+    <linearGradient id="shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E6E4F2"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="0.38" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#3A3A4A"/><stop offset="1" stop-color="#0E0E16"/>
+    </radialGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- antennas -->
+  <path d="M372 400 L330 190" stroke="#1B1A2E" stroke-width="14" stroke-linecap="round"/>
+  <path d="M652 400 L700 180" stroke="#1B1A2E" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="330" cy="186" r="22" fill="#1B1A2E"/><circle cx="700" cy="176" r="22" fill="#1B1A2E"/>
+  <!-- body -->
+  <path d="M320 700 Q300 860 512 880 Q724 860 704 700 Z" fill="url(#shell)"/>
+  <!-- head -->
+  <rect x="236" y="380" width="552" height="340" rx="120" fill="url(#shell)"/>
+  <!-- glasses -->
+  <rect x="440" y="538" width="144" height="16" rx="8" fill="#0E0E16"/>
+  <circle cx="380" cy="546" r="92" fill="url(#lens)"/>
+  <circle cx="644" cy="546" r="92" fill="url(#lens)"/>
+  <circle cx="352" cy="512" r="20" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="616" cy="512" r="20" fill="#FFFFFF" opacity="0.85"/>
+  <!-- duck -->
+  <ellipse cx="512" cy="372" rx="92" ry="46" fill="#FFD23F"/>
+  <circle cx="512" cy="300" r="56" fill="#FFD23F"/>
+  <path d="M556 300 Q610 296 606 318 Q580 330 552 320 Z" fill="#FF7A1A"/>
+  <rect x="470" y="282" width="76" height="22" rx="10" fill="#0E0E16"/>
+</svg>
