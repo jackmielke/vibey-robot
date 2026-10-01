@@ -1128,6 +1128,11 @@ SUPERMEMORY_RECALL = os.environ.get("VIBEY_SUPERMEMORY_RECALL") == "1"
 if not SUPERMEMORY_RECALL:
     TOOLS = [t for t in TOOLS if t.get("name") != "recall"]
 
+# Wheels: the `drive` tool exists only once a rover is configured (ROVER_URL).
+import reachy_rover
+if reachy_rover.ROVER_URL:
+    TOOLS = TOOLS + [reachy_rover.TOOL]
+
 # Self-coding is off unless asked for. It kept overhearing Jack dictating to
 # Claude Code on the Mac, spawning its own jobs on the same files, and those
 # jobs mostly failed anyway. Code changes come from Jack, not from the room.
@@ -1498,6 +1503,11 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_move(args)
         if name == "dance":
             return _tool_dance(args)
+        if name == "drive":
+            import reachy_rover
+            return reachy_rover.drive(str(args.get("action", "")),
+                                      float(args.get("seconds") or 1.0),
+                                      str(args.get("speed") or "medium"))
         if name == "improve_yourself":
             return _tool_improve(args, announce)
         if name == "check_progress":

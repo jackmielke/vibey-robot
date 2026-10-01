@@ -652,6 +652,17 @@ def _handle(chat_id: int, text: str) -> None:
                        "clips or looking around" if reachy_privacy.is_on()
                        else "👀 privacy mode OFF: /photo works, for guests too")
         return
+    if low.startswith("/drive"):
+        # /drive forward 1 slow  ·  /drive stop
+        import reachy_rover
+        parts = low.split()
+        if len(parts) < 2:
+            _send(chat_id, "usage: /drive forward|back|left|right|spin_left|spin_right|stop [seconds] [slow|medium|fast]")
+            return
+        secs = float(parts[2]) if len(parts) > 2 and parts[2].replace(".", "", 1).isdigit() else 1.0
+        spd = parts[-1] if parts[-1] in reachy_rover.SPEEDS else "medium"
+        _send(chat_id, "🛞 " + reachy_rover.drive(parts[1], secs, spd))
+        return
     if low.startswith("/guests"):
         g = _state().get("guests", {})
         _send(chat_id, "people who've texted me:\n" + "\n".join(sorted(set(g.values())))
@@ -1054,6 +1065,7 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
 OWNER_COMMANDS = [
     ("now", "what i'm doing + all switches"),
     ("tell", "message someone who texted me: /tell sam lol"),
+    ("drive", "wheels: /drive forward 1 · /drive stop"),
     ("guests", "who's texted me"),
     ("privacy", "eyes closed, still chats: on|off (default on)"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
