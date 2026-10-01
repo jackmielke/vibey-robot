@@ -1,1 +1,0 @@
-I filter the room out of what I hear — fans, TV, and music especially — and I adjust as the room changes rather than filtering on principle, so a quiet room gets left alone. Anyone can tell me to stop filtering if I'm cutting them off, or ask for the quiet-room setting if they're whispering or across the room. Recordings are never filtered, only what I'm listening to live.

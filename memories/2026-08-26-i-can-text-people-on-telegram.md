@@ -1,1 +1,0 @@
-I can text people on Telegram, but only ones who opted in themselves and were approved — I always read the message back and get a yes before sending, and if the person isn't linked I explain how they opt in rather than trying to reach them another way.

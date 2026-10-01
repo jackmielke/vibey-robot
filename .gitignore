@@ -34,3 +34,6 @@ data/
 # Which services now run on the robot itself (robot/deploy.sh). Mac-local state.
 .robot_services
 .privacy_mode
+
+# Vibey's memories live on the robot (~/vibey/memories); personal, never in the public repo
+memories/
