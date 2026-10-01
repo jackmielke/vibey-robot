@@ -926,6 +926,8 @@ class _MemHandler(BaseHTTPRequestHandler):
 
 
 def _start_mem_server():
+    import vibey_auth
+    vibey_auth.protect(_MemHandler)   # LAN needs the app token; localhost is free
     srv = ThreadingHTTPServer(("0.0.0.0", MEM_PORT), _MemHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[memory] control API on http://localhost:{MEM_PORT}", flush=True)

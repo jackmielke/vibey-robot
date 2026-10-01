@@ -1351,6 +1351,14 @@ def _log_turn(who: str, text: str) -> None:
         print(f"[chat] transcript failed: {e}", flush=True)
 
 
+def _privacy_on() -> bool:
+    try:
+        import reachy_privacy
+        return reachy_privacy.is_on()
+    except Exception:  # noqa: BLE001
+        return True
+
+
 class _CtrlHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1378,6 +1386,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                        "mic_mode": cap["mode"], "mic_label": cap["label"],
                        "recording": cap["recording"],
                        "noise_profile": cap["profile"],
+                       "privacy": _privacy_on(),
                        "transcript": list(TRANSCRIPT)})
         elif self.path.startswith("/transcript"):
             # The kept conversation, not the 40-line dashboard deque in /state.
@@ -1472,6 +1481,22 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 _log_turn("wonder", f"(re-saying) {last}")
                 threading.Thread(target=_speak_line, args=(last,), daemon=True).start()
                 self._json({"ok": True, "text": last})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/drive"):
+            # The wheels (reachy_rover). Blocks for the length of the move,
+            # capped at a few seconds by the rover module.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                import reachy_rover
+                if not reachy_rover.ROVER_URL:
+                    self._json({"ok": False, "error": "wheels not connected"}, 503)
+                    return
+                result = reachy_rover.drive(str(body.get("action", "stop")),
+                                            float(body.get("seconds", 1.0)),
+                                            str(body.get("speed", "medium")))
+                self._json({"ok": True, "result": result})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/ask"):
@@ -1686,6 +1711,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
 
 
 def _start_ctrl_server():
+    import vibey_auth
+    vibey_auth.protect(_CtrlHandler)   # LAN needs the app token; localhost is free
     srv = ThreadingHTTPServer(("0.0.0.0", CTRL_PORT), _CtrlHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[chat] control API on http://localhost:{CTRL_PORT}", flush=True)

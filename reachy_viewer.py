@@ -2806,6 +2806,8 @@ def main():
     print(f"[viewer] reachy    = {REACHY_URL}")
     print(f"[viewer] handsfree = {HANDSFREE_URL}")
     print(f"[viewer] open       http://localhost:{PORT}")
+    import vibey_auth
+    vibey_auth.protect(Handler)   # LAN needs the app token; localhost is free
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

@@ -230,6 +230,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=_capture_loop, daemon=True).start()
     print(f"[camera] MJPEG  http://localhost:{CAM_PORT}/stream", flush=True)
+    import vibey_auth
+    vibey_auth.protect(Handler)   # LAN needs the app token; localhost is free
     ThreadingHTTPServer(("0.0.0.0", CAM_PORT), Handler).serve_forever()
 
 
