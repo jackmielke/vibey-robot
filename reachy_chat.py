@@ -2614,6 +2614,19 @@ def _wake_now(reason: str = "wake") -> None:
                 pass
         return
     if not STATE["asleep"]:
+        if reason == "manual" and not OFF["on"]:
+            # Already awake in software, but the body can be limp (motors
+            # disabled by a daemon restart or a stray power-down). A person
+            # pressing Wake wants to SEE it come alive, so re-arm the body:
+            # torque on, wake animation, face tracking. The conversation is
+            # left alone.
+            def _rearm():
+                try:
+                    import reachy_wakesleep
+                    reachy_wakesleep.wake(log=lambda m: print(m, flush=True))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[chat] re-arm body failed: {e}", flush=True)
+            threading.Thread(target=_rearm, daemon=True).start()
         return
     if reason != "scribe" and _scribe_status().get("on"):
         threading.Thread(target=_scribe_stop, args=("woken up",), daemon=True).start()
