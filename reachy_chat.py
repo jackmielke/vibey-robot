@@ -1359,6 +1359,41 @@ def _privacy_on() -> bool:
         return True
 
 
+DJ_URL = os.environ.get("DJ_URL", "http://localhost:8778").rstrip("/")
+
+
+def _dj(path: str, body: dict | None = None) -> tuple[dict, int]:
+    """Pass-through to reachy_dj.py, which binds localhost only. The phone app
+    reaches it here, behind the same token as everything else on :8772."""
+    req = urllib.request.Request(
+        f"{DJ_URL}{path}", method="POST" if body is not None else "GET",
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read() or b"{}"), r.status
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}"), e.code
+        except Exception:  # noqa: BLE001
+            return {"error": f"dj said {e.code}"}, e.code
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"DJ isn't running ({e.__class__.__name__})"}, 503
+
+
+def _friends() -> list[dict]:
+    """Everyone Vibey knows, one snapshot each (the dashboard's /peoplelist
+    carries every sample photo and weighs ~850KB)."""
+    import reachy_faces_store
+    out = []
+    for f in reachy_faces_store.get_faces():
+        out.append({"id": f.get("id"), "name": f.get("name"),
+                    "times_seen": f.get("times_seen") or 0,
+                    "snapshot": f.get("snapshot")})
+    out.sort(key=lambda f: (f["name"] is None, -(int(f["times_seen"] or 0))))
+    return out
+
+
 class _CtrlHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -1411,11 +1446,68 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                         "idle_sleep_minutes": IDLE_SLEEP_S / 60})
         elif self.path.startswith("/vibelog"):
             self._json({"events": _vibe_thoughts()})
+        elif self.path.startswith("/emotes"):
+            import reachy_emotes
+            self._json({"emotes": [k for k in reachy_emotes._MOVES
+                                   if not k.endswith("antenna_check")]})
+        elif self.path.startswith("/sfx"):
+            import reachy_sfx
+            self._json({"sfx": reachy_sfx.catalog()})
+        elif self.path.startswith("/friends"):
+            try:
+                self._json({"friends": _friends()})
+            except Exception as e:  # noqa: BLE001
+                self._json({"error": str(e)}, 500)
+        elif self.path.startswith("/dj/"):
+            out, code = _dj("/" + self.path.split("?")[0][4:])
+            self._json(out, code)
         else:
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
-        if self.path.startswith("/mute"):
+        if self.path.startswith(("/emote", "/sfx", "/say", "/dj/", "/friends/name")):
+            # The phone's Play tab. Thin: each one is a call into a module the
+            # voice brain already uses.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                if self.path.startswith("/emote"):
+                    import reachy_emotes
+                    name = str(body.get("name", ""))
+                    if not reachy_emotes.play(name, sound=bool(body.get("sound", True))):
+                        raise ValueError(f"unknown emote {name!r}")
+                    self._json({"ok": True, "emote": name})
+                elif self.path.startswith("/sfx"):
+                    import reachy_sfx
+                    name = str(body.get("name", ""))
+                    if name == "stop_audio":
+                        reachy_sfx.stop_all()
+                    elif not reachy_sfx.play(name):
+                        raise ValueError(f"unknown sound {name!r}")
+                    self._json({"ok": True, "sfx": name})
+                elif self.path.startswith("/say"):
+                    text = str(body.get("text", "")).strip()[:500]
+                    if not text:
+                        raise ValueError("text required")
+                    if OFF["on"]:
+                        raise ValueError("Vibey is OFF, switch it on first")
+                    _log_turn("wonder", text)
+                    threading.Thread(target=_speak_line, args=(text,), daemon=True).start()
+                    self._json({"ok": True, "text": text})
+                elif self.path.startswith("/friends/name"):
+                    req = urllib.request.Request(
+                        f"{MEM_URL}/name", method="POST",
+                        data=json.dumps({"name": str(body.get("name", "")).strip(),
+                                         "face_id": body.get("face_id")}).encode(),
+                        headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        self._json(json.loads(r.read() or b"{}"))
+                else:
+                    out, code = _dj("/" + self.path.split("?")[0][4:], body)
+                    self._json(out, code)
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/mute"):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 STATE["muted"] = bool(json.loads(self.rfile.read(n)).get("muted"))

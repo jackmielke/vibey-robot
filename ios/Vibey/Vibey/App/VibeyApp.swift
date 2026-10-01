@@ -26,7 +26,7 @@ struct RootView: View {
     private static var initialTab: Int {
         let args = ProcessInfo.processInfo.arguments
         guard let i = args.firstIndex(of: "-tab"), i + 1 < args.count else { return 0 }
-        return ["home": 0, "chat": 1, "memories": 2, "drive": 3, "settings": 4][args[i + 1]] ?? 0
+        return ["home": 0, "play": 1, "chat": 2, "memory": 3, "memories": 3, "controls": 4][args[i + 1]] ?? 0
     }
 
     var body: some View {
@@ -34,14 +34,14 @@ struct RootView: View {
             TabView(selection: $tab) {
                 HomeView().tag(0)
                     .tabItem { Label("Home", systemImage: "sparkles") }
-                ChatView().tag(1)
+                PlayView().tag(1)
+                    .tabItem { Label("Play", systemImage: "face.smiling.inverse") }
+                ChatView().tag(2)
                     .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right.fill") }
-                MemoriesView().tag(2)
-                    .tabItem { Label("Memories", systemImage: "brain.head.profile") }
-                DriveView().tag(3)
-                    .tabItem { Label("Drive", systemImage: "dpad.fill") }
-                SettingsView().tag(4)
-                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                MemoryHubView().tag(3)
+                    .tabItem { Label("Memory", systemImage: "brain.head.profile") }
+                ControlsView().tag(4)
+                    .tabItem { Label("Controls", systemImage: "slider.horizontal.3") }
             }
             .onChange(of: tab) { _, _ in Haptics.soft() }
 

@@ -32,6 +32,9 @@ final class Store: ObservableObject {
         token = Keychain.get("token") ?? Secrets.token
     }
 
+    /// Privacy is assumed ON until the Mac says otherwise: no frames on a guess.
+    var privacy: Bool { state?.privacy ?? true }
+
     var api: VibeyAPI { VibeyAPI(host: host.trimmingCharacters(in: .whitespaces),
                                  token: token.trimmingCharacters(in: .whitespacesAndNewlines)) }
 
@@ -61,6 +64,7 @@ final class Store: ObservableObject {
             state = s
             status = (s.off ?? false) ? .off : (s.asleep ?? true) ? .asleep : .awake
         } catch {
+            if error.isCancellation { return }
             status = .unreachable(error.localizedDescription)
         }
     }
@@ -74,10 +78,10 @@ final class Store: ObservableObject {
                 try await action(api)
                 Haptics.ok()
                 if let label { flash(label) }
-            } catch {
+            } catch where !error.isCancellation {
                 Haptics.fail()
                 flash(error.localizedDescription)
-            }
+            } catch {}
             busy = false
             await refresh()
         }

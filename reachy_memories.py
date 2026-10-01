@@ -7,9 +7,11 @@ storage later means changing this file and nothing else.
 
 Where they live (2026-09-30): ON THE ROBOT, in ~/vibey/memories on its CM4
 (ssh pollen@<robot>, key login). memories/ on the Mac is a cache: every read
-first syncs with the robot (Mac edits made while it was offline go up, then
-the robot's copy comes down), every edit is pushed straight to it, and if the
-robot is unreachable everything keeps working from the cache.
+syncs with the robot in the background (Mac edits made while it was offline
+go up, then the robot's copy comes down), every edit is pushed to it on the same
+background lane, and if the robot is unreachable everything keeps working from
+the cache. Reads NEVER wait on SSH: a sync round is 3 ssh/rsync calls and was
+taking 9-12s on the LAN, which timed out the phone app's Memories tab.
 
 File format: `memories/<YYYY-MM-DD>-<HHMM>-<slug>.md` (older files have no HHMM), the body is the memory text.
 Hand-editable in any editor; a blank file is ignored.
@@ -19,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -43,12 +46,13 @@ def _rsync(src: str, dst: str, *extra: str) -> bool:
     return _run(["rsync", "-a", *extra, "-e", " ".join(_SSH), src, dst])
 
 
-def sync(force: bool = False) -> bool:
-    """Robot is the source of truth. Push up anything newer on the Mac, then
-    mirror the robot's folder down. Returns False if the robot didn't answer."""
-    if not force and time.time() - _last_sync[0] < _SYNC_EVERY:
-        return True
-    _last_sync[0] = time.time()
+# One lane for everything that talks to the robot, so a push, a delete and a
+# mirror-down never interleave (a mirror-down racing a delete would resurrect it).
+_ROBOT_LOCK = threading.Lock()
+_syncing = threading.Event()
+
+
+def _sync_now() -> bool:
     DIR.mkdir(parents=True, exist_ok=True)
     if not _run(_SSH + [ROBOT, f"mkdir -p {ROBOT_DIR}"]):
         return False
@@ -57,8 +61,42 @@ def sync(force: bool = False) -> bool:
                   "--include=*.md", "--exclude=*")
 
 
+def sync(force: bool = False, wait: bool = False) -> bool:
+    """Robot is the source of truth. Push up anything newer on the Mac, then
+    mirror the robot's folder down. By default this only KICKS a background
+    sync (at most every 10s) and returns at once; wait=True blocks and returns
+    False if the robot didn't answer."""
+    if wait:
+        with _ROBOT_LOCK:
+            _last_sync[0] = time.time()
+            return _sync_now()
+    if not force and time.time() - _last_sync[0] < _SYNC_EVERY:
+        return True
+    if _syncing.is_set():
+        return True
+    _last_sync[0] = time.time()
+    _syncing.set()
+
+    def _bg():
+        try:
+            with _ROBOT_LOCK:
+                _sync_now()
+        finally:
+            _syncing.clear()
+    threading.Thread(target=_bg, daemon=True, name="memories-sync").start()
+    return True
+
+
+def _on_robot(fn, *args) -> None:
+    """Run a robot-side write on the background lane."""
+    def _bg():
+        with _ROBOT_LOCK:
+            fn(*args)
+    threading.Thread(target=_bg, daemon=True, name="memories-push").start()
+
+
 def _push(p: Path) -> None:
-    _rsync(str(p), f"{ROBOT}:{ROBOT_DIR}/{p.name}")
+    _on_robot(_rsync, str(p), f"{ROBOT}:{ROBOT_DIR}/{p.name}")
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.md$")
@@ -76,7 +114,8 @@ def _slug(text: str) -> str:
 
 
 def list_all() -> list[dict]:
-    """Oldest first. [{id, text, date, mtime}]"""
+    """Oldest first. [{id, text, date, mtime}]. Served from the local cache;
+    a background sync is kicked so the next read is fresh."""
     sync()
     if not DIR.is_dir():
         return []
@@ -137,7 +176,7 @@ def add(text: str, date: str | None = None) -> dict:
 
 def delete(mid: str) -> bool:
     p = _path(mid)
-    _run(_SSH + [ROBOT, f"rm -f {ROBOT_DIR}/{mid}"])   # mid is validated by _path
+    _on_robot(_run, _SSH + [ROBOT, f"rm -f {ROBOT_DIR}/{mid}"])   # mid is validated by _path
     if p.exists():
         p.unlink()
         return True

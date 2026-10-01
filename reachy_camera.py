@@ -148,8 +148,32 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # quiet
         pass
 
+    def _eyes_closed(self) -> bool:
+        """Privacy mode keeps every frame on this Mac. Off-Mac clients (the
+        phone app, anything on the LAN) get a 403 instead of a picture; local
+        consumers like the face service are untouched, the same split the
+        token uses."""
+        import reachy_privacy
+        import vibey_auth
+        host = (self.client_address or ("",))[0]
+        if host in vibey_auth._LOCAL or host.startswith("127."):
+            return False
+        return reachy_privacy.is_on()
+
+    def _refuse(self):
+        import reachy_privacy
+        body = json.dumps({"error": "eyes closed", "privacy": True,
+                           "message": reachy_privacy.CLOSED}).encode()
+        self.send_response(403)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
-        if self.path.startswith("/stream"):
+        if self.path.startswith(("/stream", "/frame")) and self._eyes_closed():
+            self._refuse()
+        elif self.path.startswith("/stream"):
             self._stream()
         elif self.path.startswith("/frame"):
             self._snapshot()
@@ -218,6 +242,8 @@ class Handler(BaseHTTPRequestHandler):
                         _frame_lock.wait(timeout=5)
                     jpg = _latest_jpeg
                     last = _frame_seq
+                if self._eyes_closed():
+                    break   # privacy switched on mid-stream: stop sending
                 self.wfile.write(b"--frame\r\n")
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
                 self.wfile.write(f"Content-Length: {len(jpg)}\r\n\r\n".encode())

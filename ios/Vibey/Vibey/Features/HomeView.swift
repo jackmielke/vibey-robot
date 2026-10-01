@@ -4,6 +4,7 @@ struct HomeView: View {
     @EnvironmentObject var store: Store
     @State private var volume: Double = 50
     @State private var volumeKnown = false
+    @State private var cost: Cost?
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -45,6 +46,7 @@ struct HomeView: View {
                 VStack(spacing: 18) {
                     hero
                     primaryButton
+                    CameraCard()
                     privacyCard
                     volumeCard
                 }
@@ -55,6 +57,12 @@ struct HomeView: View {
             .refreshable { await store.refresh(); await loadVolume() }
         }
         .task { await loadVolume() }
+        .task {
+            while !Task.isCancelled {
+                if let c = try? await store.api.cost() { cost = c }
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
     }
 
     private var hero: some View {
@@ -83,6 +91,9 @@ struct HomeView: View {
                 chip(icon: privacy ? "eye.slash.fill" : "eye.fill",
                      text: privacy ? "Eyes closed" : "Eyes open", on: !privacy)
                 if s?.muted == true { chip(icon: "mic.slash.fill", text: "Muted", on: false) }
+                if let today = cost?.today {
+                    chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
+                }
             }
             .padding(.top, 6)
         }

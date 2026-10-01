@@ -364,6 +364,9 @@ def _timelapse_loop():
             day_dir = os.path.join(CAPTURES_DIR,
                                    time.strftime("timelapse_%Y%m%d"))
             os.makedirs(day_dir, exist_ok=True)
+            import reachy_privacy
+            if reachy_privacy.is_on():
+                raise RuntimeError("privacy mode: eyes closed, no timelapse frame")
             with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
                 jpeg = r.read()
             with open(os.path.join(
@@ -2614,6 +2617,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
+                import reachy_privacy
+                if reachy_privacy.is_on():
+                    self._send(json.dumps({"ok": False, "error": "eyes closed (privacy mode)"}).encode(),
+                               "application/json", 403)
+                    return
                 if body.get("type") == "video":
                     secs = min(30, max(2, float(body.get("seconds", 10))))
                     name = _capture_video(secs)
