@@ -8,6 +8,9 @@
 #   vibey wifi scan                list nearby networks
 #   vibey wifi join "SSID" "pass"  join a network (robot reboots its link)
 #   vibey wifi forget "SSID"
+#   vibey wifi remember            save a network (e.g. your phone hotspot) for
+#                                  later WITHOUT switching to it; asks for the
+#                                  password hidden, so it never hits history
 #   vibey wifi hotspot             fall back to the robot's own AP if it's lost
 #   vibey look [path]  grab one camera frame to a jpeg (default /tmp/vibey_look.jpg)
 #   vibey fix          robot moves return 200 but the body is frozen → daemon restart
@@ -153,6 +156,21 @@ case "$1" in
                  "$URL/wifi/connect" | python3 -m json.tool
                echo "give it ~20s, then: vibey status" ;;
       forget)  curl -s -m 20 -X POST --get --data-urlencode "ssid=$3" "$URL/wifi/forget" ;;
+      remember)
+               HOST=$(echo "$URL" | sed -E 's|https?://([^:/]+).*|\1|')
+               SSID="$3"
+               [[ -z "$SSID" ]] && read -r "SSID?network name (exactly as your phone shows it): "
+               read -rs "PSK?password for $SSID (hidden): "; echo
+               # stdin, not argv: the password never lands in shell history or ps on the Mac.
+               # Priority -10: home and other known networks still win when in range.
+               printf '%s\n%s\n' "$SSID" "$PSK" | ssh -o ConnectTimeout=8 "pollen@$HOST" '
+                 IFS= read -r ssid; IFS= read -r psk
+                 sudo -n nmcli connection delete "$ssid" >/dev/null 2>&1
+                 sudo -n nmcli connection add type wifi con-name "$ssid" ssid "$ssid" \
+                   wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$psk" \
+                   connection.autoconnect yes connection.autoconnect-priority -10 >/dev/null \
+                   && echo "saved: robot will join \"$ssid\" whenever it is in range"'
+               unset PSK ;;
       hotspot) curl -s -m 30 -X POST "$URL/wifi/setup_hotspot"
                echo "join the robot's AP from your Mac, then hit http://10.42.0.1:8000" ;;
       *)       curl -s -m 8 "$URL/wifi/status" | python3 -m json.tool
