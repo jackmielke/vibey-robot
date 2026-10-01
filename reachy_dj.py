@@ -327,7 +327,7 @@ def main():
     MUSIC_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[dj] music folder: {MUSIC_DIR} ({len(list_tracks())} tracks)", flush=True)
     print(f"[dj] listening on :{PORT}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadingHTTPServer((os.environ.get("VIBEY_BIND", "127.0.0.1"), PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

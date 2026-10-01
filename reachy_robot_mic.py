@@ -68,7 +68,7 @@ def _default_host() -> str:
 
 REACHY_HOST = _default_host()
 MIC_PORT = int(os.environ.get("ROBOT_MIC_PORT", "8775"))
-MIC_BIND = os.environ.get("ROBOT_MIC_BIND", "0.0.0.0")
+MIC_BIND = os.environ.get("ROBOT_MIC_BIND", "127.0.0.1")
 # On the robot the daemon is on localhost, and "localhost_only" is what makes the
 # SDK pick its LOCAL media backend (GStreamer audio on the board itself) instead
 # of a WebRTC session to its own address.

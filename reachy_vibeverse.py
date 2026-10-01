@@ -184,7 +184,7 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
 def run():
     threading.Thread(
-        target=lambda: ThreadingHTTPServer(("0.0.0.0", STATUS_PORT),
+        target=lambda: ThreadingHTTPServer((os.environ.get("VIBEY_BIND", "127.0.0.1"), STATUS_PORT),
                                            _StatusHandler).serve_forever(),
         daemon=True).start()
     print(f"[verse] status API on http://localhost:{STATUS_PORT}", flush=True)
