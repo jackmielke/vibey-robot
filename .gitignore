@@ -33,3 +33,4 @@ data/
 
 # Which services now run on the robot itself (robot/deploy.sh). Mac-local state.
 .robot_services
+.privacy_mode

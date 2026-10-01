@@ -38,6 +38,8 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+
+import reachy_privacy
 from pathlib import Path
 
 from reachy_voice import load_env, say
@@ -374,12 +376,8 @@ def _handle_guest(chat_id: int, msg: dict) -> None:
             _send(owner, f"✅ {name} consented to being texted by me.\n"
                          f"Approve with:  /allow {chat_id} <nickname>")
         return
-    if low == "photo" and not _state().get("guest_photos", False):
-        # Off by default since 2026-09-30: people at a demo realised they could
-        # photograph Jack's room any time. Jack turns it on with /guestphotos on.
-        _send(chat_id, "photos are just for jack rn 🙈")
-        if owner:
-            _send(owner, f"🙈 blocked a /photo from {name}. /guestphotos on to allow")
+    if low == "photo" and reachy_privacy.is_on():
+        _send(chat_id, reachy_privacy.CLOSED)
         return
     if low == "photo":
         # Anyone can peek, but it's Jack's room: rate limited, never while
@@ -479,6 +477,9 @@ def _asleep() -> bool:
 
 
 def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> None:
+    if reachy_privacy.is_on():
+        _send(chat_id, reachy_privacy.CLOSED + ". /privacy off to open them")
+        return
     try:
         with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
             jpeg = r.read()
@@ -643,13 +644,13 @@ def _handle(chat_id: int, text: str) -> None:
               "/cost — what I've cost you today\n"
               "/verse — what's happening in my VibeVerse lobby")
         return
-    if low.startswith("/guestphotos"):
-        st = _state()
-        arg = low.replace("/guestphotos", "").strip()
+    if low.startswith("/privacy"):
+        arg = low.replace("/privacy", "").strip()
         if arg in ("on", "off"):
-            st["guest_photos"] = arg == "on"
-            _save_state(st)
-        _send(chat_id, f"guest /photo is {'ON 📸' if st.get('guest_photos') else 'OFF 🙈'}")
+            reachy_privacy.set_on(arg == "on")
+        _send(chat_id, "🙈 privacy mode ON: I still talk and text, but no photos, "
+                       "clips or looking around" if reachy_privacy.is_on()
+                       else "👀 privacy mode OFF: /photo works, for guests too")
         return
     if low.startswith("/guests"):
         g = _state().get("guests", {})
@@ -863,6 +864,9 @@ def _handle(chat_id: int, text: str) -> None:
     if low == "/photo":
         _photo(chat_id)
         return
+    if low.startswith("/clip") and reachy_privacy.is_on():
+        _send(chat_id, reachy_privacy.CLOSED + ". /privacy off to open them")
+        return
     if low.startswith("/clip"):
         _send(chat_id, "🎬 recording 8 seconds…")
         try:
@@ -923,6 +927,9 @@ def _handle(chat_id: int, text: str) -> None:
         snap = reachy_agent.status() or {}
         _send(chat_id, "🛠️ " + (reachy_agent._describe(snap) if snap.get("id")
                                  else "nothing running."))
+        return
+    if low.startswith("/timelapse") and reachy_privacy.is_on():
+        _send(chat_id, reachy_privacy.CLOSED + ". /privacy off to open them")
         return
     if low.startswith("/timelapse"):
         _send(chat_id, "🎞️ assembling the day's timelapse…")
@@ -1048,7 +1055,7 @@ OWNER_COMMANDS = [
     ("now", "what i'm doing + all switches"),
     ("tell", "message someone who texted me: /tell sam lol"),
     ("guests", "who's texted me"),
-    ("guestphotos", "let guests use /photo: on|off (default off)"),
+    ("privacy", "eyes closed, still chats: on|off (default on)"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("mic", "listen with the robot or macbook mic"),
     ("speaker", "talk through the robot or macbook"),

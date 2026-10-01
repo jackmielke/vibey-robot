@@ -1269,6 +1269,10 @@ def _tool_look(args: dict) -> str:
     the off-by-default watch, the auto-expiry, the "don't describe humans"
     prompt — lives in reachy_scene, not in the model's instructions, so a
     misheard sentence can't talk Vibey into narrating the room all evening."""
+    import reachy_privacy
+    if reachy_privacy.is_on():
+        return ("My eyes are closed: privacy mode is on. Say so lightly and keep "
+                "chatting; don't describe the room or guess what's in it.")
     import reachy_scene
     if "watch" in args and args.get("watch") is not None:
         return reachy_scene.watch(bool(args["watch"]), args.get("minutes"))

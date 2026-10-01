@@ -1413,6 +1413,14 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "muted": STATE["muted"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/privacy"):
+            try:
+                import reachy_privacy
+                n = int(self.headers.get("Content-Length", 0))
+                on = bool(json.loads(self.rfile.read(n) or b"{}").get("on", True))
+                self._json({"ok": True, "privacy": reachy_privacy.set_on(on)})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/incognito"):
             # One button, two halves. The face service must stop enrolling and
             # stop fishing for names; the realtime brain must lose the
@@ -2326,7 +2334,9 @@ def _dials() -> dict:
         start_vol = reachy_wakesleep.start_volume()
     except Exception:  # noqa: BLE001
         vol, start_vol = None, None
+    import reachy_privacy
     return {
+        "privacy": reachy_privacy.is_on(),
         "awake": not STATE["asleep"],
         "listening": rt.voice_detection_active(),
         "face_tracking": bool(rt.FACE_DETECTION.get("on", True)),
