@@ -80,7 +80,7 @@ REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/
 CAM_URL = os.environ.get("CAM_URL", "http://localhost:8771").rstrip("/")
 
 
-def _tell_the_conversation(line: str) -> bool:
+def _tell_the_conversation(line: str, silent: bool = False) -> bool:
     """Push a sighting into the live conversation. True if it was taken.
 
     The point is that Vibey mentions it, in its own voice, in the middle of
@@ -88,7 +88,8 @@ def _tell_the_conversation(line: str) -> bool:
     in a different accent while the first one is mid-reply.
     """
     try:
-        body = json.dumps({"text": f"[Nobody said this out loud. {line}]"}).encode()
+        body = json.dumps({"text": f"[Nobody said this out loud. {line}]",
+                           "silent": silent}).encode()
         req = urllib.request.Request("http://localhost:8772/sighting", data=body,
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
@@ -684,6 +685,10 @@ def _maybe_start_conversation(any_face: bool) -> None:
     # line this used to fall back to was the tell that there were two systems in
     # the room — and at boot, before anyone has turned it on, it was the robot
     # opening with a scripted greeting nobody asked for.
+    # Off by default (2026-10-02): unprompted openers read as Vibey "saying
+    # random stuff". VIBEY_CHATTY=1 brings them back.
+    if os.environ.get("VIBEY_CHATTY") != "1":
+        return
     _tell_the_conversation(
         "The room has gone quiet and somebody is still in front of you. "
         "Start a conversation — one short, curious line in your own voice.")
@@ -1057,23 +1062,26 @@ def run():
         # Speak after processing every face this cycle, so two people walking
         # up together each get acknowledged instead of only the first.
         for fid, name in to_greet:
-            if name == "__new__":
-                line = ("Somebody you have never seen before just appeared in front "
-                        "of you. Say hello, ask their name, and when they tell you, "
-                        "call remember_face.")
-            elif name:
+            # Only a known person, by name, is worth an out-loud greeting.
+            # Unknown or unnamed faces go in as quiet context: telling the brain
+            # to "ask what they are called" on every sighting is why Vibey kept
+            # interrupting with "what're you called?" (2026-10-02).
+            if name and name != "__new__":
                 line = (f"{name}, who you already know, just walked into view. "
-                        f"Greet them by name, warmly and briefly.")
+                        f"If nobody is mid-conversation, greet them by name, "
+                        f"briefly. Otherwise just carry on.")
+                silent = False
             else:
-                line = ("Somebody you recognise but have no name for just appeared. "
-                        "Say you know their face, ask what they are called, then "
-                        "call remember_face.")
+                line = ("Someone you don't have a name for is in view. Context only: "
+                        "do not ask their name or comment on it; keep doing what "
+                        "you were doing.")
+                silent = True
 
             # Hand it to whichever brain is holding the conversation, so the robot
             # reacts in its own voice. No fallback: if nobody is holding it, the
             # robot is asleep or off, and a scripted "nice to meet you" from a
             # service that is not the robot is exactly what got removed here.
-            _tell_the_conversation(line)
+            _tell_the_conversation(line, silent=silent)
 
 
 if __name__ == "__main__":
