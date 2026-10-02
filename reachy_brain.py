@@ -299,7 +299,14 @@ def _responses(body: dict, timeout: float = 90.0) -> dict:
         headers={"Authorization": f"Bearer {API_KEY}",
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+        resp = json.loads(r.read())
+    try:
+        import reachy_cost
+        reachy_cost.record_tokens("text_brain", resp.get("model") or body.get("model") or MODEL,
+                                  resp.get("usage") or {})
+    except Exception:  # noqa: BLE001
+        pass
+    return resp
 
 
 def _output_text(resp: dict) -> str:

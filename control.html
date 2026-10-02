@@ -152,6 +152,17 @@
   .memlist { columns:1 }
   .panel { min-width:0 }
   @media (min-width:1700px){ .m3 .memlist { columns:2 300px } }
+  .costchip { cursor:pointer; display:inline-flex; align-items:center; gap:6px; position:relative }
+  .costchip .bar { width:54px; height:6px; border-radius:3px; background:var(--off); overflow:hidden; display:inline-block }
+  .costchip .bar i { display:block; height:100%; background:var(--on) }
+  .costchip.warn .bar i { background:var(--warn) } .costchip.over .bar i { background:var(--bad) }
+  .costchip.over { color:var(--bad) }
+  #costpanel { display:none; position:absolute; top:22px; right:0; z-index:20; min-width:260px; max-width:min(320px,90vw);
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--text);
+    box-shadow:0 6px 24px rgba(0,0,0,.18); font-size:12px; line-height:1.5; cursor:default }
+  .costchip.open #costpanel { display:block }
+  #costpanel .row { display:flex; justify-content:space-between; gap:12px }
+  #costpanel .h { color:var(--dim); margin-top:6px }
 </style>
 
 <div class=wrap>
@@ -159,7 +170,7 @@
   <h1>Vibey</h1>
   <span class=pill id=status>connecting…</span>
   <button class=ghost id=scribe title="Keep notes of the room and text them to Telegram">📝 Take notes</button>
-  <span class=sub id=cost></span>
+  <span class="sub costchip" id=costchip title="OpenAI spend — click for the breakdown"><span id=cost></span><span class=bar><i id=costbar style="width:0"></i></span><div id=costpanel></div></span>
   <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
   <button class=big id=power>Turn on</button>
 </header>
@@ -302,8 +313,31 @@ async function pollOnce(){
     if(document.activeElement!==$('svol')){ if(dials.start_volume!=null){ const v=volToSlider(dials.start_volume); $('svol').value=v; $('svolv').textContent=v+'% on every wake'; $('svol').disabled=false; } else { $('svolv').textContent='–'; $('svol').disabled=true; } } }
   if(brainInfo) renderBrain();
   renderLog();
-  const c=await j('/cost'); if(c) $('cost').textContent=`$${(c.today||0).toFixed(2)} today`;
+  const c=await j('/cost'); if(c) renderCost(c);
 }
+const COST_LABELS={live_voice:'live voice',live_backend:'live brain (gpt-5.5)',realtime_voice:'realtime voice',text_brain:'texts',guest_brain:'guests',vision:'vision',other:'other'};
+function renderCost(c){
+  const b=c.budget||{}, f=Math.min(1,b.fraction||0), lvl=b.level||'ok';
+  const chip=$('costchip'); chip.classList.toggle('warn',lvl==='warn'); chip.classList.toggle('over',lvl==='over');
+  $('cost').textContent=lvl==='over'?`out of budget · $${(c.today||0).toFixed(2)}`:`$${(c.today||0).toFixed(2)} today`;
+  $('costbar').style.width=(f*100).toFixed(0)+'%';
+  const m=v=>'$'+(v||0).toFixed(2), esc=t=>String(t).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));
+  const src=Object.entries(c.by_source_today||{}).sort((a,b)=>b[1]-a[1]).filter(e=>e[1]>=0.005);
+  let h=`<div class=h>Vibey's own estimate</div>`;
+  h+=src.length?src.map(([k,v])=>`<div class=row><span>${esc(COST_LABELS[k]||k)}</span><span>${m(v)}</span></div>`).join(''):`<div class=row><span>nothing today</span><span></span></div>`;
+  if(c.unpriced_today) h+=`<div class=row><span>calls with unknown price</span><span>${c.unpriced_today}</span></div>`;
+  h+=`<div class=h>Totals</div><div class=row><span>today</span><span>${m(c.today)} / ${m(b.daily_cap)}</span></div>`;
+  h+=`<div class=row><span>7 days</span><span>${m(c.week)}</span></div><div class=row><span>this month</span><span>${m(c.month)} / ${m(b.monthly_cap)}</span></div>`;
+  if(c.blocked) h+=`<div class=h style="color:var(--bad)">${esc(c.blocked_why||'out of budget')} · Telegram /budget raise</div>`;
+  else if(b.guard_off) h+=`<div class=h>budget guard off today</div>`;
+  const bl=c.billed||{};
+  h+=`<div class=h>OpenAI billed (all apps on the account)</div>`;
+  h+=bl.available?(bl.fetched_at?`<div class=row><span>today</span><span>${m(bl.today)}</span></div><div class=row><span>this month</span><span>${m(bl.month)}</span></div>`+(bl.error?`<div class=sub>${esc(bl.error)}</div>`:''):'<div class=sub>fetching…</div>')
+    :`<div class=sub>${esc(bl.hint||'')}</div>`;
+  h+=`<div class=sub style="margin-top:6px">sleeps after ${(c.idle_sleep_minutes||10).toFixed(0)} min quiet or ${(c.voice_session_max_minutes||20).toFixed(0)} min awake · prices checked ${esc(c.prices_checked||'')}</div>`;
+  $('costpanel').innerHTML=h;
+}
+$('costchip').addEventListener('click',e=>{ if(!e.target.closest('#costpanel')) $('costchip').classList.toggle('open'); });
 (function(){ const r=document.documentElement, b=$('theme');
   const dark=()=>r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
   try{ const t=localStorage.getItem('vibey-theme'); if(t) r.dataset.theme=t; }catch(_){}

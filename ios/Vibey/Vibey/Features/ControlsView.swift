@@ -200,18 +200,63 @@ struct ControlsView: View {
     }
 
     private var costCard: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(cost?.today.map { String(format: "$%.2f", $0) } ?? "–")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded).monospacedDigit())
-                Text("today · \(cost?.today_turns ?? 0) turns")
+        let b = cost?.budget
+        let level = b?.level ?? "ok"
+        let tint: Color = level == "over" ? Palette.bad : level == "warn" ? Palette.beak : Palette.live
+        let money: (Double?) -> String = { $0.map { String(format: "$%.2f", $0) } ?? "–" }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(money(cost?.today))
+                        .font(.system(size: 34, weight: .heavy, design: .rounded).monospacedDigit())
+                        .foregroundStyle(level == "over" ? Palette.bad : Palette.ink)
+                    Text(level == "over" ? (cost?.blocked_why ?? "out of budget")
+                         : "today of \(money(b?.daily_cap))")
+                        .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(money(cost?.week))
+                        .font(.system(.title3, design: .rounded).weight(.bold).monospacedDigit())
+                    Text("7 days").font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+                    Text("\(money(cost?.month)) / \(money(b?.monthly_cap)) month")
+                        .font(.system(.caption, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Palette.inkDim)
+                }
+            }
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Palette.inkDim.opacity(0.18))
+                    Capsule().fill(tint)
+                        .frame(width: g.size.width * min(1, max(0, b?.fraction ?? 0)))
+                }
+            }
+            .frame(height: 6)
+            let rows = (cost?.by_source_today ?? [:]).filter { $0.value >= 0.005 }
+                .sorted { $0.value > $1.value }
+            ForEach(rows, id: \.key) { k, v in
+                HStack {
+                    Text(Cost.labels[k] ?? k).font(.system(.subheadline, design: .rounded))
+                    Spacer()
+                    Text(money(v)).font(.system(.subheadline, design: .rounded).monospacedDigit())
+                }
+            }
+            if let n = cost?.unpriced_today, n > 0 {
+                Text("+\(n) calls with no known price")
                     .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(cost?.week.map { String(format: "$%.2f", $0) } ?? "–")
-                    .font(.system(.title3, design: .rounded).weight(.bold).monospacedDigit())
-                Text("this week").font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+            if let bl = cost?.billed {
+                if bl.available == true {
+                    Text("OpenAI billed, all apps: \(money(bl.today)) today · \(money(bl.month)) month")
+                        .font(.system(.caption, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Palette.inkDim)
+                } else if let hint = bl.hint {
+                    Text(hint).font(.system(.caption2, design: .rounded)).foregroundStyle(Palette.inkDim)
+                }
+            }
+            if b?.guard_off == true {
+                Text("Budget guard off today").font(.system(.caption, design: .rounded))
+                    .foregroundStyle(Palette.beak)
             }
         }
         .shell()

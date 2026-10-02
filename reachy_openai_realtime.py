@@ -2307,6 +2307,15 @@ class RealtimeSession:
 
             # --- transcripts, for the dashboard log ---
             elif t == "conversation.item.input_audio_transcription.completed":
+                # Input transcription is billed on its own model.
+                tu = msg.get("usage") or {}
+                if tu.get("type") == "duration" or "seconds" in tu:
+                    reachy_cost.record_minutes("other", "gpt-4o-mini-transcribe",
+                                               float(tu.get("seconds") or 0) / 60,
+                                               {"what": "realtime input transcription"})
+                elif tu:
+                    reachy_cost.record_tokens("other", "gpt-4o-mini-transcribe", tu,
+                                              {"what": "realtime input transcription"})
                 txt = (msg.get("transcript") or "").strip()
                 if txt:
                     self.on_user_text(txt)

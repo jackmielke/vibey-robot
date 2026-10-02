@@ -1240,6 +1240,8 @@ def _guest_turn(text: str, chat_id: str, name: str, context: str = "") -> str:
     # CLAUDE.md and memory files, and a stranger must never be one prompt away
     # from those. This call has no tools and sees nothing but what is here.
     import reachy_brain
+    if _budget_blocked():
+        return "I'm out of budget today, so I'm resting. Try again tomorrow."
     hist = GUEST_HISTORY.setdefault(chat_id, [])
     hist.append({"role": "user", "content": text[:800]})
     del hist[:-10]
@@ -1258,7 +1260,14 @@ def _guest_turn(text: str, chat_id: str, name: str, context: str = "") -> str:
             headers={"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY', '')}",
                      "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as r:
-            out = json.loads(r.read())["choices"][0]["message"]["content"].strip()
+            resp = json.loads(r.read())
+        try:
+            import reachy_cost
+            reachy_cost.record_tokens("guest_brain", resp.get("model") or GUEST_MODEL,
+                                      resp.get("usage") or {})
+        except Exception:  # noqa: BLE001
+            pass
+        out = resp["choices"][0]["message"]["content"].strip()
     except Exception as e:  # noqa: BLE001
         print(f"[guest] error: {e}", flush=True)
         out = ""
@@ -1272,6 +1281,9 @@ def _owner_text_turn(text: str, name: str = "Jack") -> str:
     """Jack texting. The same brain as the voice (reachy_brain): same persona,
     lessons and tools, and the recent conversation from both sides. Never
     spoken, never wakes the robot: body tools are only offered while awake."""
+    if _budget_blocked():
+        import reachy_cost
+        return reachy_cost.OUT_OF_BUDGET_TEXT
     if STATE["vibe"] and STATE["vibe_available"]:
         # Vibe mode is an explicit choice of agent; texts follow it as before.
         return _typed_turn(text, channel="telegram")
@@ -1550,7 +1562,10 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             import reachy_cost
             self._json({**reachy_cost.summary(),
                         "spoken": reachy_cost.spoken(),
-                        "idle_sleep_minutes": IDLE_SLEEP_S / 60})
+                        "report": reachy_cost.text_report(),
+                        "blocked": BUDGET["blocked"], "blocked_why": BUDGET["why"],
+                        "idle_sleep_minutes": IDLE_SLEEP_S / 60,
+                        "voice_session_max_minutes": VOICE_SESSION_MAX_S / 60})
         elif self.path.startswith("/vibelog"):
             self._json({"events": _vibe_thoughts()})
         elif self.path.startswith("/emotes"):
@@ -2695,6 +2710,8 @@ def _run_openai_realtime() -> None:
     its own VAD, its own playback."""
     prev_mode = STATE["mode"]
     STATE["mode"] = "openai"
+    if not VOICE_SINCE["t"]:
+        VOICE_SINCE["t"] = time.time()
     STATE["speaking"] = False
     STATE["listening"] = True
     _log_turn("wonder", "(OpenAI Realtime mode — full-duplex, just talk)")
@@ -2717,6 +2734,8 @@ def _run_openai_realtime() -> None:
         STATE["openai"] = False
     finally:
         STATE["mode"] = prev_mode
+        if not STATE["openai"] or STATE["asleep"]:
+            VOICE_SINCE["t"] = 0.0
         STATE["listening"] = False
         threading.Thread(target=_mode_antennas, daemon=True).start()
         print("[chat] ← OpenAI Realtime stopped; back to normal brains",
@@ -2834,6 +2853,11 @@ def _wake_now(reason: str = "wake") -> None:
         print("[chat] ignored phrase — wake phrase is off", flush=True)
         return
 
+    if _budget_blocked():
+        print(f"[chat] ignored {reason} wake — out of OpenAI budget", flush=True)
+        reachy_events.emit("system", "not waking: out of budget (/budget raise to override)",
+                           icon="💸")
+        return
     reachy_events.emit("system", f"waking up ({reason})", icon="☀")
     # Both flags together, before anything slow. The main loop must never see
     # "awake, but nobody is holding the conversation".
@@ -2881,7 +2905,82 @@ def _sleep_now() -> None:
 
 
 # How long the room can stay quiet before the robot puts itself to bed.
-IDLE_SLEEP_S = float(os.environ.get("VIBEY_IDLE_SLEEP_S", 900))
+IDLE_SLEEP_S = float(os.environ.get("VIBEY_IDLE_SLEEP_S", 600))
+# GPT-Live bills every second the socket is open, talk or not, so one wake is
+# also capped: after this long awake the robot says goodnight regardless.
+VOICE_SESSION_MAX_S = float(os.environ.get("VIBEY_VOICE_SESSION_MAX_S", 1200))
+VOICE_SINCE = {"t": 0.0}
+BUDGET = {"blocked": False, "why": ""}
+
+
+def _budget_blocked() -> bool:
+    try:
+        import reachy_cost
+        over = reachy_cost.over_budget()
+    except Exception:  # noqa: BLE001 — a broken meter must not brick the robot
+        return False
+    BUDGET["blocked"] = over
+    return over
+
+
+def _budget_note(kind: str, text: str, urgent: bool) -> None:
+    """One note per kind per day, remembered across restarts."""
+    import reachy_cost
+    day = datetime.datetime.now().strftime("%Y-%m-%d")
+    sent = reachy_cost.kv_get("budget_notes") or {}
+    if sent.get(kind) == day:
+        return
+    try:
+        import reachy_telegram
+        r = reachy_telegram.notify_owner(text, urgent=urgent)
+    except Exception as e:  # noqa: BLE001
+        r = str(e)
+    if r == "Texted Jack." or "Nobody's paired" in r:
+        sent[kind] = day
+        reachy_cost.kv_set("budget_notes", sent)
+    print(f"[budget] {kind} note: {r}", flush=True)
+
+
+def _budget_watcher() -> None:
+    """80%: one quiet text. 100%: sleep, refuse wakes, say why. Also caps a
+    single voice session and pulls the account's real bill hourly."""
+    import reachy_cost
+    while True:
+        time.sleep(20)
+        try:
+            b = reachy_cost.budget_state()
+            cap = b["monthly_cap"] if b["binding"] == "month" else b["daily_cap"]
+            spent = b["month"] if b["binding"] == "month" else b["today"]
+            per = "this month" if b["binding"] == "month" else "today"
+            if b["level"] == "over":
+                BUDGET.update(blocked=True,
+                              why=f"out of budget: ${spent:.2f} of ${cap:.2f} {per}")
+                if not STATE["asleep"]:
+                    print(f"[budget] {BUDGET['why']} — sleeping", flush=True)
+                    reachy_events.emit("system", f"sleeping: {BUDGET['why']}", icon="💸")
+                    _sleep_now()
+                _budget_note("over", f"💸 I've used ${spent:.2f} of my ${cap:.2f} OpenAI "
+                             f"budget {per}, so I've gone to sleep and won't wake by voice. "
+                             f"/budget raise (adds $3) or /budget off (today) to override.",
+                             urgent=True)
+            else:
+                BUDGET.update(blocked=False, why="")
+                if b["level"] == "warn":
+                    _budget_note("warn", f"heads up: ${spent:.2f} of ${cap:.2f} OpenAI "
+                                 f"budget used {per} (80%). /cost for the breakdown.",
+                                 urgent=False)
+            # One wake, one bill: cap continuous voice.
+            if (VOICE_SINCE["t"] and not STATE["asleep"]
+                    and time.time() - VOICE_SINCE["t"] > VOICE_SESSION_MAX_S):
+                print(f"[chat] voice session hit {VOICE_SESSION_MAX_S / 60:.0f} min — "
+                      f"sleeping", flush=True)
+                reachy_events.emit("system", f"sleeping: {VOICE_SESSION_MAX_S / 60:.0f}-min "
+                                   f"voice session cap", icon="⏱")
+                VOICE_SINCE["t"] = 0.0
+                _sleep_now()
+            reachy_cost.refresh_billed()
+        except Exception as e:  # noqa: BLE001
+            print(f"[budget] watcher: {e}", flush=True)
 
 
 def _idle_watcher() -> None:
@@ -2925,6 +3024,7 @@ def _idle_watcher() -> None:
 def main():
     _start_ctrl_server()
     threading.Thread(target=_idle_watcher, daemon=True).start()
+    threading.Thread(target=_budget_watcher, daemon=True).start()
     global BRAIN
     brain = Brain()
     BRAIN = brain

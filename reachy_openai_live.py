@@ -92,6 +92,29 @@ class LiveSession(RealtimeSession):
         self._last_delta_at = 0.0
         self._last_rx = 0.0
         self._minutes = 0.0
+        self._conn_at = 0.0       # when this socket opened (billing is per second open)
+        self._billed_min = 0.0    # minutes already written to reachy_cost for this socket
+        self._meter_at = 0.0
+
+    # ----------------------------------------------------------------- #
+    # Meter: Live bills the voice layer per second the session is open,
+    # silence included. Record the larger of what the server reports and the
+    # wall clock, so a payload we misread can only over-count, never hide spend.
+    # ----------------------------------------------------------------- #
+    def _meter(self) -> None:
+        if not self._conn_at:
+            return
+        try:
+            import reachy_cost
+            wall = (time.time() - self._conn_at) / 60
+            now_min = max(self._minutes, wall)
+            delta = now_min - self._billed_min
+            if delta > 0.0:
+                reachy_cost.record_minutes("live_voice", LIVE_MODEL, delta)
+                self._billed_min = now_min
+        except Exception:  # noqa: BLE001
+            pass
+        self._meter_at = time.time()
 
     # ----------------------------------------------------------------- #
     # Session
@@ -158,6 +181,7 @@ class LiveSession(RealtimeSession):
                     self._said, self._heard = [], []
                     self._response_active = False
                     self._last_rx = time.time()
+                    self._conn_at, self._billed_min, self._minutes = time.time(), 0.0, 0.0
                     await ws.send(json.dumps(self._session_start()))
                     FATAL_REASON["why"] = None
                     sender = asyncio.ensure_future(self._sender(ws, queue, should_run, stop))
@@ -168,6 +192,8 @@ class LiveSession(RealtimeSession):
                     finally:
                         for t in (sender, announcer, flusher):
                             t.cancel()
+                        self._meter()
+                        self._conn_at = 0.0
             except Exception as e:  # noqa: BLE001
                 if not should_run() or stop.is_set():
                     break
@@ -237,6 +263,8 @@ class LiveSession(RealtimeSession):
             except Exception:
                 return
             self._last_rx = time.time()
+            if self._last_rx - self._meter_at > 30:
+                self._meter()
             try:
                 msg = json.loads(raw)
             except Exception:
@@ -293,7 +321,18 @@ class LiveSession(RealtimeSession):
 
             elif t == "session.usage.updated":
                 u = msg.get("usage") or {}
-                self._minutes = float(u.get("total_minutes") or u.get("minutes") or self._minutes)
+                if not LiveSession._logged_usage:
+                    # Shape isn't documented; keep one real payload in the log.
+                    LiveSession._logged_usage = True
+                    self.log(f"usage.updated payload: {json.dumps(msg)[:600]}")
+                mins = (u.get("total_minutes") or u.get("minutes")
+                        or (float(u.get("total_seconds") or u.get("seconds")
+                                  or u.get("duration_seconds") or 0) / 60) or 0)
+                try:
+                    self._minutes = max(self._minutes, float(mins))
+                except (TypeError, ValueError):
+                    pass
+                self._meter()
 
             elif t == "error":
                 err = msg.get("error") or {}
@@ -308,6 +347,7 @@ class LiveSession(RealtimeSession):
     # ----------------------------------------------------------------- #
     _seen_backend_types: set = set()
     _logged_delegation = False
+    _logged_usage = False
 
     def _delegation_event(self, msg: dict, heard: str) -> None:
         try:
@@ -345,6 +385,13 @@ class LiveSession(RealtimeSession):
             if et not in self._seen_backend_types:
                 self._seen_backend_types.add(et)
                 self.log(f"backend event type: {et}")
+            if et in ("response.completed", "response.done", "response.incomplete"):
+                # The backend (gpt-5.5) is billed per token, on top of the minutes.
+                r = ev.get("response") or {}
+                if r.get("usage"):
+                    import reachy_cost
+                    reachy_cost.record_tokens("live_backend", r.get("model") or BACKEND_MODEL,
+                                              r["usage"])
             if et == "response.reasoning_summary_text.done" and ev.get("text"):
                 reachy_events.emit("thinking", f"reasoning: {reachy_events.short(ev['text'], 120)}",
                                    detail={"summary": ev["text"][:2000]}, source="backend", icon="🧩")

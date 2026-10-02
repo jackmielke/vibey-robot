@@ -674,7 +674,8 @@ def _handle(chat_id: int, text: str) -> None:
               "/voicenotes on|off — replies as voice messages too\n"
               "/contacts — who I'm allowed to text (and how to add someone)\n"
               "/proactive on|off — whether I start conversations or only reply\n"
-              "/cost — what I've cost you today\n"
+              "/cost — what I've cost you, by source, vs budget\n"
+              "/budget raise [n] | off | on — override the spend cap\n"
               "/verse — what's happening in my VibeVerse lobby")
         return
     if low.startswith("/privacy"):
@@ -1027,16 +1028,38 @@ def _handle(chat_id: int, text: str) -> None:
             _send(chat_id, f"timelapse failed ({e})")
         return
     if low in ("/cost", "/credits", "/spend"):
-        c = _get_json(f"{CHAT_URL}/cost") or {}
-        if not c:
-            _send(chat_id, "can't read the meter — is the chat service up?")
+        try:
+            import reachy_cost
+            reachy_cost.refresh_billed()
+            report = reachy_cost.text_report()
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"can't read the meter ({e})")
             return
-        _send(chat_id,
-              f"💸 ${c.get('today', 0):.2f} today over {c.get('today_turns', 0)} turns\n"
-              f"· last hour: ${c.get('hour', 0):.2f}\n"
-              f"· last 7 days: ${c.get('week', 0):.2f}\n"
-              f"I put myself to sleep after {c.get('idle_sleep_minutes', 15):.0f} "
-              f"min of quiet.")
+        c = _get_json(f"{CHAT_URL}/cost") or {}
+        _send(chat_id, report + f"\nI sleep after {c.get('idle_sleep_minutes', 10):.0f} min "
+              f"of quiet, or {c.get('voice_session_max_minutes', 20):.0f} min awake.")
+        return
+    if low.startswith("/budget"):
+        import reachy_cost
+        parts = low.split()
+        arg = parts[1] if len(parts) > 1 else ""
+        if arg == "raise":
+            try:
+                amt = float(parts[2].lstrip("$")) if len(parts) > 2 else 3.0
+            except ValueError:
+                amt = 3.0
+            reachy_cost.budget_raise(amt)
+            _send(chat_id, f"ok, +${amt:.2f} for today. /wake when you want me.\n\n"
+                  + reachy_cost.text_report())
+        elif arg == "off":
+            reachy_cost.budget_off()
+            _send(chat_id, "budget guard off until midnight. /budget on to re-arm.")
+        elif arg == "on":
+            reachy_cost.budget_on()
+            _send(chat_id, "budget guard back on.\n\n" + reachy_cost.text_report())
+        else:
+            _send(chat_id, reachy_cost.text_report()
+                  + "\n\n/budget raise [n] · /budget off · /budget on")
         return
     if low == "/status":
         lines = []
@@ -1167,7 +1190,8 @@ OWNER_COMMANDS = [
     ("voicenotes", "replies as voice messages too: on|off"),
     ("contacts", "who I'm allowed to text"),
     ("proactive", "do I start conversations: on|off"),
-    ("cost", "what I've cost you today"),
+    ("cost", "what I've cost you, by source, vs budget"),
+    ("budget", "spend cap: /budget raise [n], off, on"),
     ("verse", "what's happening in my VibeVerse lobby"),
     ("help", "everything I can do"),
 ]

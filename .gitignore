@@ -38,3 +38,4 @@ data/
 # Vibey's memories live on the robot (~/vibey/memories); personal, never in the public repo
 memories/
 supabase/.temp/
+.cost.json.migrated

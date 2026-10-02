@@ -125,6 +125,12 @@ def _describe(jpeg: bytes) -> tuple[str | None, str]:
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.loads(r.read() or b"{}")
+        try:
+            import reachy_cost
+            reachy_cost.record_tokens("vision", data.get("model") or SCENE_MODEL,
+                                      data.get("usage") or {})
+        except Exception:  # noqa: BLE001
+            pass
         text = " ".join(
             (data["choices"][0]["message"]["content"] or "").split()).strip()
         return (text or None), ("" if text else "I couldn't make sense of what I saw")

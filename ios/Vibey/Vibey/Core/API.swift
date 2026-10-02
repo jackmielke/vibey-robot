@@ -94,6 +94,32 @@ struct Cost: Decodable {
     var today_turns: Int?
     var week: Double?
     var hour: Double?
+    var month: Double?
+    var by_source_today: [String: Double]?
+    var unpriced_today: Int?
+    var budget: Budget?
+    var billed: Billed?
+    var blocked: Bool?
+    var blocked_why: String?
+
+    struct Budget: Decodable {
+        var daily_cap: Double?
+        var monthly_cap: Double?
+        var fraction: Double?
+        var level: String?
+        var guard_off: Bool?
+    }
+    struct Billed: Decodable {
+        var available: Bool?
+        var today: Double?
+        var month: Double?
+        var hint: String?
+        var error: String?
+    }
+
+    static let labels = ["live_voice": "Live voice", "live_backend": "Live brain (gpt-5.5)",
+                         "realtime_voice": "Realtime voice", "text_brain": "Texts",
+                         "guest_brain": "Guests", "vision": "Vision", "other": "Other"]
 }
 
 struct SoundFX: Decodable, Identifiable, Hashable {

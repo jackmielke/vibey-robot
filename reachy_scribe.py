@@ -209,7 +209,14 @@ def _summarise(lines, started) -> str:
             headers={"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY', '')}",
                      "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=120) as r:
-            body = json.loads(r.read())["choices"][0]["message"]["content"].strip()
+            resp = json.loads(r.read())
+        try:
+            import reachy_cost
+            reachy_cost.record_tokens("other", resp.get("model") or NOTES_MODEL,
+                                      resp.get("usage") or {}, {"what": "scribe notes"})
+        except Exception:  # noqa: BLE001
+            pass
+        body = resp["choices"][0]["message"]["content"].strip()
     except Exception as e:  # noqa: BLE001
         _S["log"](f"[scribe] summary failed: {e}")
         body = ("couldn't write the summary (" + str(e)[:80] + "), here's the raw bit:\n\n"
