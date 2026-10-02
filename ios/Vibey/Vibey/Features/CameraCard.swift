@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// What Vibey sees: fast-refreshing frames from the camera bridge (:8771).
+/// What Vibey sees: a live MJPEG stream from the camera bridge (:8771).
 /// With privacy on it never asks for a frame, and the Mac refuses anyway.
 struct CameraCard: View {
     @EnvironmentObject var store: Store
@@ -110,15 +110,20 @@ struct CameraFeed: View {
         while !Task.isCancelled {
             if store.privacy { image = nil; return }   // never fetch with eyes closed
             do {
-                let data = try await store.api.frame()
-                if let img = UIImage(data: data) {
+                // One long MJPEG stream, newest frame only. Replaces polling
+                // /frame.jpg, which paid a full request per frame and topped
+                // out around 6 fps of 1280px frames.
+                for try await data in store.api.frameStream() {
+                    if store.privacy { image = nil; return }
+                    guard let img = UIImage(data: data) else { continue }
                     image = img
                     problem = nil
                     stamps.append(Date())
                     stamps.removeAll { $0.timeIntervalSinceNow < -2 }
                     fps = Double(stamps.count) / 2
                 }
-                try? await Task.sleep(for: .milliseconds(90))
+                // The Mac ended the stream (privacy on, or the bridge restarted).
+                try? await Task.sleep(for: .milliseconds(500))
             } catch APIError.eyesClosed {
                 image = nil
                 refused = true

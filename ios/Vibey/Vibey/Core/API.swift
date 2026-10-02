@@ -306,4 +306,59 @@ struct VibeyAPI {
     func frame() async throws -> Data {
         try await request("\(camera)/frame.jpg", timeout: 5)
     }
+
+    /// Live camera as one long MJPEG response (640x360 copy made for phones),
+    /// instead of a request per frame. Read greedily and only the NEWEST frame
+    /// is kept (bufferingNewest(1)): a frame that arrives while the UI is
+    /// busy replaces the one waiting, so the picture never plays back the past.
+    /// Throws .eyesClosed if privacy is on; the Mac also just ends the stream
+    /// the moment privacy switches on.
+    func frameStream() -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { cont in
+            let task = Task {
+                do {
+                    guard let u = URL(string: "\(camera)/stream?size=small") else {
+                        throw APIError.unreachable("Bad address: \(host)")
+                    }
+                    var req = URLRequest(url: u, timeoutInterval: 8)
+                    if !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+                    let (bytes, resp): (URLSession.AsyncBytes, URLResponse)
+                    do { (bytes, resp) = try await URLSession.shared.bytes(for: req) }
+                    catch { throw APIError.transport(error, url: u, timeout: 8) }
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    if code == 401 { throw APIError.unauthorized }
+                    if code == 403 { throw APIError.eyesClosed }
+                    if code >= 400 { throw APIError.server("HTTP \(code) from /stream") }
+                    var header = [UInt8](), frame = [UInt8](), want = -1
+                    for try await b in bytes {
+                        if want < 0 {
+                            header.append(b)
+                            if header.count > 1024 { header.removeFirst(header.count - 1024) }
+                            // End of a part's headers: pull out Content-Length.
+                            if header.count >= 4, header.suffix(4) == [13, 10, 13, 10] {
+                                let text = String(decoding: header, as: UTF8.self).lowercased()
+                                if let r = text.range(of: "content-length:") {
+                                    let n = text[r.upperBound...].prefix { $0 != "\r" }
+                                    want = Int(n.trimmingCharacters(in: .whitespaces)) ?? -1
+                                    frame.removeAll(keepingCapacity: true)
+                                    frame.reserveCapacity(max(want, 0))
+                                }
+                                header.removeAll(keepingCapacity: true)
+                            }
+                        } else {
+                            frame.append(b)
+                            if frame.count == want {
+                                cont.yield(Data(frame))
+                                want = -1
+                            }
+                        }
+                    }
+                    cont.finish()
+                } catch {
+                    cont.finish(throwing: error)
+                }
+            }
+            cont.onTermination = { _ in task.cancel() }
+        }
+    }
 }

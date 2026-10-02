@@ -96,7 +96,13 @@ final class AsleepView: NSView {
 // MARK: - Main window
 
 final class MainWindowController: NSWindowController, WKNavigationDelegate {
-    let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    let web: WKWebView = {
+        // The dashboard's camera is a muted WebRTC <video> straight from the
+        // robot; let it start without a click.
+        let c = WKWebViewConfiguration()
+        c.mediaTypesRequiringUserActionForPlayback = []
+        return WKWebView(frame: .zero, configuration: c)
+    }()
     let asleep = AsleepView(frame: .zero)
     private var showingDashboard = false
 

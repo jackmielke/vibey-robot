@@ -27,7 +27,8 @@
   /* contain, not cover: the frame keeps its own shape whatever the box is, and
      the overlay canvas (sized to the same frame in JS) letterboxes with it, so
      the face circles stay on the faces. */
-  .eyes img,.eyes canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain }
+  .eyes img,.eyes video,.eyes canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain }
+  .eyes video { display:none } .eyes.rtc video { display:block } .eyes.rtc img { display:none }
   .eyes .noc { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim) }
   .row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--line) }
   .row:last-child { border-bottom:0 }
@@ -155,8 +156,9 @@
 
   <div class="panel wide" id=p-eyes>
     <h2><span>Eyes</span><span class=sub id=eyesub></span></h2>
-    <div class=eyes>
+    <div class=eyes id=eyesbox>
       <img id=cam alt="">
+      <video id=camv muted autoplay playsinline disablepictureinpicture></video>
       <canvas id=fov width=960 height=540></canvas>
       <div class=noc id=noc>camera offline</div>
     </div>
@@ -349,12 +351,79 @@ layout(); addEventListener('resize',layout);
   };
   grip.ondblclick=()=>{ g.style.removeProperty('--c1'); try{localStorage.removeItem('vibey.c1');}catch(_){} };
 })();
-$('cam').src=CAM+'/stream'; $('cam').onerror=()=>{$('noc').style.display='grid'};
+// Two ways to see. MJPEG from the camera bridge (:8771) is the default: works
+// from any device, respects privacy mode, ~30fps, frames served <5ms after
+// they arrive. Opt-in (?rtc=1, remembered; ?rtc=0 to undo), this page opens
+// its own WebRTC session straight to the robot the way Pollen's desktop app
+// does: hardware H.264 into a <video>, MJPEG until its first frame and again
+// if it drops. Not the default because it is no faster here (Chrome holds
+// ~150ms in its jitter buffer; measured level with MJPEG) and every direct
+// viewer is another ~8 Mbps on the robot's Wi-Fi uplink: with two of them
+// open the bridge fell from 28fps to 6, starving gestures and face memory.
+const camImg=()=>{ if(!$('cam').src) $('cam').src=CAM+'/stream'; };
+camImg(); $('cam').onerror=()=>{ if(!$('eyesbox').classList.contains('rtc')) $('noc').style.display='grid'; };
 // Match the overlay to the real frame size, so "contain" letterboxes both the
 // same way and a circle drawn at 0.5,0.5 lands in the middle of the picture.
-$('cam').onload=e=>{ $('noc').style.display='none';
-  const c=$('fov'), w=e.target.naturalWidth, h=e.target.naturalHeight;
-  if(w&&h&&(c.width!==w||c.height!==h)){ c.width=w; c.height=h; } };
+const fitFov=(w,h)=>{ const c=$('fov'); if(w&&h&&(c.width!==w||c.height!==h)){ c.width=w; c.height=h; } };
+$('cam').onload=e=>{ $('noc').style.display='none'; fitFov(e.target.naturalWidth,e.target.naturalHeight); };
+(()=>{ const V=$('camv'), box=$('eyesbox');
+  const q=new URLSearchParams(location.search).get('rtc');
+  try{ if(q!==null) localStorage.setItem('vibey.rtc',q==='1'?'1':'0'); if(localStorage.getItem('vibey.rtc')!=='1') return; }catch(_){ if(q!=='1') return; }
+  if(!window.RTCPeerConnection || !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+  let pc=null, ws=null, live=false, retry=0, lastT=0, lastAt=0, began=0;
+  const show=on=>{ live=on; box.classList.toggle('rtc',on);
+    if(on){ $('noc').style.display='none'; $('cam').removeAttribute('src'); }  // stop pulling MJPEG
+    else camImg(); };
+  const stop=why=>{ if(why) console.log('[eyes] webrtc:',why); try{ws&&ws.close()}catch(_){}; try{pc&&pc.close()}catch(_){};
+    ws=pc=null; if(live) show(false); clearTimeout(retry); retry=setTimeout(start,why==='privacy'?5000:8000); };
+  async function start(){
+    if(document.hidden){ clearTimeout(retry); retry=setTimeout(start,2000); return; }  // no robot uplink spent on a hidden page
+    const st=await fetch(CAM+'/status').then(r=>r.json()).catch(()=>null);
+    const R=st&&st.robot; if(!R){ return stop('privacy'); }
+    const ip=R.host; let sid=null; began=Date.now();
+    // The robot builds its ICE candidates from the address it THINKS it has.
+    // After a network move that can be stale (10.42.0.1, hotspot mode) while
+    // the robot answers fine at ip, so also offer every candidate at ip.
+    const fix=c=>{ const m=/^(candidate:\S+ \d+ udp \d+ )(\d+\.\d+\.\d+\.\d+)( .*typ host.*)$/i.exec(c);
+      return m&&/^\d+\.\d+\.\d+\.\d+$/.test(ip)&&m[2]!==ip ? [c, m[1]+ip+m[3]] : [c]; };
+    ws=new WebSocket(`ws://${ip}:${R.signalling}`);
+    pc=new RTCPeerConnection({iceServers:[]}); window.vibeyEyes={pc};  // for getStats() from the console
+    const send=o=>ws&&ws.readyState===1&&ws.send(JSON.stringify(o));
+    pc.onicecandidate=e=>{ if(e.candidate&&sid) send({type:'peer',sessionId:sid,ice:{candidate:e.candidate.candidate,sdpMLineIndex:e.candidate.sdpMLineIndex}}); };
+    pc.ontrack=e=>{ if(e.track.kind!=='video') return;
+      // Ask for the smallest playout delay the browser will give us.
+      try{ e.receiver.playoutDelayHint=0 }catch(_){} try{ e.receiver.jitterBufferTarget=0 }catch(_){}
+      V.srcObject=new MediaStream([e.track]); V.play().catch(()=>{}); };
+    pc.onconnectionstatechange=()=>{ if(['failed','closed'].includes(pc&&pc.connectionState)) stop(pc.connectionState); };
+    ws.onclose=()=>{ if(pc) stop('signalling closed'); };
+    ws.onmessage=async ev=>{ const m=JSON.parse(ev.data);
+      const open=id=>{ if(id&&!sid){ sid='pending'; send({type:'startSession',peerId:id}); } };
+      if(m.type==='welcome'){ send({type:'setPeerStatus',roles:['listener'],meta:{name:'vibey-dashboard'}}); send({type:'list'}); }
+      else if(m.type==='list') open(((m.producers||[]).find(p=>p.meta&&p.meta.name==='reachymini')||{}).id);
+      else if(m.type==='peerStatusChanged'&&(m.roles||[]).includes('producer')&&m.meta&&m.meta.name==='reachymini') open(m.peerId);
+      else if(m.type==='sessionStarted') sid=m.sessionId;
+      else if(m.type==='peer'&&m.sdp){
+        const sdp=m.sdp.sdp.split('\r\n').flatMap(l=>l.startsWith('a=candidate:')?fix(l.slice(2)).map(c=>'a='+c):[l]).join('\r\n');
+        await pc.setRemoteDescription({type:m.sdp.type,sdp});
+        // Receive-only, no local tracks: we never send audio back (the bridge
+        // learned the hard way that client audio barges in over the speaker).
+        // Marking the robot's mic m-line inactive would be tidier, but the
+        // robot ends the session if we do, so its audio arrives and is ignored.
+        const a=await pc.createAnswer(); await pc.setLocalDescription(a);
+        send({type:'peer',sessionId:sid,sdp:{type:a.type,sdp:a.sdp}}); }
+      else if(m.type==='peer'&&m.ice&&m.ice.candidate)
+        for(const c of fix(m.ice.candidate)) pc.addIceCandidate({candidate:c,sdpMLineIndex:m.ice.sdpMLineIndex}).catch(()=>{});
+      else if(m.type==='endSession'||m.type==='error') stop(m.type+(m.details?': '+m.details:''));
+    };
+  }
+  // Live = frames are actually advancing. A frozen track falls back to MJPEG.
+  setInterval(()=>{ const t=V.currentTime, now=Date.now();
+    if(t!==lastT){ lastT=t; lastAt=now; if(!live&&V.videoWidth){ show(true); fitFov(V.videoWidth,V.videoHeight); } }
+    else if(live&&now-lastAt>3000) stop('video stalled');
+    else if(!live&&pc&&now-began>12000) stop('no video after 12s'); },500);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden&&pc) stop('hidden'); });
+  start();
+})();
 async function eyes(){
   const p=await j('/perception'); if(!p) return;
   const c=$('fov'), x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height);
