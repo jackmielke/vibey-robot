@@ -95,7 +95,23 @@ def _tg(method: str, params: dict, timeout: float = 65.0):
         return json.loads(r.read())
 
 
+# Set per handler thread when the webhook already told this sender "i'm not
+# awake right now". The first thing sent back in that thread gets the prefix,
+# so the late answer reads as a follow-up rather than a non sequitur.
+_tl = threading.local()
+WOKE_PREFIX = "ok i'm up! "
+
+
+def _take_prefix(chat_id) -> str:
+    """Only the chat that got the offline note, and only once."""
+    if getattr(_tl, "prefix_chat", None) != chat_id:
+        return ""
+    _tl.prefix_chat = None
+    return WOKE_PREFIX
+
+
 def _send(chat_id: int, text: str) -> None:
+    text = _take_prefix(chat_id) + text
     try:
         for chunk in [text[i:i + 3800] for i in range(0, max(len(text), 1), 3800)]:
             _tg("sendMessage", {"chat_id": chat_id, "text": chunk}, timeout=15)
@@ -1234,7 +1250,7 @@ def _handle_group(chat_id: int, msg: dict) -> None:
                                          "context": context[:4000]})
     reply = (out or {}).get("reply") or "hmm, lost my train of thought"
     try:
-        _tg("sendMessage", {"chat_id": chat_id, "text": reply,
+        _tg("sendMessage", {"chat_id": chat_id, "text": _take_prefix(chat_id) + reply,
                             "reply_to_message_id": msg["message_id"]}, timeout=15)
     except Exception:  # noqa: BLE001
         _send(chat_id, reply)
@@ -1263,6 +1279,50 @@ def run() -> None:
     _set_command_menu(_state().get("owner"))
     threading.Thread(target=_sleep_watcher, daemon=True).start()
 
+    if MODE == "poll":
+        print("[tg] TELEGRAM_MODE=poll: long-polling getUpdates (the webhook "
+              "must be deleted first, or this gets 409)", flush=True)
+        _run_poll()
+    else:
+        _run_inbox()
+
+
+def _spawn(target, args, offline: bool = False) -> None:
+    def go():
+        if offline:
+            _tl.prefix_chat = args[0]
+        target(*args)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def _route(u: dict, offline: bool = False) -> None:
+    """One Telegram update into the owner / guest / group handlers. Shared by
+    both transports so the routing is identical whichever one is running."""
+    msg = u.get("message") or u.get("edited_message")
+    if not msg or "text" not in msg:
+        return
+    chat_id = msg["chat"]["id"]
+    st = _state()
+    if not st.get("owner"):
+        st["owner"] = chat_id
+        st["owner_name"] = (msg["chat"].get("first_name") or
+                            msg["chat"].get("username") or "?")
+        _save_state(st)
+        print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
+        _send(chat_id, "👋 paired! You're my human now.")
+    if msg["chat"].get("type") in ("group", "supergroup"):
+        _spawn(_handle_group, (chat_id, msg), offline)
+        return
+    if chat_id != st.get("owner"):
+        # Not the owner: a walled-off guest chat, plus consent.
+        _spawn(_handle_guest, (chat_id, msg), offline)
+        return
+    print(f"[tg] <- {msg['text'][:80]!r}", flush=True)
+    _spawn(_handle, (chat_id, msg["text"]), offline)
+
+
+def _run_poll() -> None:
+    """The old transport: Telegram long-poll. Fallback only (TELEGRAM_MODE=poll)."""
     offset = 0
     while True:
         try:
@@ -1273,30 +1333,81 @@ def run() -> None:
             continue
         for u in upd.get("result", []):
             offset = u["update_id"] + 1
-            msg = u.get("message") or u.get("edited_message")
-            if not msg or "text" not in msg:
-                continue
-            chat_id = msg["chat"]["id"]
-            st = _state()
-            if not st.get("owner"):
-                st["owner"] = chat_id
-                st["owner_name"] = (msg["chat"].get("first_name") or
-                                    msg["chat"].get("username") or "?")
-                _save_state(st)
-                print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
-                _send(chat_id, "👋 paired! You're my human now.")
-            if msg["chat"].get("type") in ("group", "supergroup"):
-                threading.Thread(target=_handle_group, args=(chat_id, msg),
-                                 daemon=True).start()
-                continue
-            if chat_id != st.get("owner"):
-                # Not the owner: a walled-off guest chat, plus consent.
-                threading.Thread(target=_handle_guest, args=(chat_id, msg),
-                                 daemon=True).start()
-                continue
-            print(f"[tg] <- {msg['text'][:80]!r}", flush=True)
-            threading.Thread(target=_handle, args=(chat_id, msg["text"]),
-                             daemon=True).start()
+            _route(u)
+
+
+# ── Inbox transport (default) ─────────────────────────────────────────────
+# Telegram posts to the Supabase edge function vibey-telegram-webhook, which
+# stores every update in vibey_telegram_inbox and, if this process hasn't
+# beaten vibey_heartbeat for 2 minutes, tells the sender Vibey is asleep. Here
+# we drain the inbox in update_id order and keep the heartbeat fresh. Rows the
+# webhook already answered get "ok i'm up!" on the real reply.
+MODE = os.environ.get("TELEGRAM_MODE", "inbox").strip().lower()
+SB_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SB_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+INBOX_EVERY_S = 1.5
+HEARTBEAT_EVERY_S = 30
+
+
+def _sb(path: str, method: str = "GET", body=None, prefer: str = ""):
+    headers = {"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}",
+               "Content-Type": "application/json"}
+    if prefer:
+        headers["Prefer"] = prefer
+    req = urllib.request.Request(
+        f"{SB_URL}/rest/v1/{path}", method=method, headers=headers,
+        data=json.dumps(body).encode() if body is not None else None)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        raw = r.read()
+        return json.loads(raw) if raw else None
+
+
+def _beat() -> None:
+    _sb("vibey_heartbeat?on_conflict=id", "POST",
+        {"id": "bot", "last_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+        prefer="resolution=merge-duplicates,return=minimal")
+
+
+def _heartbeat_loop() -> None:
+    while True:
+        try:
+            _beat()
+        except Exception as e:  # noqa: BLE001
+            print(f"[tg] heartbeat failed: {e}", flush=True)
+        time.sleep(HEARTBEAT_EVERY_S)
+
+
+def _run_inbox() -> None:
+    if not (SB_URL and SB_KEY):
+        print("[tg] inbox mode needs SUPABASE_URL and SUPABASE_SERVICE_KEY in "
+              ".env (or set TELEGRAM_MODE=poll after deleteWebhook)", flush=True)
+        return
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
+    print("[tg] draining the Supabase inbox", flush=True)
+    done: set = set()   # dispatched but not yet marked, so a failed PATCH can't double-answer
+    while True:
+        try:
+            rows = _sb("vibey_telegram_inbox?processed_at=is.null&order=update_id.asc"
+                       "&limit=50&select=update_id,payload,offline_replied_at") or []
+            fresh = [r for r in rows if r["update_id"] not in done]
+            for r in fresh:
+                try:
+                    _route(r["payload"] or {}, offline=bool(r.get("offline_replied_at")))
+                except Exception as e:  # noqa: BLE001 — one bad update never blocks the queue
+                    print(f"[tg] route failed for {r['update_id']}: {e}", flush=True)
+                done.add(r["update_id"])
+            pending = [r["update_id"] for r in rows if r["update_id"] in done]
+            if pending:
+                _sb("vibey_telegram_inbox?update_id=in.("
+                    + ",".join(str(i) for i in pending) + ")", "PATCH",
+                    {"processed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                    prefer="return=minimal")
+                done.difference_update(pending)
+        except Exception as e:  # noqa: BLE001
+            print(f"[tg] inbox error: {e}", flush=True)
+            time.sleep(5)
+            continue
+        time.sleep(INBOX_EVERY_S)
 
 
 if __name__ == "__main__":

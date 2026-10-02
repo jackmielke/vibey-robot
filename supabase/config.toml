@@ -1,0 +1,5 @@
+project_id = "efdqqnubowgwsnwvlalp"
+
+# Telegram calls this; it authenticates with X-Telegram-Bot-Api-Secret-Token, not a JWT.
+[functions.vibey-telegram-webhook]
+verify_jwt = false
