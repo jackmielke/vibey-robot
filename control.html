@@ -77,7 +77,7 @@
   .mem textarea { flex:1; resize:none; overflow:hidden; background:transparent; border:1px solid transparent; border-radius:8px;
     color:inherit; font:inherit; line-height:1.45; padding:5px 8px; min-height:32px }
   .mem textarea:hover,.mem textarea:focus { border-color:var(--line); outline:none; background:var(--field) }
-  .mem .d { color:var(--dim); font-size:11px; white-space:nowrap; padding-top:7px; min-width:74px }
+  .mem .d { color:var(--dim); font-size:11px; white-space:nowrap; padding-top:7px; min-width:112px }
   .mem .x { background:transparent; border:0; color:var(--dim); cursor:pointer; font-size:16px; padding:4px 6px; border-radius:6px; line-height:1 }
   .mem .x:hover { color:var(--bad); background:rgba(127,127,127,.1) }
   .mem.saved textarea { border-color:var(--on) }
@@ -107,7 +107,12 @@
   .cols { display:grid; gap:14px; align-items:start }
   .col { display:flex; flex-direction:column; gap:14px; min-width:0 }
   .m2 .cols { grid-template-columns:1fr 1fr }
-  .m3 .cols { grid-template-columns:var(--c1,1.35fr) 1fr minmax(340px,.95fr) }
+  .m3 .cols { grid-template-columns:minmax(0,2fr) minmax(360px,.9fr) }
+  .m3 .cols.pack, .m2 .cols.pack { grid-template-columns:minmax(0,1fr) minmax(0,1fr) }
+  #p-friends h2 { cursor:pointer; user-select:none }
+  #p-friends.shut #faces { display:none }
+  .face.more { display:grid; place-items:center; width:84px; height:84px; margin:0 auto; border-radius:12px; border:1px dashed var(--line); background:var(--field); color:var(--dim); cursor:pointer; font:inherit; font-size:12px }
+  .face.more:hover { color:var(--text); border-color:var(--dim) }
   .log .meta { color:var(--dim); font-style:italic; opacity:.75 }
   .colgrip { display:none }
   @media (min-width:1280px){
@@ -323,34 +328,36 @@ function renderBrain(){
 }
 
 // ---- layout ---------------------------------------------------------------
+// Narrow: one column in reading order. Medium/wide: Stage on top, then the
+// panels below are packed into two EQUAL-width columns, each going into
+// whichever column is shortest right now (masonry). Equal widths mean moving a
+// panel never changes its height, so packing settles instead of flapping.
+// Wide adds Live chat as its own sticky right column. Re-packed on resize and
+// whenever a panel's height changes (ResizeObserver).
 const ORDER=['p-stage','p-log','p-eyes','p-memory','p-brain','p-senses','p-dj','p-friends','p-else'];
-let layoutMode=0;
-function layout(){ const w=innerWidth, m=w>=1280?3:w>=768?2:1; if(m===layoutMode) return; layoutMode=m;
-  const g=$('grid'), P=ORDER.reduce((o,id)=>(o[id]=$(id),o),{}), L=$('log'), atEnd=L.scrollTop+L.clientHeight>=L.scrollHeight-40;
-  const col=(ids,cls)=>{ const c=document.createElement('div'); c.className='col'+(cls?' '+cls:''); ids.forEach(i=>c.appendChild(P[i])); return c; };
-  const cols=(...cs)=>{ const d=document.createElement('div'); d.className='cols'; cs.forEach(c=>d.appendChild(c)); return d; };
-  const parts= m===1 ? ORDER.map(i=>P[i])
-    : m===2 ? [P['p-stage'],P['p-log'],cols(col(['p-eyes','p-memory','p-dj']),col(['p-brain','p-senses','p-friends'])),P['p-else']]
-    // Wide: Stage rides on top of the camera column instead of as its own
-    // full-width band — that band was mostly empty, and the stage picker is
-    // about what the camera and brain are allowed to do anyway. Everything
-    // else starts one row higher as a result.
-    : [cols(col(['p-stage','p-eyes','p-friends','p-memory','p-dj']),col(['p-brain','p-senses']),col(['p-log'],'chat')),P['p-else']];
-  g.replaceChildren(...parts); g.className='grid m'+m; if(atEnd) L.scrollTop=L.scrollHeight; }
-layout(); addEventListener('resize',layout);
+const PACK=['p-eyes','p-brain','p-senses','p-memory','p-friends','p-dj'];
+let layoutMode=0, packKey='', packRaf=0;
+const PNL=Object.fromEntries(ORDER.map(id=>[id,document.getElementById(id)])), $p=id=>PNL[id]; // cached: detached panels aren't findable by id
+const div=(cls,...kids)=>{ const d=document.createElement('div'); d.className=cls; kids.forEach(k=>d.appendChild(k)); return d; };
+function layout(){ const w=innerWidth, m=w>=1280?3:w>=768?2:1;
+  if(m!==layoutMode){ layoutMode=m; packKey='';
+    const g=$('grid'), L=$('log'), atEnd=L.scrollTop+L.clientHeight>=L.scrollHeight-40;
+    if(m===1) g.replaceChildren(...ORDER.map($p));
+    else { const pack=div('cols pack',div('col'),div('col'));
+      g.replaceChildren(...(m===2 ? [$p('p-stage'),$p('p-log'),pack,$p('p-else')]
+        : [div('cols',div('col main',$p('p-stage'),pack),div('col chat',$p('p-log'))),$p('p-else')])); }
+    g.className='grid m'+m; if(atEnd) L.scrollTop=L.scrollHeight; }
+  pack(); }
+function pack(){ if(layoutMode===1) return; const cs=document.querySelectorAll('.pack > .col'); if(cs.length<2) return;
+  const a=document.activeElement; if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)&&a.closest('.pack')) return; // never move a panel mid-edit
+  const h=[0,0], gap=14, to=PACK.map(id=>{ const i=h[1]<h[0]?1:0; h[i]+=$p(id).offsetHeight+gap; return i; });
+  const key=to.join(''); if(key===packKey) return; packKey=key;
+  PACK.forEach((id,k)=>cs[to[k]].appendChild($p(id))); }
+const repack=()=>{ cancelAnimationFrame(packRaf); packRaf=requestAnimationFrame(layout); };
+layout(); addEventListener('resize',repack); document.addEventListener('focusout',()=>setTimeout(repack,50));
+if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=>ro.observe($p(id))); }
 
 // ---- eyes -----------------------------------------------------------------
-(()=>{ // drag the camera column's right edge; remembered per browser
-  const g=document.querySelector('.grid'), eyes=$('p-eyes'); if(!g||!eyes) return;
-  const grip=document.createElement('div'); grip.className='colgrip'; grip.title='drag to resize'; eyes.appendChild(grip);
-  try{ const w=localStorage.getItem('vibey.c1'); if(w) g.style.setProperty('--c1',w); }catch(_){}
-  grip.onpointerdown=e=>{ e.preventDefault(); grip.setPointerCapture(e.pointerId); grip.classList.add('drag');
-    const left=g.getBoundingClientRect().left;
-    grip.onpointermove=m=>{ const px=Math.max(420,Math.min(g.clientWidth*0.7,m.clientX-left)); g.style.setProperty('--c1',px+'px'); };
-    grip.onpointerup=()=>{ grip.onpointermove=null; grip.classList.remove('drag'); try{localStorage.setItem('vibey.c1',g.style.getPropertyValue('--c1'));}catch(_){} };
-  };
-  grip.ondblclick=()=>{ g.style.removeProperty('--c1'); try{localStorage.removeItem('vibey.c1');}catch(_){} };
-})();
 // Two ways to see. MJPEG from the camera bridge (:8771) is the default: works
 // from any device, respects privacy mode, ~30fps, frames served <5ms after
 // they arrive. Opt-in (?rtc=1, remembered; ?rtc=0 to undo), this page opens
@@ -437,13 +444,19 @@ async function eyes(){
 }
 
 // ---- friends --------------------------------------------------------------
+let showUnnamed=false;
+(()=>{ const P=$('p-friends'); try{ if(localStorage.getItem('vibey.friendsShut')==='1') P.classList.add('shut'); }catch(_){}
+  P.querySelector('h2').onclick=()=>{ P.classList.toggle('shut'); try{localStorage.setItem('vibey.friendsShut',P.classList.contains('shut')?'1':'0');}catch(_){} friends(); }; })();
 async function friends(){
   const list=await j('/peoplelist'); if(!Array.isArray(list)) return;
   const here=new Set(((await j('/perception'))||{}).people?.map(q=>q.face_id)||[]);
-  $('friendsub').textContent=list.length+' known';
+  $('friendsub').textContent=`${list.filter(p=>p.name).length} named · ${list.length} known ${$('p-friends').classList.contains('shut')?'▸':'▾'}`;
   if(document.activeElement&&document.activeElement.classList.contains('fname')) return; // don't redraw mid-rename
   const esc=t=>String(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  $('faces').innerHTML=list.map(p=>`<div class="face ${here.has(p.id)?'here':''}" title="seen ${p.times_seen}× · click the name to rename"><img src="${p.snapshot||''}" onerror="this.style.visibility='hidden'"><input class=fname data-id="${esc(p.id)}" value="${esc(p.name)}" placeholder="name…" aria-label="Name for this face"></div>`).join('')||'<span class=sub>no faces saved yet</span>';
+  const named=list.filter(p=>p.name), unnamed=list.filter(p=>!p.name);
+  const tile=p=>`<div class="face ${here.has(p.id)?'here':''}" title="seen ${p.times_seen}× · click the name to rename"><img src="${p.snapshot||''}" onerror="this.style.visibility='hidden'"><input class=fname data-id="${esc(p.id)}" value="${esc(p.name)}" placeholder="name…" aria-label="Name for this face"></div>`;
+  $('faces').innerHTML=(named.map(tile).join('')+(unnamed.length?(showUnnamed?unnamed.map(tile).join('')+`<div><button class="face more" id=facemore>hide unnamed</button></div>`:`<div><button class="face more" id=facemore>+${unnamed.length} unnamed</button></div>`):''))||'<span class=sub>no faces saved yet</span>';
+  const fm=$('facemore'); if(fm) fm.onclick=()=>{ showUnnamed=!showUnnamed; friends(); };
   document.querySelectorAll('.fname').forEach(inp=>{ const was=inp.value;
     const save=async()=>{ const v=inp.value.trim(); if(!v||v===was) return; inp.disabled=true; await j('/nameface',{name:v,face_id:inp.dataset.id}); friends(); };
     inp.onkeydown=e=>{ if(e.key==='Enter') inp.blur(); if(e.key==='Escape'){ inp.value=was; inp.blur(); } };
