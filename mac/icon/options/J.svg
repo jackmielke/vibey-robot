@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs>
+<clipPath id="sq"><rect x="64" y="64" width="896" height="896" rx="200"/></clipPath>
+<linearGradient id="shell" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset=".7" stop-color="#E9ECF6"/><stop offset="1" stop-color="#C9CEE2"/></linearGradient>
+<radialGradient id="shine" cx=".3" cy=".2" r=".6"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<radialGradient id="lens" cx=".4" cy=".35" r=".75"><stop offset="0" stop-color="#2B2D3C"/><stop offset="1" stop-color="#05060B"/></radialGradient>
+<radialGradient id="cyan" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#E6FFFF"/><stop offset=".45" stop-color="#7BF3FF"/><stop offset="1" stop-color="#2BC8FF" stop-opacity="0"/></radialGradient>
+<radialGradient id="duck" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#FFE680"/><stop offset="1" stop-color="#F5B800"/></radialGradient>
+<filter id="blur"><feGaussianBlur stdDeviation="26"/></filter>
+<filter id="soft"><feGaussianBlur stdDeviation="10"/></filter>
+<filter id="shadow"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#000" flood-opacity=".45"/></filter>
+<linearGradient id="sun" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB45E"/><stop offset=".5" stop-color="#FF5E7E"/><stop offset="1" stop-color="#5B3FD1"/></linearGradient></defs><g clip-path="url(#sq)"><rect width="1024" height="1024" fill="url(#sun)"/><circle cx="512" cy="560" r="330" fill="#fff" opacity=".18" filter="url(#blur)"/><g transform="translate(0,40) scale(1)" filter="url(#shadow)">
+<path d="M372 400 L336 196" stroke="#2A2D3A" stroke-width="14" stroke-linecap="round"/><path d="M652 400 L694 186" stroke="#2A2D3A" stroke-width="14" stroke-linecap="round"/>
+<circle cx="336" cy="192" r="22" fill="#FFD23F"/><circle cx="694" cy="182" r="22" fill="#FFD23F"/>
+<path d="M320 700 Q300 870 512 890 Q724 870 704 700 Z" fill="url(#shell)"/>
+<rect x="232" y="376" width="560" height="348" rx="124" fill="url(#shell)"/>
+<rect x="232" y="376" width="560" height="348" rx="124" fill="url(#shine)" opacity=".7"/>
+<rect x="436" y="538" width="152" height="16" rx="8" fill="#05060B"/><circle cx="380" cy="546" r="96" fill="url(#lens)"/><circle cx="644" cy="546" r="96" fill="url(#lens)"/><ellipse cx="348" cy="506" rx="30" ry="18" fill="#fff" opacity=".8"/><ellipse cx="612" cy="506" rx="30" ry="18" fill="#fff" opacity=".8"/>
+<ellipse cx="512" cy="376" rx="96" ry="48" fill="url(#duck)"/><circle cx="512" cy="302" r="58" fill="url(#duck)"/>
+<path d="M558 302 Q614 298 610 322 Q582 334 554 322 Z" fill="#FF7A1A"/><rect x="468" y="284" width="80" height="22" rx="10" fill="#0E0E16"/></g></g></svg>
