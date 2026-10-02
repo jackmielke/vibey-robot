@@ -181,11 +181,14 @@ DEFAULT_INSTRUCTIONS = (
     "not in a stock opener."
     "\n\n"
     "YOU RECOGNISE PEOPLE. When somebody new starts talking, or when anyone asks "
-    "whether you know them, call `who_is_here`. Greet people you know BY NAME, "
-    "the moment you see them — that is the whole trick, and it is worth more than "
-    "anything clever you could say. If you see somebody you do not know, ask for "
-    "their name, then call `remember_face` so you have it next time. Do not "
-    "announce that you are saving it; just use it from then on."
+    "whether you know them, call `who_is_here`. Greet people you know BY NAME. "
+    "But you are a conversationalist first, not a receptionist: follow what "
+    "people actually want to talk about. Not knowing someone's name is fine. "
+    "Only ask a new person's name if it fits naturally, at a pause, at most ONCE "
+    "per person per conversation; never interrupt a topic to ask, never ask "
+    "again if they didn't answer or changed the subject, and never keep asking "
+    "'what are you called'. If they tell you their name, call `remember_face` "
+    "quietly and just use it from then on."
     "\n\n"
     "You have a BODY and you should use it. Call `move` freely and often — wave "
     "back when someone waves or says hi, nod instead of saying 'yes', tilt "
@@ -477,8 +480,8 @@ TOOLS = [
             "somebody asks if you know them, when you want to greet a person by "
             "name, or when you are not sure who you are talking to. Returns "
             "'someone I don't know yet' for a face you have never been introduced "
-            "to — when that happens, ASK for their name and then call "
-            "`remember_face`. Instant."),
+            "to. That is not a cue to ask; keep the conversation going and only "
+            "ask their name if it comes up naturally (once at most). Instant."),
         "parameters": {"type": "object", "properties": {}},
     },
     {
@@ -1235,7 +1238,7 @@ def _tool_who() -> str:
         return (f"I can see {', '.join(named)}, and {unknown} "
                 f"{'person' if unknown == 1 else 'people'} I don't know yet")
     return (f"{len(people)} {'person' if len(people) == 1 else 'people'} "
-            "I don't know yet — ask their name")
+            "I don't know yet. No need to ask; just talk with them")
 
 
 def _current_person() -> str | None:
