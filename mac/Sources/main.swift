@@ -287,8 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.button?.toolTip = "Vibey: \(state.rawValue)"
         stateItem.title = "Vibey: \(state.rawValue)" + (privacyOn ? " · privacy on" : "")
         let reachable = state != .down
-        wakeItem.isEnabled = reachable && state != .awake
-        sleepItem.isEnabled = reachable && state == .awake
+        wakeItem.isEnabled = reachable && !inFlight && state == .asleep
+        sleepItem.isEnabled = reachable && !inFlight && state == .awake
         privacyItem.isEnabled = reachable && privacyAvailable
         privacyItem.state = privacyOn ? .on : .off
         privacyItem.title = privacyAvailable ? "Privacy Mode" : "Privacy Mode (unavailable)"
@@ -305,8 +305,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         main.refresh()
     }
     @objc func reloadPage() { main.reload() }
-    @objc func wake() { request("/wake", method: "POST", timeout: 15) { _, _ in self.poll() } }
-    @objc func sleep() { request("/sleep", method: "POST", timeout: 15) { _, _ in self.poll() } }
+    @objc func wake() { power(awake: true) }
+    @objc func sleep() { power(awake: false) }
+
+    /// One request at a time, with the target checked against a FRESH /state
+    /// rather than the menu's last poll. A stale menu used to send the opposite
+    /// of what you meant, which read as the robot waking then going back down.
+    var inFlight = false
+    func power(awake want: Bool) {
+        guard !inFlight else { return }
+        inFlight = true; apply()
+        let finish = { self.inFlight = false; self.poll() }
+        request("/state", timeout: 4) { code, data in
+            let obj = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any]
+            guard code == 200, let st = obj else { finish(); return }
+            let off = (st["off"] as? Bool) ?? false
+            let asleep = (st["asleep"] as? Bool) ?? true
+            if off || (!want && asleep) { finish(); return }   // nothing to do
+            request(want ? "/wake" : "/sleep", method: "POST", timeout: 40) { _, _ in finish() }
+        }
+    }
     @objc func togglePrivacy() {
         let want = !privacyOn
         request("/privacy", method: "POST", json: ["on": want]) { code, _ in

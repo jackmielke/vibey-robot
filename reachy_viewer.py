@@ -124,6 +124,7 @@ def _set_power(off: bool) -> None:
 
 
 TURNING = {"to": None}
+TURN_AT = {"t": 0.0}      # when the last /turn actually started
 _PEOPLE_CACHE: dict = {"at": 0.0, "data": None}
 
 
@@ -268,8 +269,17 @@ def _turn(on: bool) -> None:
     try:
         if on:
             _post(f"{CHAT_URL}/off", {"off": False}, timeout=10.0)
-            _set_power(False)
-            _post(f"{CHAT_URL}/wake", {}, timeout=40.0)
+            # Un-mute and un-pause only. The body is the chat service's job:
+            # /wake there does motors, volume, the wake pose and tracking, in the
+            # order that keeps the right voice. Playing wake_up from here as well
+            # stacked two or three wake animations on one neck.
+            ASLEEP["on"] = False
+            _post(f"{CHAT_URL}/mute", {"muted": False})
+            _post(f"{MEM_URL}/pause", {"paused": False})
+            time.sleep(1.0)
+            st = _get(f"{CHAT_URL}/state", timeout=4.0) or {}
+            if st.get("asleep", True):
+                _post(f"{CHAT_URL}/wake", {}, timeout=40.0)
         else:
             _post(f"{CHAT_URL}/sleep", {}, timeout=30.0)
             _set_power(True)
@@ -1387,9 +1397,14 @@ function paintOff(off){
   ['powerbtn','alarmbtn'].forEach(id=>{const b=$(id); if(b) b.disabled=vcOff;});
 }
 $('offbtn').onclick=async()=>{
-  const want=!vcOff;
-  paintOff(want);                       // optimistic; /state corrects it
+  if($('offbtn').disabled) return;
   $('offbtn').disabled=true;
+  // Target from a fresh read, never the painted copy: toggling a stale vcOff
+  // is how one press turned into ON then OFF.
+  let cur=vcOff;
+  try{ const s=await(await fetch('/chatstate')).json(); if(typeof s.off==='boolean') cur=s.off; }catch(_){}
+  const want=!cur;
+  paintOff(want);                       // optimistic; /state corrects it
   try{
     const r=await fetch('/off',
       {method:'POST',headers:{'Content-Type':'application/json'},
@@ -1704,10 +1719,15 @@ $('rebootbtn').onclick=async()=>{
 // ---- power (sleep/wake) ----
 let asleep=false;
 $('powerbtn').onclick=async()=>{
-  asleep=!$('powerbtn').classList.contains('off');
-  $('powerbtn').classList.toggle('off',asleep);
+  const b=$('powerbtn'); if(b.dataset.busy) return; b.dataset.busy='1';
+  // Fresh read for the target; the class on the button can be seconds stale.
+  let cur=b.classList.contains('off');
+  try{ const d=await(await fetch('/perception')).json(); cur=!!d.asleep; }catch(_){}
+  asleep=!cur;
+  b.classList.toggle('off',asleep);
   try{await fetch('/power',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({off:asleep})});}catch(_){}
+  setTimeout(()=>{delete b.dataset.busy;},3000);
 };
 
 // ---- emote buttons ----
@@ -2286,9 +2306,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(reachy_modes.status()).encode(),
                        "application/json")
         elif self.path.startswith("/chatstate"):
-            self._send(json.dumps(
-                _get(f"{CHAT_URL}/state") or {"mode": "offline"}
-            ).encode(), "application/json")
+            # This branch shadowed a later one that added `turning`, so the page
+            # never knew a /turn was still in flight: the button re-enabled
+            # mid-wake and showed "Turn off" while the body was still coming up.
+            st = _get(f"{CHAT_URL}/state", timeout=4.0) or {"mode": "offline"}
+            st["turning"] = TURNING["to"]
+            self._send(json.dumps(st).encode(), "application/json")
         elif self.path.startswith("/volume"):
             self._send(json.dumps(
                 _get(f"{REACHY_URL}/api/volume/current") or {}
@@ -2684,11 +2707,32 @@ class Handler(BaseHTTPRequestHandler):
             # as broken, whatever it is doing underneath.
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                on = bool((json.loads(self.rfile.read(n)) if n else {}).get("on"))
-                if TURNING["to"] is None:
+                body = json.loads(self.rfile.read(n)) if n else {}
+                if not isinstance(body.get("on"), bool):
+                    raise ValueError('send an explicit target: {"on": true|false}')
+                on = body["on"]
+                # Idempotent and debounced, judged against a FRESH read of the
+                # chat service, never the page's copy. A press that asks for the
+                # state it is already in, or reverses a change made under 3s ago,
+                # is a double-fire and is dropped (and logged).
+                st = _get(f"{CHAT_URL}/state", timeout=4.0) or {}
+                awake = bool(st) and not st.get("off") and not st.get("asleep", True)
+                ignored = None
+                if TURNING["to"] is not None:
+                    ignored = f"already turning {TURNING['to']}"
+                elif st and awake == on:
+                    ignored = "already " + ("on" if on else "off")
+                elif time.time() - TURN_AT["t"] < 3.0:
+                    ignored = f"changed {time.time() - TURN_AT['t']:.1f}s ago"
+                if ignored:
+                    print(f"[viewer] /turn {'on' if on else 'off'} ignored: {ignored}", flush=True)
+                else:
+                    print(f"[viewer] /turn {'on' if on else 'off'}", flush=True)
+                    TURN_AT["t"] = time.time()
                     TURNING["to"] = "on" if on else "off"
                     threading.Thread(target=_turn, args=(on,), daemon=True).start()
-                self._send(json.dumps({"ok": True, "turning": TURNING["to"]}).encode(), "application/json")
+                self._send(json.dumps({"ok": True, "turning": TURNING["to"],
+                                       "ignored": ignored}).encode(), "application/json")
             except Exception as e:
                 self._send(json.dumps({"ok": False, "error": str(e)}).encode(), "application/json", 500)
             return

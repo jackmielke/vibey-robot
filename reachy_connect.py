@@ -196,6 +196,123 @@ def discover(scan: bool = True) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# find_robot: the one answer to "where is it right now?"
+# --------------------------------------------------------------------------- #
+HOTSPOT = "10.42.0.1"
+
+
+def is_robot(host: str, timeout: float = 1.5, port: int = PORT) -> dict | None:
+    """One GET to /api/daemon/status. Returns the status dict if a Reachy Mini
+    daemon answered, else None. Cheap enough to call every few seconds."""
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/daemon/status",
+                                    timeout=timeout) as r:
+            body = r.read().decode(errors="replace")
+    except Exception:
+        return None
+    if "reachy_mini" not in body:
+        return None
+    try:
+        return json.loads(body)
+    except Exception:
+        return {"raw": body}
+
+
+def _iface_net() -> tuple[str, int] | None:
+    """(this Mac's IP, prefix length) on the default-route interface.
+
+    The AGIHouse network was a /21, so assuming /24 misses the robot entirely.
+    Capped at /21 (2046 hosts) so a /16 coffee-shop network can't turn the
+    sweep into a minute-long scan.
+    """
+    try:
+        out = subprocess.run(["route", "-n", "get", "default"], capture_output=True,
+                             text=True, timeout=3).stdout
+        ifc = re.search(r"interface:\s*(\S+)", out).group(1)
+        ip = subprocess.run(["ipconfig", "getifaddr", ifc], capture_output=True,
+                            text=True, timeout=3).stdout.strip()
+        mask = subprocess.run(["ipconfig", "getoption", ifc, "subnet_mask"],
+                              capture_output=True, text=True, timeout=3).stdout.strip()
+        bits = sum(bin(int(o)).count("1") for o in mask.split(".")) if mask else 24
+        if ip:
+            return ip, max(21, min(bits, 30))
+    except Exception:
+        pass
+    prefix = local_subnet()
+    return (prefix + ".1", 24) if prefix else None
+
+
+def sweep(timeout: float = 0.8) -> str | None:
+    """Parallel probe of every host on the Mac's subnet. First hit wins."""
+    import ipaddress
+    from concurrent.futures import as_completed
+    net = _iface_net()
+    if not net:
+        return None
+    me = net[0]
+    hosts = [str(h) for h in ipaddress.ip_network(f"{net[0]}/{net[1]}", strict=False).hosts()
+             if str(h) != me]
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        futs = {pool.submit(is_robot, h, timeout): h for h in hosts}
+        for f in as_completed(futs):
+            if f.result():
+                for other in futs:
+                    other.cancel()
+                return futs[f]
+    return None
+
+
+def find_robot(current: str | None = None, scan: bool = True,
+               log=lambda m: None) -> str | None:
+    """Base URL (literal IP preferred) of the robot, or None.
+
+    Order: the address we were already using, the mDNS name, the robot's own
+    hotspot, then a sweep of this Mac's subnet. mDNS has died on its own
+    (2026-09-22) and the DHCP lease moves, so no single one of these can be
+    trusted alone.
+    """
+    tried = []
+    for cand in (current, current_env_url()):
+        host = urllib.parse.urlparse(cand).hostname if cand else None
+        if host and host not in tried:
+            tried.append(host)
+            if host.endswith(".local"):
+                ip = resolve_mdns(host)
+                if ip and is_robot(ip):
+                    log(f"found via {host} → {ip}")
+                    return f"http://{ip}:{PORT}"
+            elif is_robot(host):
+                return f"http://{host}:{PORT}"
+    if MDNS_NAME not in tried:
+        ip = resolve_mdns()
+        if ip and is_robot(ip):
+            log(f"found via mDNS {MDNS_NAME} → {ip}")
+            return f"http://{ip}:{PORT}"
+    if is_robot(HOTSPOT, 1.0):
+        log("found on the robot's own hotspot")
+        return f"http://{HOTSPOT}:{PORT}"
+    if scan:
+        hit = sweep()
+        if hit:
+            log(f"found by subnet sweep at {hit}")
+            return f"http://{hit}:{PORT}"
+    return None
+
+
+def env_points_at(url: str) -> bool:
+    """Does what .env says still lead to this robot? A .local name that
+    resolves to it counts, so the deliberate mDNS setting is left alone."""
+    env = current_env_url()
+    if not env:
+        return False
+    want = urllib.parse.urlparse(url).hostname
+    host = urllib.parse.urlparse(env).hostname or ""
+    if host == want:
+        return True
+    return host.endswith(".local") and resolve_mdns(host) == want
+
+
+# --------------------------------------------------------------------------- #
 # Pointing the stack at a robot
 # --------------------------------------------------------------------------- #
 def set_env_url(url: str) -> str:
@@ -272,6 +389,21 @@ def wifi_forget(base: str, ssid: str) -> dict:
 
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "find":
+        # python3 reachy_connect.py find [--quick] [--write] [--current URL]
+        # Prints the robot's base URL on stdout (nothing, exit 1, if not found).
+        # --write rewrites .env only when what it says no longer leads there.
+        args = sys.argv[2:]
+        cur = args[args.index("--current") + 1] if "--current" in args else None
+        url = find_robot(cur, scan="--quick" not in args,
+                         log=lambda m: print(m, file=sys.stderr))
+        if not url:
+            sys.exit(1)
+        if "--write" in args and not env_points_at(url):
+            set_env_url(url)
+            print(f".env REACHY_URL → {url}", file=sys.stderr)
+        print(url)
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "wifi":
         url = current_env_url() or "http://reachy-mini.local:8000"
         print(json.dumps(wifi_status(url), indent=2))

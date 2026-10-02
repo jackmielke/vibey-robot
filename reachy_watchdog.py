@@ -128,7 +128,9 @@ _started_at: dict[str, float] = {}
 def _telegram(text: str) -> None:
     """Best-effort DM to the paired owner. Never raises."""
     try:
-        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        # @Vibey_Robot's own token. TELEGRAM_BOT_TOKEN is OpenClaw's Vibey Claw,
+        # which is how these alerts used to arrive as "Vibey Claw spam".
+        token = os.environ.get("TELEGRAM_VIBEY_TOKEN", "")
         with open(os.path.join(HERE, ".telegram_state.json")) as f:
             chat_id = json.load(f).get("owner")
         if not (token and chat_id):
@@ -172,7 +174,12 @@ def _restart(name: str) -> None:
     with open(log, "a") as lf:
         lf.write(f"\n--- [watchdog] restart {time.strftime('%F %T')} ---\n")
         lf.flush()
-        subprocess.Popen([interp_path, os.path.join(HERE, script)],
+        # This python is Intel under Rosetta; without arch -arm64 the universal
+        # .venv python inherits the x86 slice and chat dies importing numpy.
+        argv = [interp_path, os.path.join(HERE, script)]
+        if interp.startswith(".venv/"):
+            argv = ["arch", "-arm64"] + argv
+        subprocess.Popen(argv,
                          cwd=HERE, stdout=lf, stderr=lf,
                          start_new_session=True)
     _started_at[name] = time.time()

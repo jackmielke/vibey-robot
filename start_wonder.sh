@@ -17,22 +17,18 @@ set -a; source .env 2>/dev/null; set +a
 # reachy_camera.py takes a bare host, derive it from REACHY_URL
 export REACHY_HOST=$(echo "${REACHY_URL:-http://reachy-mini.local:8000}" | sed -E 's|https?://([^:/]+).*|\1|')
 
-# Auto-discovery: the robot's DHCP lease moves constantly (it has burned us
-# three separate times — .env said .120 while the robot sat on .106), so the
-# canonical name in .env is the mDNS hostname "reachy-mini.local". Resolve it
-# to an IP once here, at boot: the SDK's GStreamer/WebRTC path is happier with
-# a literal address than with .local, and every service inherits the resolved
-# value. If mDNS is unavailable we keep whatever .env said and let the
-# reachability check below decide.
-if [[ "$REACHY_HOST" == *.local ]]; then
-  _ip=$(ping -c1 -t2 "$REACHY_HOST" 2>/dev/null \
-        | sed -nE '1s/.*\(([0-9.]+)\).*/\1/p')
-  if [[ -n "$_ip" ]]; then
-    echo "discovered $REACHY_HOST → $_ip"
-    export REACHY_HOST="$_ip"
-    export REACHY_URL="http://${_ip}:8000"
-  else
-    echo "⚠️  could not resolve $REACHY_HOST via mDNS — trying it as-is"
+# Discovery: the robot's DHCP lease moves, mDNS has died on its own, and after
+# a brownout it can come back on its own hotspot. reachy_connect.py find tries,
+# in order: what .env says (resolving a .local name), mDNS, the hotspot
+# 10.42.0.1, then a parallel sweep of this Mac's subnet. It rewrites .env only
+# when what .env says no longer leads to the robot. Every service inherits the
+# literal address it prints: the SDK's WebRTC path is happier with an IP than
+# with a .local name, and a per-request mDNS lookup makes everything sluggish.
+if [[ "$1" != "stop" ]]; then
+  echo "looking for the robot…"
+  if _found=$(python3 reachy_connect.py find --write --current "$REACHY_URL"); then
+    export REACHY_URL="$_found"
+    export REACHY_HOST=$(echo "$_found" | sed -E 's|https?://([^:/]+).*|\1|')
   fi
 fi
 # A stale token in ~/.cache/huggingface/token 401s even PUBLIC model downloads
@@ -52,6 +48,7 @@ stop_all() {
   pkill -f "reachy_dj.py" 2>/dev/null
   pkill -f "reachy_gestures.py" 2>/dev/null
   pkill -f "reachy_watchdog.py" 2>/dev/null
+  pkill -f "reachy_heal.py" 2>/dev/null
   echo "wonder stack stopped."
 }
 
@@ -60,12 +57,12 @@ if [[ "$1" == "stop" ]]; then stop_all; exit 0; fi
 echo "robot: $REACHY_URL"
 if ! curl -s -m 4 -o /dev/null "$REACHY_URL/api/daemon/status"; then
   echo "⚠️  robot unreachable at $REACHY_URL — check WiFi / update REACHY_URL in .env"
-  echo "    hint: arp -a | grep -i reachy"
+  echo "    not found by mDNS, the hotspot, or a sweep of this subnet. Is it powered and on this Wi-Fi?"
   # Fail LOUD: a silent exit here once left the stack down all evening.
   python3 - <<'PYEOF'
 import json, os, urllib.parse, urllib.request
 try:
-    tok = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    tok = os.environ.get("TELEGRAM_VIBEY_TOKEN", "")   # never TELEGRAM_BOT_TOKEN: that is OpenClaw's
     chat = json.load(open(".telegram_state.json")).get("owner")
     if tok and chat:
         msg = f"🚨 Vibey stack failed to start: robot unreachable at {os.environ.get('REACHY_URL')}. Check its power/WiFi, then rerun start_wonder.sh"
@@ -93,7 +90,10 @@ here memory || export MEM_URL="http://${REACHY_HOST}:8773"
 
 here camera    && reachy_env/bin/python3 reachy_camera.py  > /tmp/reachy_camera.log 2>&1 &
 here viewer    && python3                reachy_viewer.py  > /tmp/reachy_viewer.log 2>&1 &
-here chat      && .venv/bin/python3      reachy_chat.py    > /tmp/reachy_chat.log   2>&1 &
+# arch -arm64: .venv's python is universal, and a Rosetta parent (the Intel
+# system python running the watchdog/healer) otherwise picks its x86 slice,
+# which can't import the arm64 numpy.
+here chat      && arch -arm64 .venv/bin/python3 reachy_chat.py >> /tmp/reachy_chat.log 2>&1 &
 here robot_mic && reachy_env/bin/python3 reachy_robot_mic.py > /tmp/reachy_robot_mic.log 2>&1 &
 here memory    && reachy_env/bin/python3 reachy_memory.py  > /tmp/reachy_memory.log 2>&1 &
 python3                reachy_vibeverse.py > /tmp/vibeverse.log     2>&1 &
@@ -108,6 +108,7 @@ reachy_env/bin/python3 reachy_dj.py        > /tmp/reachy_dj.log     2>&1 &   # m
 [[ -x .venv-gestures/bin/python3 ]] && \
   .venv-gestures/bin/python3 reachy_gestures.py > /tmp/reachy_gestures.log 2>&1 &
 python3                reachy_watchdog.py  > /tmp/reachy_watchdog.log 2>&1 &   # restarts anything that dies
+python3                reachy_heal.py      >> /tmp/reachy_heal.log    2>&1 &   # robot drops, returns, moves
 pgrep -x caffeinate >/dev/null || (caffeinate -dims > /dev/null 2>&1 &)   # alarms need an awake Mac
 
 echo "starting… (camera takes ~10s to negotiate WebRTC)"

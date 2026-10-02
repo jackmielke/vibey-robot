@@ -239,7 +239,11 @@ let chat=null, dials=null, brainInfo=null;
 // for five seconds reads as a click that did nothing.
 const want={power:null, brain:null, dials:{}, at:0};
 const stale=()=>Date.now()-want.at>40000;
-async function poll(){
+// One poll at a time. Three fetches can take longer than the 1.5s interval, and
+// overlapping polls landed out of order, repainting a newer state with an older one.
+let polling=false;
+async function poll(){ if(polling) return; polling=true; try{ await pollOnce(); } finally{ polling=false; } }
+async function pollOnce(){
   chat=await j('/chatstate'); dials=await j('/dials'); brainInfo=await j('/brain');
   if(chat&&want.power!==null){ const awakeNow=!chat.asleep&&!chat.off; if(awakeNow===want.power||stale()) want.power=null; }
   if(brainInfo&&want.brain&&(brainInfo.brain===want.brain||stale())) want.brain=null;
@@ -261,7 +265,7 @@ async function poll(){
   const sb2=$('scribe2'); sb2.classList.toggle('on',!!sc.on); sb2.disabled=busy||chat.off;
   // Say out loud in the Hearing group when the room is being written down.
   $('scribesub').textContent=sc.on?`● writing this down · ${sc.minutes||0} min`:(dials&&dials.muted?'mic muted':'');
-  p.disabled=busy; p.textContent=busy?'…':awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
+  p.disabled=busy||pressing; p.textContent=(busy||pressing)?'…':awake?'Turn off':'Turn on'; p.className='big'+(awake?' off':'');
   if(dials){ const sp=want.dials.speaker_source??dials.speaker_source; document.querySelectorAll('#spk button').forEach(b=>b.classList.toggle('on',b.dataset.spk===sp)); }
   if(dials){ const m=want.dials.mic_source??dials.mic_source; document.querySelectorAll('#mic button').forEach(b=>b.classList.toggle('on',b.dataset.mic===m)); }
   if(dials){ document.querySelectorAll('.sw[data-dial]').forEach(b=>{ const k=b.dataset.dial; const v=(k in want.dials)?want.dials[k]:!!dials[k]; b.classList.toggle('on',v); b.disabled=!awake&&(k==='listening'||k==='face_tracking'); });
@@ -282,7 +286,18 @@ document.querySelectorAll('#spk button').forEach(b=>b.onclick=async()=>{ want.di
 document.querySelectorAll('#mic button').forEach(b=>b.onclick=async()=>{ want.dials.mic_source=b.dataset.mic; want.at=Date.now(); poll(); const r=await j('/dials',{mic_source:b.dataset.mic}); if(!r||r.error) delete want.dials.mic_source; poll(); });
 $('scribe2').onclick=()=>$('scribe').onclick();
 $('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
-$('power').onclick=async()=>{ const on=!(chat&&!chat.asleep&&!chat.off); want.power=on; want.at=Date.now(); poll(); const r=await j('/turn',{on}); if(r&&r.error){ want.power=null; alert(r.error);} };
+// Power: disabled the moment it is pressed, and the target comes from a FRESH
+// read of the chat service, not the last poll. Toggling a stale copy is what
+// turned one press into ON, then OFF a few seconds later, then ON again.
+let pressing=false;
+$('power').onclick=async()=>{ const p=$('power'); if(p.disabled||pressing) return; pressing=true; p.disabled=true; p.textContent='…'; try{
+  const cur=await j('/chatstate'); if(!cur||cur.mode==='offline') return;
+  chat=cur; want.at=Date.now();
+  if(cur.turning){ want.power=cur.turning==='on'; return; }
+  const on=!(!cur.asleep&&!cur.off); want.power=on;
+  const r=await j('/turn',{on});
+  if(!r||r.error){ want.power=null; if(r&&r.error) alert(r.error); } else if(r.ignored&&!r.turning) want.power=null;
+  } finally{ pressing=false; } poll(); };
 document.querySelectorAll('.sw[data-dial]').forEach(b=>b.onclick=async()=>{ const k=b.dataset.dial; const v=!((k in want.dials)?want.dials[k]:(dials&&dials[k])); want.dials[k]=v; want.at=Date.now(); b.classList.toggle('on',v); const r=await j('/dials',{[k]:v}); if(!r||r.error){ delete want.dials[k]; } poll(); });
 // The robot's bottom half is near-silent (its volume curve is not even), so the
 // slider spans only the audible 50-100. Slider 0 still means off.

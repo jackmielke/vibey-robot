@@ -23,7 +23,12 @@ URL=$(grep '^REACHY_URL=' .env | cut -d= -f2-)
 # a .local lookup costs ~150ms warm and up to a full second cold, and the sleep
 # sequence alone is half a dozen sequential calls. Paying that per request is the
 # difference between a bedtime that looks deliberate and one that looks broken.
-if [[ "$URL" == *.local:* ]]; then
+# The healer (reachy_heal.py) tracks where the robot is every 10s, so use its
+# answer when it is fresh; otherwise resolve here.
+_healurl=$(python3 -c 'import json,time;d=json.load(open("/tmp/vibey_heal.json"));print(d["url"] if time.time()-d["at"]<60 and d["status"]=="home" else "")' 2>/dev/null)
+if [[ -n "$_healurl" ]]; then
+  URL="$_healurl"
+elif [[ "$URL" == *.local:* ]]; then
   _host=${${URL#*://}%%:*}
   _ip=$(ping -c1 -t2 "$_host" 2>/dev/null | sed -nE '1s/.*\(([0-9.]+)\).*/\1/p')
   [[ -n "$_ip" ]] && URL="http://${_ip}:8000"
@@ -87,17 +92,63 @@ case "$1" in
   sleep)  sleep_robot ;;
   logs)   tail -f /tmp/reachy_*.log /tmp/vibeverse.log /tmp/telegram.log ;;
   status)
-    printf 'robot  %s  ' "$URL"
-    curl -s -m 4 "$URL/api/daemon/status" >/dev/null \
-      && echo "✅ reachable" || { echo "❌ unreachable (power? Wi-Fi? try: vibey wifi hotspot)"; }
-    echo "  motors: $(curl -s -m 4 $URL/api/motors/status | sed -E 's/.*"mode":"([a-z_]+)".*/\1/')"
-    echo "  brain:  $(curl -s -m 4 http://localhost:8772/state \
-      | python3 -c 'import json,sys;d=json.load(sys.stdin);print(("OpenAI Realtime" if d["openai"] else d["mode"]) + (" (asleep)" if d["asleep"] else ""))' 2>/dev/null || echo "chat service down")"
-    echo "  wifi:   $(curl -s -m 4 $URL/wifi/status | sed -E 's/.*"connected_network":"?([^",}]*)"?.*/\1/')"
-    for svc in "8770 dashboard" "8771 camera" "8772 chat" "8773 memory" "8774 vibeverse" "8775 robot-mic"; do
-      port=${svc%% *}; name=${svc##* }
-      lsof -ti tcp:$port >/dev/null 2>&1 && echo "  ✅ $name (:$port)" || echo "  ❌ $name (:$port)"
-    done
+    # One plain sentence about what is wrong and the one thing to do, then the
+    # details. Reads the healer's notes for "last seen".
+    REACHY_URL="$URL" python3 - <<'PYEOF'
+import json, os, subprocess, time, urllib.request
+url = os.environ["REACHY_URL"]
+def get(u, t=3):
+    try:
+        with urllib.request.urlopen(u, timeout=t) as r: return json.loads(r.read())
+    except Exception: return None
+def ago(t):
+    s = time.time() - t
+    return f"{s:.0f}s" if s < 90 else f"{s/60:.0f} min" if s < 5400 else f"{s/3600:.1f} h"
+def up(port):
+    return subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True).returncode == 0
+heal = {}
+try: heal = json.load(open("/tmp/vibey_heal.json"))
+except Exception: pass
+healer_live = heal and time.time() - heal.get("at", 0) < 60
+st = get(f"{url}/api/daemon/status")
+chat = get("http://localhost:8772/state", 4)
+motors = (get(f"{url}/api/motors/status") or {}).get("mode") if st else None
+host = url.split("//")[1].split(":")[0]
+if not st:
+    seen = heal.get("last_seen_url", url).split("//")[-1].split(":")[0]
+    when = f" {ago(heal['last_seen'])} ago" if heal.get("last_seen") else ""
+    msg = f"robot not on the network. Is it powered? Last seen {seen}{when}."
+    if heal.get("guard"):
+        msg += " It browned out twice right after its motors started: check the charger cable is fully seated, then power-cycle it."
+    elif healer_live:
+        msg += " The healer is watching and will reconnect everything when it is back."
+    else:
+        msg += " Then run: vibey"
+elif st.get("wlan_ip") and st["wlan_ip"] != host and host[0].isdigit():
+    msg = (f"robot answers at {host} but advertises {st['wlan_ip']}, so camera and mic can't connect. "
+           + ("The healer will restart its daemon shortly." if healer_live else "Run: vibey fix"))
+elif not chat:
+    msg = "robot is fine, the Mac services are down. Run: vibey"
+elif chat.get("off"):
+    msg = "Vibey is switched OFF. Run: vibey on"
+elif heal.get("guard"):
+    msg = "brownout guard is on, so I'm not auto-waking. Check the charger cable, power-cycle, then: vibey wake"
+elif not chat.get("asleep") and motors != "enabled":
+    msg = f"brain awake but the body is limp (motors {motors}). " + ("The healer re-arms it within ~15s." if healer_live else "Run: vibey wake")
+elif not up(8771) or not up(8775):
+    msg = "camera or robot mic is down. Run: vibey stop && vibey"
+elif not healer_live:
+    msg = "all up, but the healer isn't running, so drops won't self-repair. Run: vibey stop && vibey"
+else:
+    msg = ("all good: awake on " + ({"live": "GPT-Live", "realtime": "Realtime"}.get(chat.get("voice_brain"), chat.get("mode")))) if not chat.get("asleep") else 'all good: asleep, say "hey vibey" or: vibey wake'
+print(msg)
+print(f"  robot   {url}  " + ("reachable" if st else "unreachable") + (f", motors {motors}" if st else ""))
+if chat:
+    print(f"  brain   {chat.get('voice_brain') or chat.get('mode')}" + (" (asleep)" if chat.get("asleep") else "") + (" OFF" if chat.get("off") else ""))
+print("  " + "  ".join(f"{'✅' if up(p) else '❌'}{n}" for p, n in
+      ((8770, "dashboard"), (8771, "camera"), (8772, "chat"), (8773, "memory"), (8775, "mic"))))
+print(f"  healer  {'running' if healer_live else 'not running'}" + (", brownout guard ON" if heal.get("guard") else ""))
+PYEOF
     ;;
   look)
     # Grab one frame so an agent can actually look at the room. reachy_camera.py
@@ -179,6 +230,8 @@ case "$1" in
     ;;
   *)
     ./start_wonder.sh || exit 1
+    # start_wonder.sh may have found the robot somewhere new; follow it.
+    _new=$(python3 reachy_connect.py find --quick 2>/dev/null) && URL="$_new"
     wake
     open http://localhost:8770
     ;;

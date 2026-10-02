@@ -87,6 +87,23 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The power button. One request at a time, and the target is checked
+    /// against a FRESH /state rather than the status painted 2s ago, so a stale
+    /// screen can't send the opposite of what you meant.
+    func setAwake(_ want: Bool) {
+        guard !busy else { return }
+        run(want ? "Waking up" : "Goodnight") { api in
+            let s = try await api.state()
+            let off = s.off ?? false, asleep = s.asleep ?? true
+            if want {
+                if off { try await api.setOff(false); return }
+                try await api.wake()      // awake already: re-arms a limp body
+            } else if !off && !asleep {
+                try await api.sleep()
+            }
+        }
+    }
+
     func flash(_ msg: String) {
         withAnimation(.spring) { toast = msg }
         Task {

@@ -900,6 +900,9 @@ def _voice_wake() -> None:
 # Whether the robot was mid-conversation when the switch went off, so that
 # switching back on returns it to where it was rather than to a default.
 WAS_AWAKE = {"on": False}
+# When the OFF switch last actually changed, for debouncing double-fires.
+OFF_CHANGED = {"t": 0.0}
+OFF_DEBOUNCE_S = float(os.environ.get("VIBEY_OFF_DEBOUNCE_S", "3"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1757,7 +1760,31 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             # half that matters is that nothing gets to wake it afterwards.
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                want = bool(json.loads(self.rfile.read(n)).get("off"))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                if not isinstance(body.get("off"), bool):
+                    raise ValueError('send an explicit target: {"off": true|false}')
+                want = body["off"]
+                who = (self.headers.get("X-Vibey-Client")
+                       or (self.headers.get("User-Agent") or "?").split(" ")[0][:32])
+                who = f"{who}@{self.client_address[0]}"
+                # Idempotent and debounced. The dashboard used to fire ON, then
+                # OFF a few seconds later, then ON again: buttons that toggled a
+                # stale local copy of the state. A request for the state we are
+                # already in is a no-op, and the opposite of a change made under
+                # OFF_DEBOUNCE_S ago is almost certainly a double-fire.
+                if want == OFF["on"]:
+                    print(f"[chat] /off {want} from {who} ignored: already "
+                          f"{'OFF' if want else 'ON'}", flush=True)
+                    self._json({"ok": True, "off": OFF["on"], "ignored": "already"})
+                    return
+                since = time.time() - OFF_CHANGED["t"]
+                if since < OFF_DEBOUNCE_S:
+                    print(f"[chat] /off {want} from {who} ignored: flipped "
+                          f"{since:.1f}s ago (debounce)", flush=True)
+                    self._json({"ok": True, "off": OFF["on"], "ignored": "debounced"})
+                    return
+                OFF_CHANGED["t"] = time.time()
+                print(f"[chat] /off {want} from {who}", flush=True)
                 OFF["on"] = want
                 _persist_off()
                 if want:

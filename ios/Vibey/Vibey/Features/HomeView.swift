@@ -113,20 +113,23 @@ struct HomeView: View {
     private var primaryButton: some View {
         switch store.status {
         case .off:
-            Button { store.run("Switched on") { try await $0.setOff(false) } } label: {
+            Button { store.setAwake(true) } label: {
                 Label("Turn on", systemImage: "power")
             }
             .buttonStyle(PillButtonStyle())
+            .disabled(store.busy)
         case .asleep:
-            Button { store.run("Waking up") { try await $0.wake() } } label: {
+            Button { store.setAwake(true) } label: {
                 Label(store.busy ? "Waking…" : "Wake", systemImage: "sun.max.fill")
             }
             .buttonStyle(PillButtonStyle())
+            .disabled(store.busy)
         case .awake:
-            Button { store.run("Goodnight") { try await $0.sleep() } } label: {
+            Button { store.setAwake(false) } label: {
                 Label(store.busy ? "Settling…" : "Sleep", systemImage: "moon.zzz.fill")
             }
             .buttonStyle(PillButtonStyle(fill: .white))
+            .disabled(store.busy)
         default:
             Button { Task { await store.refresh() } } label: {
                 Label("Retry", systemImage: "arrow.clockwise")
