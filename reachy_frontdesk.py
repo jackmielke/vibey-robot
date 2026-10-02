@@ -392,6 +392,13 @@ class FrontDesk:
         res["at"] = datetime.now().isoformat(timespec="seconds")
         self.last_result = res
         print(f"[frontdesk] {method}: {res['result']}", flush=True)
+        try:
+            import reachy_events
+            reachy_events.emit("senses", f"front desk {method}: {res['result'].replace('_', ' ')}"
+                               + (f" · {res['name']}" if res.get("name") else ""),
+                               detail=res, source="frontdesk", icon="🎟")
+        except Exception:  # noqa: BLE001
+            pass
         if not quiet:
             threading.Thread(target=announce, args=(res,), daemon=True).start()
         return res

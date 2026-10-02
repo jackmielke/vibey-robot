@@ -24,6 +24,8 @@ final class Store: ObservableObject {
     @Published var status: RobotStatus = .unknown
     @Published var busy = false
     @Published var toast: String?
+    @Published var events: [VibeEvent] = []
+    private var eventsLast = 0
 
     private var pollTask: Task<Void, Never>?
 
@@ -63,6 +65,7 @@ final class Store: ObservableObject {
             let s = try await api.state()
             state = s
             status = (s.off ?? false) ? .off : (s.asleep ?? true) ? .asleep : .awake
+            await refreshEvents()
         } catch {
             if error.isCancellation { return }
             status = .unreachable(error.localizedDescription)
@@ -102,6 +105,17 @@ final class Store: ObservableObject {
                 try await api.sleep()
             }
         }
+    }
+
+    /// Vibey's stream of consciousness, appended; kept to the last 300.
+    func refreshEvents() async {
+        guard let r = try? await api.events(since: eventsLast) else { return }
+        if r.last < eventsLast { eventsLast = 0; return }   // chat service restarted
+        guard !r.events.isEmpty else { return }
+        let have = Set(events.map(\.id))
+        events.append(contentsOf: r.events.filter { !have.contains($0.id) })
+        if events.count > 300 { events.removeFirst(events.count - 300) }
+        eventsLast = max(eventsLast, r.last)
     }
 
     func flash(_ msg: String) {

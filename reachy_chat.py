@@ -59,6 +59,7 @@ except (ImportError, OSError):
     sd = None
 
 import reachy_denoise
+import reachy_events
 from reachy_voice import load_env, say, upload_sound, play_sound
 
 load_env()
@@ -1502,6 +1503,16 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/events"):
+            # Vibey's stream of consciousness, newest last. ?since=<id>.
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                after = int((q.get("since") or ["0"])[0])
+            except ValueError:
+                after = 0
+            self._json({"events": reachy_events.since(after),
+                        "last": reachy_events.last_id()})
+            return
         if self.path.startswith("/state"):
             # Capture state is read live rather than from STATE: in realtime
             # mode this loop has handed the mic over entirely and stops
@@ -1565,6 +1576,19 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if self.path.startswith("/events"):
+            # Other local processes reporting what happened. Never from the LAN.
+            host = self.client_address[0]
+            if not (host.startswith("127.") or host in ("::1", "::ffff:127.0.0.1")):
+                self._json({"error": "local only"}, 403)
+                return
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                ev = reachy_events.ingest(json.loads(self.rfile.read(n) or b"{}"))
+                self._json({"ok": True, "id": ev["id"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+            return
         if self.path.startswith("/frontdesk/"):
             # Door mode: /frontdesk/on|off|toggle|load|checkin|scan|export.
             try:
@@ -1621,6 +1645,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 STATE["muted"] = bool(json.loads(self.rfile.read(n)).get("muted"))
+                reachy_events.emit("system", "mic muted" if STATE["muted"] else "mic unmuted", icon="🎙")
                 self._json({"ok": True, "muted": STATE["muted"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
@@ -1629,7 +1654,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 import reachy_privacy
                 n = int(self.headers.get("Content-Length", 0))
                 on = bool(json.loads(self.rfile.read(n) or b"{}").get("on", True))
-                self._json({"ok": True, "privacy": reachy_privacy.set_on(on)})
+                res = reachy_privacy.set_on(on)
+                reachy_events.emit("system", "privacy on: eyes closed" if on else "privacy off: eyes open", icon="🙈" if on else "👁")
+                self._json({"ok": True, "privacy": res})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/incognito"):
@@ -1647,7 +1674,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     data=json.dumps({"on": on}).encode(), method="POST",
                     headers={"Content-Type": "application/json"}),
                     timeout=5).read()
-                STATE["incognito"] = on
+                STATE["incognito"] = on   # first: turning it on is never written to disk
+                reachy_events.emit("system", "incognito on: remembering nothing" if on else "incognito off", icon="🕶")
                 # Only matters if the realtime brain is live right now; a
                 # session that starts later reads the flag when it builds.
                 live = False
@@ -1774,7 +1802,10 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 sess = _rt.LIVE_SESSION.get("session")
                 if sess is not None and STATE["openai"]:
                     # silent: context only, the session decides whether to speak.
-                    (sess.note if body.get("silent") else sess.nudge)(text)
+                    # The sender may pass a label: a guest's text is summarised
+                    # there, never shown in the stream in full.
+                    (sess.note if body.get("silent") else sess.nudge)(
+                        text, label=str(body.get("label") or ""))
                     self._json({"ok": True, "delivered": "realtime"})
                 else:
                     # No live session to tell. Say nothing rather than falling
@@ -1796,7 +1827,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
-                self._json({"ok": True, **_set_stage(int(body.get("stage", 3)))})
+                out = _set_stage(int(body.get("stage", 3)))
+                reachy_events.emit("system", f"stage {body.get('stage', 3)}", icon="🎚")
+                self._json({"ok": True, **out})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/scribe"):
@@ -1819,6 +1852,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
                 name = set_voice_brain(str(body.get("brain", "")))
+                reachy_events.emit("system", f"brain → {name}", icon="🧠")
                 if not STATE["asleep"]:
                     threading.Thread(target=_swap_brain, daemon=True).start()
                 self._json({"ok": True, "brain": name, "restarting": not STATE["asleep"]})
@@ -1859,6 +1893,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     threading.Thread(target=_apply_tracking, args=(on,),
                                      daemon=True).start()
                 print(f"[chat] {name} {'on' if on else 'off'}", flush=True)
+                reachy_events.emit("system", f"{name} {'on' if on else 'off'}", icon="⚙")
                 self._json({"ok": True, "switches": dict(SWITCHES)})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
@@ -1894,6 +1929,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 print(f"[chat] /off {want} from {who}", flush=True)
                 OFF["on"] = want
                 _persist_off()
+                reachy_events.emit("system", "switched OFF" if want else "switched ON",
+                                   detail={"by": who.split("@")[0]}, icon="⏻")
                 if want:
                     ASLEEP_VOICE["on"] = True
                     threading.Thread(target=_power_down, daemon=True).start()
@@ -1936,8 +1973,18 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
 
+def _last_heard_ts():
+    """The line Vibey last heard, if recent: what an event was a reaction to."""
+    for t in reversed(list(TRANSCRIPT)):
+        if t.get("who") == "you":
+            return t["ts"] if time.time() * 1000 - t["ts"] < 90_000 else None
+    return None
+
+
 def _start_ctrl_server():
     import vibey_auth
+    reachy_events.serve(persist_ok=lambda: not STATE.get("incognito"),
+                        current_turn=_last_heard_ts)
     vibey_auth.protect(_CtrlHandler)   # LAN needs the app token; localhost is free
     srv = ThreadingHTTPServer(("0.0.0.0", CTRL_PORT), _CtrlHandler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -2738,6 +2785,9 @@ def _wake_now(reason: str = "wake") -> None:
     So the handover happens first, in one step, and the body catches up on a
     thread.
     """
+    if reason in ("phrase", "clap"):
+        reachy_events.emit("senses", "heard the wake word" if reason == "phrase" else "heard a clap",
+                           icon="👂" if reason == "phrase" else "👏")
     if STAGE["n"] < 3:
         # No cloud, so no conversation. The Mac can still show it heard you.
         if STAGE["n"] == 2 and reason in ("phrase", "clap"):
@@ -2784,6 +2834,7 @@ def _wake_now(reason: str = "wake") -> None:
         print("[chat] ignored phrase — wake phrase is off", flush=True)
         return
 
+    reachy_events.emit("system", f"waking up ({reason})", icon="☀")
     # Both flags together, before anything slow. The main loop must never see
     # "awake, but nobody is holding the conversation".
     STATE["openai"] = bool(STATE["openai_available"])
@@ -2818,6 +2869,7 @@ def _sleep_now() -> None:
     if STATE["asleep"]:
         return
     print("[chat] going to sleep", flush=True)
+    reachy_events.emit("system", "going to sleep", icon="🌙")
     STATE["openai"] = False
     STATE["asleep"] = True
     try:

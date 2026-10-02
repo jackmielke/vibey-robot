@@ -8,6 +8,11 @@ struct ChatView: View {
     @State private var local: [Line] = []
     @State private var thinking = false
     @FocusState private var focused: Bool
+    @AppStorage("chatFilter") private var filter = "all"
+    @State private var open: Set<Int> = []
+
+    static let filters: [(String, String)] = [("all", "All"), ("chat", "Chat"), ("action", "Actions"),
+                                               ("telegram", "Telegram"), ("senses", "Senses"), ("system", "System")]
 
     struct Line: Identifiable, Hashable {
         let id: String
@@ -15,6 +20,16 @@ struct ChatView: View {
         let typed: Bool         // came from this phone
         let text: String
         let ts: Double
+        var event: VibeEvent? = nil
+    }
+
+    private func shows(_ l: Line) -> Bool {
+        guard let e = l.event else { return filter == "all" || filter == "chat" }
+        switch filter {
+        case "all": return true
+        case "chat": return e.kind == "thinking"
+        default: return e.kind == filter
+        }
     }
 
     private var lines: [Line] {
@@ -23,7 +38,10 @@ struct ChatView: View {
         }
         // A typed reply may also show up in the room transcript; keep one copy.
         let extra = local.filter { l in !room.contains { $0.text == l.text && abs($0.ts - l.ts) < 180 } }
-        return (room + extra).sorted { $0.ts < $1.ts }
+        let evs = store.events.map { e in
+            Line(id: "e\(e.id)-\(Int(e.ts))", mine: false, typed: false, text: e.text, ts: e.ts / 1000, event: e)
+        }
+        return (room + extra + evs).filter(shows).sorted { $0.ts < $1.ts }
     }
 
     var body: some View {
@@ -31,7 +49,8 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 ScreenTitle(title: "Chat", subtitle: "Live from the room · type to talk as Jack")
                     .padding(.horizontal, 18)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
+                filterRow
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 10) {
@@ -63,9 +82,85 @@ struct ChatView: View {
         }
     }
 
+    private var filterRow: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(Self.filters, id: \.0) { f in
+                    Button { Haptics.tap(); filter = f.0 } label: {
+                        Text(f.1)
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .padding(.horizontal, 11).padding(.vertical, 5)
+                            .background(Capsule().fill(filter == f.0 ? .white.opacity(0.18) : .white.opacity(0.05)))
+                            .overlay(Capsule().stroke(.white.opacity(filter == f.0 ? 0.4 : 0.12)))
+                            .foregroundStyle(.white.opacity(filter == f.0 ? 0.95 : 0.55))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 18)
+        }
+        .scrollIndicators(.hidden)
+        .padding(.bottom, 6)
+    }
+
+    static func kindColor(_ k: String) -> Color {
+        switch k {
+        case "senses": return Palette.live
+        case "telegram": return Color(red: 0.435, green: 0.690, blue: 1.0)   // #6FB0FF
+        case "action": return Palette.duck
+        case "thinking": return Color(red: 0.722, green: 0.612, blue: 1.0)   // #B89CFF
+        default: return .white.opacity(0.45)
+        }
+    }
+
+    static let kindLabel = ["senses": "senses", "telegram": "telegram", "action": "action",
+                            "thinking": "mind", "system": "system", "chat": "chat"]
+
+    /// A compact inline indicator, not a bubble. Tap to see args / result.
+    private func eventRow(_ e: VibeEvent) -> some View {
+        let c = Self.kindColor(e.kind), isOpen = open.contains(e.id)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                Text(e.icon).font(.system(size: 11)).frame(width: 16)
+                Text(Self.kindLabel[e.kind] ?? e.kind)
+                    .font(.system(.caption2, design: .rounded).weight(.bold))
+                    .foregroundStyle(c)
+                Text(e.text)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineLimit(isOpen ? nil : 1)
+                Spacer(minLength: 4)
+                Text(Self.clock(e.ts / 1000))
+                    .font(.system(size: 10, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            if isOpen, let d = e.detail {
+                Text(d)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.06)))
+            }
+        }
+        .padding(.vertical, 3).padding(.leading, 8).padding(.trailing, 4)
+        .overlay(alignment: .leading) { Rectangle().fill(c).frame(width: 2) }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.tap()
+            withAnimation(.easeOut(duration: 0.18)) {
+                if isOpen { open.remove(e.id) } else { open.insert(e.id) }
+            }
+        }
+        .padding(.vertical, -3)
+    }
+
     @ViewBuilder
     private func bubble(_ l: Line) -> some View {
-        if !l.mine && l.text.hasPrefix("(") && l.text.hasSuffix(")") {
+        if let e = l.event {
+            eventRow(e)
+        } else if !l.mine && l.text.hasPrefix("(") && l.text.hasSuffix(")") {
             // stage directions like "(OpenAI Realtime mode ...)": a quiet note, not a message
             Text(l.text.dropFirst().dropLast())
                 .font(.system(.caption, design: .rounded))

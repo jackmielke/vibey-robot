@@ -145,6 +145,11 @@ DEFAULT_INSTRUCTIONS = (
     "and a little playful. You're mid-conversation with whoever is in the room, "
     "so react naturally, ask questions back, and don't give long monologues."
     "\n\n"
+    "People near you often talk to their computer or each other. Only speak when "
+    "someone is clearly talking TO you: they say your name, ask you something "
+    "directly, or are continuing a conversation with you. If you're not sure, "
+    "stay silent. Never comment on what you overheard unless asked."
+    "\n\n"
     # The accent comes from here, not from the voice. `ballad` is the most
     # theatrical of the male voices, but every one of the ten is accent-neutral
     # by default — asking for one in the instructions is the only thing that
@@ -1561,7 +1566,66 @@ def _tool_front_desk(args: dict) -> str:
     return f"Result: {res.get('result')}. Say: \"{res.get('say', '')}\""
 
 
-def _dispatch_tool(name: str, args: dict, announce) -> str:
+_TOOL_KIND = {
+    "send_text_message": "telegram", "text_jack": "telegram",
+    "list_message_contacts": "telegram",
+    "who_is_here": "senses", "look_at_the_room": "senses", "recall": "senses",
+    "front_desk_check_in": "senses", "am_i_recording": "senses",
+    "check_progress": "thinking", "improve_yourself": "thinking",
+    "explain_how_to": "thinking", "check_local_ui": "thinking",
+    "go_to_sleep": "system", "set_voice_detection": "system",
+    "set_face_detection": "system", "set_noise_suppression": "system",
+    "check_my_cost": "system", "what_time_is_it": "system",
+}
+_TOOL_ICON = {"move": "🤖", "dance": "💃", "drive": "🛞", "remember": "📌",
+              "remember_face": "🙂", "who_is_here": "👀", "look_at_the_room": "📷",
+              "send_text_message": "✉", "text_jack": "✉", "set_volume": "🔊",
+              "dj_play": "🎧", "dj_tempo": "🎧", "dj_stop": "🎧", "dj_tracks": "🎧",
+              "go_to_sleep": "🌙", "take_notes": "📝", "improve_yourself": "🛠",
+              "front_desk_check_in": "🎟", "vibe_check": "✨", "recall": "🔎"}
+
+
+def _tool_label(name: str, args: dict) -> str:
+    a = args or {}
+    if name in ("move", "dance"):
+        return f"{name}: {a.get('move') or a.get('name') or a.get('style') or ''}".rstrip(": ")
+    if name == "remember":
+        return f"remembered: {str(a.get('note') or '')[:60]}"
+    if name == "remember_face":
+        return f"saving a face as {a.get('name') or '?'}"
+    if name == "send_text_message":
+        return f"texting {a.get('to') or '?'}" + ("" if a.get("confirmed") else " (read-back first)")
+    if name == "text_jack":
+        return "texting Jack"
+    if name == "set_volume":
+        return f"volume → {a.get('volume', a.get('level', '?'))}"
+    if name == "drive":
+        return f"drive {a.get('action') or ''}"
+    if name == "dj_play":
+        return f"dj: playing {a.get('track') or a.get('query') or ''}".rstrip()
+    return name.replace("_", " ")
+
+
+def _dispatch_tool(name: str, args: dict, announce, source: str = "voice") -> str:
+    """Run a tool and put it in the event stream (args + result)."""
+    t0 = time.time()
+    result = _dispatch_tool_inner(name, args, announce)
+    try:
+        import reachy_events
+        a = dict(args or {})
+        if name == "send_text_message" and a.get("message"):
+            a["message"] = reachy_events.short(a["message"], 80)
+        reachy_events.emit(_TOOL_KIND.get(name, "action"), _tool_label(name, a),
+                           detail={"tool": name, "args": a,
+                                   "result": reachy_events.short(result, 300),
+                                   "ms": int((time.time() - t0) * 1000)},
+                           source=source, icon=_TOOL_ICON.get(name, "⚡"))
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+def _dispatch_tool_inner(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
     try:
@@ -2046,7 +2110,23 @@ class RealtimeSession:
         except Exception as e:  # noqa: BLE001
             self.log(f"failed to return tool result: {e}")
 
-    def nudge(self, text: str) -> None:
+    @staticmethod
+    def _context_event(text: str, label: str, spoken: bool) -> None:
+        """Every line injected into the session shows up in the stream, so
+        what prompted a remark is never a mystery."""
+        try:
+            import reachy_events
+            core = text.strip().strip("[]")
+            reachy_events.emit(
+                "thinking",
+                f"context in: {label or reachy_events.short(core, 110)}",
+                detail={"text": reachy_events.short(core, 500) if not label else label,
+                        "asks_to_speak": spoken},
+                source="nudge" if spoken else "note", icon="↘")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def nudge(self, text: str, label: str = "") -> None:
         """Something happened in the room that Vibey should mention itself.
 
         Same channel as a finished coding job, because it is the same idea: news
@@ -2056,18 +2136,20 @@ class RealtimeSession:
         loop, q = self._loop, self._announce_q
         if loop is None or q is None:
             return
+        self._context_event(text, label, True)
         try:
             loop.call_soon_threadsafe(q.put_nowait, {"nudge": text})
         except RuntimeError:
             pass
 
-    def note(self, text: str) -> None:
+    def note(self, text: str, label: str = "") -> None:
         """Quiet context: goes into the conversation with NO response asked
         for. The model sees it next time it speaks and decides for itself
         whether it matters. For texts, which should never be read out."""
         loop, q = self._loop, self._announce_q
         if loop is None or q is None:
             return
+        self._context_event(text, label, False)
         try:
             loop.call_soon_threadsafe(q.put_nowait, {"note": text})
         except RuntimeError:
@@ -2089,6 +2171,10 @@ class RealtimeSession:
         loop, q = self._loop, self._announce_q
         if loop is None or q is None:
             return
+        if job.get("state"):
+            self._context_event(
+                f"coding job {job.get('id') or ''} {job.get('state')}: "
+                f"{(job.get('spoken') or '').strip()}", "", True)
         try:
             loop.call_soon_threadsafe(q.put_nowait, job)
         except RuntimeError:

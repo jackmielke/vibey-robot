@@ -2522,6 +2522,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(_get(f"{CHAT_URL}/brain", timeout=4.0) or {}).encode(), "application/json")
         elif self.path.startswith("/cost"):
             self._send(json.dumps(_get(f"{CHAT_URL}/cost", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path.startswith("/events"):
+            # Vibey's stream of consciousness (reachy_events), via the chat service.
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            self._send(json.dumps(_get(f"{CHAT_URL}/events?{q}", timeout=4.0)
+                                  or {"events": [], "last": 0}).encode(), "application/json")
         elif self.path == "/full" or self.path.startswith("/index"):
             html = (PAGE
                     .replace("%REACHY%", json.dumps(_for_browser(REACHY_URL, self)))

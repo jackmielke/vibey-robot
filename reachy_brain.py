@@ -290,7 +290,7 @@ def _dispatch(name: str, args: dict, announce) -> str:
     if name == "play_sound_effect":
         return play_sound_effect(args)
     import reachy_openai_realtime as rt
-    return rt._dispatch_tool(name, args, announce)
+    return rt._dispatch_tool(name, args, announce, source="text")
 
 
 def _responses(body: dict, timeout: float = 90.0) -> dict:

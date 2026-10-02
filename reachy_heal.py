@@ -72,6 +72,15 @@ def log(msg: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} [heal] {msg}", flush=True)
 
 
+def ev(text: str) -> None:
+    """Healer actions into Vibey's event stream (dashboard Live chat)."""
+    try:
+        import reachy_events
+        reachy_events.emit("system", f"healer: {text}", source="heal", icon="🩹")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _load_env() -> None:
     try:
         for line in open(os.path.join(HERE, ".env")):
@@ -150,6 +159,7 @@ def restart_media() -> None:
             subprocess.Popen([os.path.join(HERE, interp), os.path.join(HERE, script)],
                              cwd=HERE, stdout=lf, stderr=lf, start_new_session=True)
     log("restarted robot mic + camera")
+    ev("restarted robot mic + camera")
 
 
 def restart_stack(url: str) -> None:
@@ -158,6 +168,7 @@ def restart_stack(url: str) -> None:
     arch -arm64 because this python is Intel under Rosetta, and a translated
     parent makes the universal .venv python pick its x86 slice (numpy breaks)."""
     log(f"robot moved → {url}; restarting the stack")
+    ev("robot moved to a new address, restarting the stack")
     subprocess.Popen(["arch", "-arm64", "/bin/zsh", os.path.join(HERE, "start_wonder.sh")],
                      cwd=HERE, env={**os.environ, "REACHY_URL": url, "HEAL_REWAKE": S["rewake"] and "1" or ""},
                      stdout=open("/tmp/start_wonder.log", "a"), stderr=subprocess.STDOUT,
@@ -214,6 +225,7 @@ def rearm(why: str) -> None:
     S["last_rearm"] = time.time()
     S["motors_on_at"] = time.time()
     log(f"re-arming the body via :8772/wake ({why})")
+    ev(f"re-arming motors ({why})")
     _post(f"{CHAT}/wake", {}, timeout=40)
 
 
@@ -229,18 +241,21 @@ def on_drop() -> None:
         if S["strikes"] >= BROWNOUT_STRIKES and not S["guard"]:
             S["guard"] = True
             log("brownout guard ON: no more auto-waking until it is stable for 10 min")
+            ev("brownout guard on, no more auto-waking")
             if not S["noted"]:
                 S["noted"] = True
                 notify_once(BROWNOUT_MSG)
     else:
         S["strikes"] = 0
         log(f"robot away (last seen {S['last_seen_url']})")
+        ev("robot dropped off the network")
     S["motors_on_at"] = 0.0
 
 
 def on_return(st: dict) -> None:
     S["status"], S["up_since"] = "home", time.time()
     log(f"robot back at {S['url']} after {time.time() - S['away_since']:.0f}s")
+    ev(f"robot back after {time.time() - S['away_since']:.0f}s")
     if stale_wlan_ip(st):
         return          # the daemon restart path re-arms and restarts media itself
     restart_media()
@@ -262,6 +277,7 @@ def stale_wlan_ip(st: dict) -> bool:
     was_awake = wants_body(chat_state())
     log(f"daemon advertises {adv} but answers at {real}: WebRTC can't connect. "
         "Restarting the daemon.")
+    ev("daemon advertising a stale address, restarting it")
     _post(f"{S['url']}/api/daemon/restart", timeout=30)
     # "running" comes back within seconds, but the motor backend finishes
     # starting after that and comes up DISABLED, silently undoing a re-arm sent

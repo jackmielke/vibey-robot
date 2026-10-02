@@ -9,6 +9,31 @@ struct Turn: Decodable, Hashable {
     let ts: Double
 }
 
+/// One line of Vibey's stream of consciousness (GET :8772/events).
+/// `detail` is free-form JSON, kept as pretty text for the expanded view.
+struct VibeEvent: Identifiable, Hashable {
+    let id: Int
+    let kind: String      // thinking | action | telegram | senses | system | chat
+    let text: String
+    let ts: Double        // ms
+    let icon: String
+    let detail: String?
+
+    init?(_ d: [String: Any]) {
+        guard let id = d["id"] as? Int, let text = d["text"] as? String else { return nil }
+        self.id = id
+        self.text = text
+        kind = d["kind"] as? String ?? "system"
+        ts = (d["ts"] as? Double) ?? Double(d["ts"] as? Int ?? 0)
+        icon = d["icon"] as? String ?? "•"
+        var extra = d["detail"] as? [String: Any] ?? [:]
+        if let s = d["source"] as? String, !s.isEmpty { extra["source"] = s }
+        if !extra.isEmpty, let data = try? JSONSerialization.data(withJSONObject: extra, options: [.prettyPrinted, .sortedKeys]) {
+            detail = String(data: data, encoding: .utf8)
+        } else { detail = nil }
+    }
+}
+
 struct VibeyState: Decodable {
     var asleep: Bool?
     var off: Bool?
@@ -200,6 +225,12 @@ struct VibeyAPI {
     // Chat service (:8772)
     func state() async throws -> VibeyState {
         try JSONDecoder().decode(VibeyState.self, from: try await request("\(chat)/state", timeout: 4))
+    }
+    func events(since: Int) async throws -> (events: [VibeEvent], last: Int) {
+        let data = try await request("\(chat)/events?since=\(since)", timeout: 4)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let list = (obj["events"] as? [[String: Any]] ?? []).compactMap(VibeEvent.init)
+        return (list, obj["last"] as? Int ?? since)
     }
     func wake() async throws { try await post("\(chat)/wake", timeout: 40) }
     func sleep() async throws { try await post("\(chat)/sleep", timeout: 40) }

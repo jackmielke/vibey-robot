@@ -39,6 +39,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+import reachy_events
 import reachy_privacy
 from pathlib import Path
 
@@ -110,8 +111,22 @@ def _take_prefix(chat_id) -> str:
     return WOKE_PREFIX
 
 
+def _who(chat_id) -> str:
+    """A display name for the stream; never the raw id."""
+    st = _state()
+    if chat_id == st.get("owner"):
+        return st.get("owner_name") or "Jack"
+    return (st.get("guests") or {}).get(str(chat_id)) or "someone"
+
+
+def _ev(text: str, detail: dict | None = None, icon: str = "✈") -> None:
+    reachy_events.emit("telegram", text, detail=detail, source="telegram", icon=icon)
+
+
 def _send(chat_id: int, text: str) -> None:
     text = _take_prefix(chat_id) + text
+    owner = chat_id == _state().get("owner")
+    _ev(f"replied to {_who(chat_id)}: {reachy_events.short(text, 90 if owner else 50)}", icon="↗")
     try:
         for chunk in [text[i:i + 3800] for i in range(0, max(len(text), 1), 3800)]:
             _tg("sendMessage", {"chat_id": chat_id, "text": chunk}, timeout=15)
@@ -500,6 +515,7 @@ def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> 
         with urllib.request.urlopen(f"{CAM_URL}/frame.jpg", timeout=8) as r:
             jpeg = r.read()
         _send_photo(chat_id, jpeg, caption)
+        _ev(f"sent a photo to {_who(chat_id)}", detail={"caption": caption}, icon="📷")
     except urllib.error.HTTPError as e:
         # The camera now refuses to pass off an old frame as a photo, so
         # this is the honest branch rather than the broken one. Say which
@@ -1106,7 +1122,8 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
     if not (st.get("openai") and not st.get("asleep")):
         return
     try:
-        _post_json(f"{CHAT_URL}/sighting", {"silent": True, "text": (
+        _post_json(f"{CHAT_URL}/sighting", {"silent": True,
+                   "label": f"{who} texted (+ my reply)", "text": (
             f"[Context only, nobody in the room heard this: {who} texted you "
             f"\"{text[:400]}\" and you texted back \"{reply[:400]}\". Do not "
             f"read either out. Only bring it up if it naturally fits what is "
@@ -1290,6 +1307,7 @@ def _handle_group(chat_id: int, msg: dict) -> None:
     try:
         _tg("sendMessage", {"chat_id": chat_id, "text": _take_prefix(chat_id) + reply,
                             "reply_to_message_id": msg["message_id"]}, timeout=15)
+        _ev(f"replied in {title}: {reachy_events.short(reply, 50)}", icon="↗")
     except Exception:  # noqa: BLE001
         _send(chat_id, reply)
     _group_append(chat_id, "Vibey", reply)
@@ -1333,6 +1351,34 @@ def _spawn(target, args, offline: bool = False) -> None:
     threading.Thread(target=go, daemon=True).start()
 
 
+def _inbound_event(msg: dict, chat_id, st: dict, offline: bool) -> None:
+    """What just arrived, for the stream. Guests and groups get a short
+    snippet only; the full text stays in their chat."""
+    try:
+        text = msg.get("text") or ""
+        frm = msg.get("from") or msg.get("chat") or {}
+        name = frm.get("first_name") or frm.get("username") or "someone"
+        ctype = msg["chat"].get("type")
+        if ctype in ("group", "supergroup"):
+            if not _addressed(msg):
+                return       # overheard group chatter is not a ping
+            title = msg["chat"].get("title") or "a group"
+            _ev(f"pinged in {title} by {name}: {reachy_events.short(text, 50)}",
+                detail={"chat": "group", "group": title, "from": name}, icon="💬")
+        elif chat_id == st.get("owner"):
+            label = "command" if text.startswith("/") else "DM"
+            _ev(f"{label} from {name}: {reachy_events.short(text, 90)}",
+                detail={"chat": "dm", "from": name, "owner": True},
+                icon="⌘" if text.startswith("/") else "💬")
+        else:
+            _ev(f"DM from {name} (guest): {reachy_events.short(text, 50)}",
+                detail={"chat": "dm", "from": name, "owner": False}, icon="💬")
+        if offline:
+            _ev(f"{name} got the offline auto-reply first", icon="😴")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _route(u: dict, offline: bool = False) -> None:
     """One Telegram update into the owner / guest / group handlers. Shared by
     both transports so the routing is identical whichever one is running."""
@@ -1348,6 +1394,7 @@ def _route(u: dict, offline: bool = False) -> None:
         _save_state(st)
         print(f"[tg] paired with {st['owner_name']} ({chat_id})", flush=True)
         _send(chat_id, "👋 paired! You're my human now.")
+    _inbound_event(msg, chat_id, st, offline)
     if msg["chat"].get("type") in ("group", "supergroup"):
         _spawn(_handle_group, (chat_id, msg), offline)
         return

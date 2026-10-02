@@ -282,9 +282,11 @@ class LiveSession(RealtimeSession):
                 self._heard = []
                 if text:
                     self.on_user_text(text)
+                self._delegation_event(msg, text)
 
             elif t == "response.event":
                 ev = msg.get("event") or {}
+                self._backend_event(ev)
                 if (ev.get("type") == "response.output_item.done"
                         and (ev.get("item") or {}).get("type") == "function_call"):
                     await self._handle_function_call(ws, loop, ev["item"])
@@ -299,6 +301,66 @@ class LiveSession(RealtimeSession):
                 if err.get("code") in ("invalid_api_key", "insufficient_quota"):
                     self.fatal = f"OpenAI: {err.get('message')}"
                     return
+
+    # ----------------------------------------------------------------- #
+    # Stream of consciousness: the hand-off and whatever the backend says
+    # about its own thinking. Only what the API actually sends; nothing made up.
+    # ----------------------------------------------------------------- #
+    _seen_backend_types: set = set()
+    _logged_delegation = False
+
+    def _delegation_event(self, msg: dict, heard: str) -> None:
+        try:
+            import reachy_events
+            if not LiveSession._logged_delegation:
+                # The payload shape isn't documented; log it once per process.
+                LiveSession._logged_delegation = True
+                self.log(f"delegation.created keys: {sorted(msg.keys())} "
+                         f"{json.dumps(msg)[:400]}")
+            d = msg.get("delegation") if isinstance(msg.get("delegation"), dict) else msg
+            asked = ""
+            for k in ("input", "instructions", "query", "prompt", "task", "request", "summary"):
+                v = d.get(k)
+                if isinstance(v, str) and v.strip():
+                    asked = v.strip()
+                    break
+            label = asked or heard
+            reachy_events.emit(
+                "thinking",
+                f"thinking: {reachy_events.short(label, 110)}" if label
+                else f"thinking: handing off to {BACKEND_MODEL}",
+                detail={"backend": BACKEND_MODEL,
+                        "asked": reachy_events.short(asked, 600) if asked else None,
+                        "heard": reachy_events.short(heard, 300) if heard else None,
+                        "delegation_id": d.get("id") or d.get("delegation_id")},
+                source="live", icon="💭")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _backend_event(self, ev: dict) -> None:
+        """Reasoning summaries and the backend's final answer, if they arrive."""
+        try:
+            import reachy_events
+            et = ev.get("type") or ""
+            if et not in self._seen_backend_types:
+                self._seen_backend_types.add(et)
+                self.log(f"backend event type: {et}")
+            if et == "response.reasoning_summary_text.done" and ev.get("text"):
+                reachy_events.emit("thinking", f"reasoning: {reachy_events.short(ev['text'], 120)}",
+                                   detail={"summary": ev["text"][:2000]}, source="backend", icon="🧩")
+            elif et == "response.output_item.done":
+                item = ev.get("item") or {}
+                if item.get("type") == "reasoning":
+                    summ = " ".join(p.get("text", "") for p in (item.get("summary") or [])
+                                    if isinstance(p, dict)).strip()
+                    if summ:
+                        reachy_events.emit("thinking", f"reasoning: {reachy_events.short(summ, 120)}",
+                                           detail={"summary": summ[:2000]}, source="backend", icon="🧩")
+            elif et == "response.output_text.done" and ev.get("text"):
+                reachy_events.emit("thinking", f"backend answer: {reachy_events.short(ev['text'], 110)}",
+                                   detail={"text": ev["text"][:1500]}, source="backend", icon="💡")
+        except Exception:  # noqa: BLE001
+            pass
 
     # ----------------------------------------------------------------- #
     # Tools: same dispatcher, different envelope

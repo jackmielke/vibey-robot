@@ -1062,6 +1062,15 @@ def run():
         # Speak after processing every face this cycle, so two people walking
         # up together each get acknowledged instead of only the first.
         for fid, name in to_greet:
+            try:
+                import reachy_events
+                if name and name != "__new__":
+                    reachy_events.emit("senses", f"recognized {name}", source="faces", icon="🙂")
+                else:
+                    reachy_events.emit("senses", "a new face" if name == "__new__" else "an unnamed face",
+                                       source="faces", icon="❔")
+            except Exception:  # noqa: BLE001
+                pass
             # Only a known person, by name, is worth an out-loud greeting.
             # Unknown or unnamed faces go in as quiet context: telling the brain
             # to "ask what they are called" on every sighting is why Vibey kept

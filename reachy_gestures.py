@@ -167,6 +167,12 @@ def _emote_for(gesture: str, handedness: str) -> str | None:
 
 
 def _fire(emote: str) -> None:
+    try:
+        import reachy_events
+        reachy_events.emit("senses", f"saw a gesture → {emote}",
+                           detail={"emote": emote}, source="gestures", icon="✋")
+    except Exception:  # noqa: BLE001
+        pass
     STATE["last"] = emote
     STATE["last_at"] = time.time()
     STATE["cooldown"] = COOLDOWNS.get(emote, COOLDOWN)
