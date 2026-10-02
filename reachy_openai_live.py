@@ -336,6 +336,10 @@ class LiveSession(RealtimeSession):
                 if not self._response_active and time.time() >= self._speaking_until:
                     break
                 await asyncio.sleep(0.1)
+            if job.get("session_refresh"):
+                # Live can't swap its prompt mid-session; without this skip a
+                # refresh fell through to "your coding job just failed".
+                continue
             if job.get("nudge"):
                 text = job["nudge"]
             elif job.get("note"):

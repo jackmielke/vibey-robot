@@ -24,7 +24,14 @@ struct VibeyState: Decodable {
     var stage: Int?
     var scribe: Scribe?
     var switches: [String: Bool]?
+    var frontdesk: FrontDesk?
     var transcript: [Turn]?
+}
+
+struct FrontDesk: Decodable {
+    var on: Bool?
+    var guests: Int?
+    var checked_in: Int?
 }
 
 struct Scribe: Decodable {
@@ -248,6 +255,10 @@ struct VibeyAPI {
         try await post("\(chat)/switch", ["name": name, "on": on])
     }
     func setIncognito(_ on: Bool) async throws { try await post("\(chat)/incognito", ["on": on]) }
+    /// Door mode: scans Luma ticket QRs. The Mac refuses (409) while privacy is on.
+    func setFrontDesk(_ on: Bool) async throws {
+        try await post("\(chat)/frontdesk/\(on ? "on" : "off")", [:], timeout: 20)
+    }
     func cost() async throws -> Cost {
         try JSONDecoder().decode(Cost.self, from: try await request("\(chat)/cost"))
     }

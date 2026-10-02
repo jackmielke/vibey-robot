@@ -1384,6 +1384,98 @@ def _dj(path: str, body: dict | None = None) -> tuple[dict, int]:
         return {"error": f"DJ isn't running ({e.__class__.__name__})"}, 503
 
 
+FRONTDESK_URL = os.environ.get("FRONTDESK_URL", "http://127.0.0.1:8779").rstrip("/")
+_FD_CACHE = {"at": 0.0, "val": None}
+_FD_SPAWN = {"at": 0.0}
+
+
+def _frontdesk_spawn() -> None:
+    """reachy_frontdesk.py needs OpenCV, which lives in .venv-gestures, so it
+    is its own process. Started on first use rather than at boot."""
+    if time.time() - _FD_SPAWN["at"] < 10:
+        return
+    _FD_SPAWN["at"] = time.time()
+    here = os.path.dirname(os.path.abspath(__file__))
+    py = os.path.join(here, ".venv-gestures", "bin", "python3")
+    subprocess.Popen(["arch", "-arm64", py, os.path.join(here, "reachy_frontdesk.py")],
+                     cwd=here, stdout=open("/tmp/reachy_frontdesk.log", "a"),
+                     stderr=subprocess.STDOUT, start_new_session=True)
+    for _ in range(30):
+        time.sleep(0.2)
+        try:
+            urllib.request.urlopen(f"{FRONTDESK_URL}/status", timeout=1).read()
+            return
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _frontdesk(path: str, body: dict | None = None, spawn: bool = True) -> tuple[dict, int]:
+    """Pass-through to reachy_frontdesk.py (127.0.0.1:8779), behind this
+    service's token. Privacy is checked here too, so the refusal is immediate
+    and says why rather than silently overriding it."""
+    if path in ("/on",) or (path == "/toggle" and (body or {}).get("on")):
+        if _privacy_on():
+            return {"ok": False, "error": "Privacy mode is on. Front desk needs the "
+                    "camera, so turn privacy off first."}, 409
+    req = urllib.request.Request(
+        f"{FRONTDESK_URL}{path}", method="POST" if body is not None else "GET",
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json"})
+    for attempt in (0, 1):
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                out, code = json.loads(r.read() or b"{}"), r.status
+            break
+        except urllib.error.HTTPError as e:
+            try:
+                out, code = json.loads(e.read() or b"{}"), e.code
+            except Exception:  # noqa: BLE001
+                out, code = {"error": f"front desk said {e.code}"}, e.code
+            break
+        except Exception as e:  # noqa: BLE001
+            if attempt == 0 and spawn:
+                _frontdesk_spawn()
+                continue
+            return {"error": f"front desk isn't running ({e.__class__.__name__})"}, 503
+    _FD_CACHE["at"] = 0.0
+    if path in ("/on", "/off", "/toggle") and code == 200:
+        _frontdesk_tell_brain(bool(out.get("on")))
+    return out, code
+
+
+def _frontdesk_brief() -> dict | None:
+    """For /state: on, guests, checked_in. Cached; never spawns."""
+    if time.time() - _FD_CACHE["at"] < 2.0:
+        return _FD_CACHE["val"]
+    _FD_CACHE["at"] = time.time()
+    try:
+        with urllib.request.urlopen(f"{FRONTDESK_URL}/status", timeout=0.3) as r:
+            s = json.loads(r.read() or b"{}")
+        _FD_CACHE["val"] = {"on": bool(s.get("on")), "guests": s.get("guests", 0),
+                            "checked_in": s.get("checked_in", 0)}
+    except Exception:  # noqa: BLE001
+        _FD_CACHE["val"] = {"on": False, "guests": 0, "checked_in": 0}
+    return _FD_CACHE["val"]
+
+
+def _frontdesk_tell_brain(on: bool) -> None:
+    """The greeter prompt rides _session_update. Realtime rebuilds the session;
+    Live can't swap its prompt mid-session, so it gets a note instead."""
+    try:
+        import reachy_openai_realtime as _rt
+        _rt._FRONTDESK_CACHE["at"] = 0.0
+        sess = _rt.LIVE_SESSION.get("session")
+        if sess is None:
+            return
+        if type(sess).__name__ == "LiveSession":
+            sess.note(_rt.FRONTDESK_PROMPT if on else
+                      "FRONT DESK MODE IS OFF now. Back to your normal self.")
+        else:
+            _rt.refresh_live_session()
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat] front desk brain update failed: {e}", flush=True)
+
+
 def _friends() -> list[dict]:
     """Everyone Vibey knows, one snapshot each (the dashboard's /peoplelist
     carries every sample photo and weighs ~850KB)."""
@@ -1425,6 +1517,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                        "recording": cap["recording"],
                        "noise_profile": cap["profile"],
                        "privacy": _privacy_on(),
+                       "frontdesk": _frontdesk_brief(),
                        "transcript": list(TRANSCRIPT)})
         elif self.path.startswith("/transcript"):
             # The kept conversation, not the 40-line dashboard deque in /state.
@@ -1464,10 +1557,24 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/dj/"):
             out, code = _dj("/" + self.path.split("?")[0][4:])
             self._json(out, code)
+        elif self.path.startswith("/frontdesk"):
+            sub = self.path.split("?")[0][len("/frontdesk"):] or "/status"
+            out, code = _frontdesk(sub)
+            self._json(out, code)
         else:
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if self.path.startswith("/frontdesk/"):
+            # Door mode: /frontdesk/on|off|toggle|load|checkin|scan|export.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                out, code = _frontdesk(self.path.split("?")[0][len("/frontdesk"):], body)
+                self._json(out, code)
+            except Exception as e:  # noqa: BLE001
+                self._json({"error": str(e)}, 400)
+            return
         if self.path.startswith(("/emote", "/sfx", "/say", "/dj/", "/friends/name")):
             # The phone's Play tab. Thin: each one is a call into a module the
             # voice brain already uses.

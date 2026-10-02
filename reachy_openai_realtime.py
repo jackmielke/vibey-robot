@@ -1498,6 +1498,69 @@ def _tool_check_ui(args: dict) -> str:
                                   viewing_from=str(args.get("viewing_from") or ""))
 
 
+# Front desk (reachy_frontdesk.py on 127.0.0.1:8779). The QR scanner does the
+# door on its own and hands results in through /sighting; this tool is the
+# fallback for a guest with no QR who says their name instead. The tool is
+# always listed (Live can't change its tools mid-session) and answers "off"
+# when the desk is off.
+FRONTDESK_URL = os.environ.get("FRONTDESK_URL", "http://127.0.0.1:8779").rstrip("/")
+_FRONTDESK_CACHE = {"on": False, "at": 0.0}
+FRONTDESK_PROMPT = (
+    "\n\nFRONT DESK MODE IS ON. You are the door greeter at an event. Guests walk "
+    "up and hold their Luma ticket QR code up to your camera; a scanner checks it "
+    "and tells you the result, which you say in one short upbeat line. When "
+    "someone walks up, greet them like a bouncer with a grin: \"stop right there! "
+    "let me scan you in, hold your QR code up to my eyes.\" If they have no QR "
+    "code, ask their name (or email) and call `front_desk_check_in` with it, then "
+    "say what it tells you. If it can't find them, send them to a human at the "
+    "door. A line is forming: one or two short sentences, no long chats, no "
+    "follow-up questions, no tangents.")
+TOOLS = TOOLS + [{
+    "type": "function",
+    "name": "front_desk_check_in",
+    "description": (
+        "Front desk mode only. Check a guest in at the door by the name or email "
+        "they say out loud, when they can't show their ticket QR code. Fuzzy "
+        "matches the guest list and logs them in. Returns a line to say."),
+    "parameters": {
+        "type": "object",
+        "properties": {"name_or_email": {
+            "type": "string", "description": "The guest's full name, or their email."}},
+        "required": ["name_or_email"],
+    },
+}]
+
+
+def frontdesk_on() -> bool:
+    if time.time() - _FRONTDESK_CACHE["at"] < 3.0:
+        return _FRONTDESK_CACHE["on"]
+    try:
+        with urllib.request.urlopen(f"{FRONTDESK_URL}/status", timeout=0.5) as r:
+            _FRONTDESK_CACHE["on"] = bool(json.loads(r.read()).get("on"))
+    except Exception:  # noqa: BLE001 — not running means off
+        _FRONTDESK_CACHE["on"] = False
+    _FRONTDESK_CACHE["at"] = time.time()
+    return _FRONTDESK_CACHE["on"]
+
+
+def _tool_front_desk(args: dict) -> str:
+    q = str(args.get("name_or_email") or "").strip()
+    if not frontdesk_on():
+        return "Front desk mode is off, so there's no guest list to check."
+    if not q:
+        return "Ask for their name or email first."
+    req = urllib.request.Request(
+        f"{FRONTDESK_URL}/checkin", method="POST",
+        data=json.dumps({"name_or_email": q}).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        res = json.loads(r.read() or b"{}")
+    if res.get("result") == "ambiguous":
+        return ("More than one guest matches: " + ", ".join(res.get("candidates", []))
+                + ". Ask for their last name, then call this again.")
+    return f"Result: {res.get('result')}. Say: \"{res.get('say', '')}\""
+
+
 def _dispatch_tool(name: str, args: dict, announce) -> str:
     """Run a tool by name. Runs in a worker thread — must never touch the
     websocket or the event loop directly."""
@@ -1563,6 +1626,8 @@ def _dispatch_tool(name: str, args: dict, announce) -> str:
             return _tool_explain(args)
         if name == "check_local_ui":
             return _tool_check_ui(args)
+        if name == "front_desk_check_in":
+            return _tool_front_desk(args)
         return f"unknown tool {name!r}"
     except Exception as e:  # noqa: BLE001
         print(f"[openai-rt] tool {name} failed: {e}", flush=True)
@@ -1823,6 +1888,8 @@ class RealtimeSession:
         # entire complaint. So the instruction goes too, and is replaced with
         # an explicit prohibition rather than silence, because "don't do X" is
         # the only form a model reliably honours mid-conversation.
+        if frontdesk_on():
+            instructions += FRONTDESK_PROMPT
         tools = TOOLS
         if incognito():
             tools = [t for t in TOOLS if t.get("name") != "remember_face"]

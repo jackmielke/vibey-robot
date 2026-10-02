@@ -13,6 +13,10 @@ struct ControlsView: View {
     private var s: VibeyState? { store.state }
     private var off: Bool { s?.off ?? false }
     private var scribeOn: Bool { s?.scribe?.on ?? false }
+    private var frontDeskTrailing: String? {
+        guard let f = s?.frontdesk, (f.guests ?? 0) > 0 else { return nil }
+        return "\(f.checked_in ?? 0)/\(f.guests ?? 0) in"
+    }
 
     var body: some View {
         NavigationStack {
@@ -130,6 +134,16 @@ struct ControlsView: View {
                             SwitchRow(icon: "hands.clap.fill", title: "Clap to wake",
                                       hint: "Two claps wakes it (doors can too)",
                                       isOn: s?.switches?["claps"] ?? false) { sw("claps", $0) }
+                        }
+                        .shell(padding: 14)
+                        .disabled(off)
+
+                        SectionLabel(text: "Front desk", trailing: frontDeskTrailing)
+                        SwitchRow(icon: "qrcode.viewfinder", title: "Front desk",
+                                  hint: store.privacy ? "Needs the camera: turn privacy off on Home first"
+                                                      : "Scans Luma ticket QRs at the door",
+                                  tint: Palette.live, isOn: s?.frontdesk?.on ?? false) { on in
+                            store.run(on ? "Front desk on" : "Front desk off") { try await $0.setFrontDesk(on) }
                         }
                         .shell(padding: 14)
                         .disabled(off)

@@ -645,6 +645,7 @@ def _handle(chat_id: int, text: str) -> None:
               "/volume 0-100|up|down (/volume start N = the level I wake at)\n"
               "/brain live|realtime\n"
               "/listening, /tracking, /incognito, /thinkaloud on|off\n"
+              "/frontdesk on|off|status — scan Luma tickets at the door (load <csv>, export)\n"
               "/photo — see through my eyes right now\n"
               "/clip — an 8-second video through my eyes\n"
               "/timelapse — today so far, one frame a minute\n"
@@ -667,6 +668,43 @@ def _handle(chat_id: int, text: str) -> None:
         _send(chat_id, "🙈 privacy mode ON: I still talk and text, but no photos, "
                        "clips or looking around" if reachy_privacy.is_on()
                        else "👀 privacy mode OFF: /photo works, for guests too")
+        return
+    if low.startswith("/frontdesk"):
+        # /frontdesk on|off|status · /frontdesk load <csv path> · /frontdesk export
+        parts = text.split(None, 2)
+        arg = parts[1].lower() if len(parts) > 1 else "status"
+        try:
+            if arg in ("on", "off"):
+                req = urllib.request.Request(f"{CHAT_URL}/frontdesk/{arg}", data=b"{}",
+                                             headers={"Content-Type": "application/json"},
+                                             method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        st = json.loads(r.read() or b"{}")
+                except urllib.error.HTTPError as e:
+                    st = json.loads(e.read() or b"{}")
+                if st.get("error"):
+                    _send(chat_id, "🚪 " + st["error"])
+                    return
+            elif arg == "load" and len(parts) > 2:
+                st = _post_json(f"{CHAT_URL}/frontdesk/load", {"path": parts[2]}, timeout=20)
+                _send(chat_id, f"🚪 loaded {st.get('guests', 0)} guests" if not st.get("error")
+                      else "🚪 " + st["error"])
+                return
+            elif arg == "export":
+                st = _post_json(f"{CHAT_URL}/frontdesk/export", {}, timeout=20)
+                _send(chat_id, f"🚪 exported to {st.get('path')}")
+                return
+            st = _get_json(f"{CHAT_URL}/frontdesk/status", timeout=20) or {}
+        except Exception as e:  # noqa: BLE001
+            _send(chat_id, f"🚪 front desk unreachable: {e}")
+            return
+        last = "\n".join(f"· {x['name']} {x['at'][11:16]} ({x['method']})"
+                         for x in st.get("last", []))
+        _send(chat_id, f"🚪 front desk {'ON' if st.get('on') else 'off'} · "
+                       f"{st.get('checked_in', 0)}/{st.get('guests', 0)} checked in"
+                       + (f"\n{last}" if last else "")
+                       + (f"\n⚠️ {st['error']}" if st.get("error") else ""))
         return
     if low.startswith("/drive"):
         # /drive forward 1 slow  ·  /drive stop
