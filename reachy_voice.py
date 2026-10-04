@@ -48,6 +48,31 @@ def load_env(path: str = ".env") -> None:
 
 load_env()
 
+
+def _pin_mdns() -> None:
+    """Resolve a .local REACHY_URL to its IPv4 address once, for this process.
+
+    macOS resolves `reachy-mini.local` per request and takes 2-4 s to do it,
+    so every upload + play cost ~7 s before a reply was heard. start_wonder.sh
+    exports the IP for this reason, but anything launched by hand from .env got
+    the name. Every module imports this one early, so pinning here covers them.
+    """
+    import socket
+    import urllib.parse
+    url = os.environ.get("REACHY_URL", "")
+    host = urllib.parse.urlparse(url).hostname or ""
+    if not host.endswith(".local"):
+        return
+    try:
+        ip = socket.gethostbyname(host)
+    except OSError:
+        return
+    os.environ["REACHY_URL"] = url.replace(host, ip, 1)
+    os.environ["REACHY_HOST"] = ip
+
+
+_pin_mdns()
+
 REACHY_URL = os.environ.get("REACHY_URL", "http://192.168.1.120:8000").rstrip("/")
 ELEVEN_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 ELEVEN_MODEL = os.environ.get("ELEVEN_MODEL", "eleven_multilingual_v2")
