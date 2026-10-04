@@ -2106,7 +2106,10 @@ class RealtimeSession:
                     "output": str(result),
                 },
             }))
-            await ws.send(json.dumps({"type": "response.create"}))
+            # The reply is requested at response.done, once every call in
+            # this turn has its output. Asking after the first of two calls
+            # is rejected (function_call_outputs_required) and the turn dies.
+            self._tool_reply_due = True
         except Exception as e:  # noqa: BLE001
             self.log(f"failed to return tool result: {e}")
 
@@ -2296,6 +2299,9 @@ class RealtimeSession:
                        "response.done"):
                 if t == "response.done":
                     self._response_active = False
+                    if getattr(self, "_tool_reply_due", False):
+                        self._tool_reply_due = False
+                        await ws.send(json.dumps({"type": "response.create"}))
                     # Read the meter off the conversation itself. The account's
                     # usage API needs an admin key the robot does not have, but
                     # every completed turn reports what it cost.

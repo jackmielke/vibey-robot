@@ -862,6 +862,9 @@ def _handle(chat_id: int, text: str) -> None:
             return
         _dials(chat_id, {key: onoff[arg]}, f"{label}: {arg}")
         return
+    if cmd in ("/battery", "/power"):
+        _send(chat_id, _power_report()[1])
+        return
     if cmd in ("/wave", "/whistle"):
         _act(chat_id, cmd[1:])
         return
@@ -1199,6 +1202,7 @@ OWNER_COMMANDS = [
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),
     ("status", "stack health"),
+    ("battery", "is my body powered and reachable"),
     ("alarm", "wake-up show: /alarm 07:30 [daily], /alarm off"),
     ("sleep", "put me to bed"),
     ("wake", "get me up"),
@@ -1356,6 +1360,59 @@ def _handle_group(chat_id: int, msg: dict) -> None:
     _note_voice_session(raw[:400], reply, who=f"{name} (in the {title} group chat)")
 
 
+# --------------------------------------------------------------------------- #
+# Power. The Reachy Mini reports no battery percentage — not in its API, not in
+# /sys/class/power_supply on the Pi. What there is: whether the body answers
+# at all, and the Pi's own under-voltage flag, which trips as the battery sags.
+# --------------------------------------------------------------------------- #
+def _robot_host() -> str:
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000")
+    return urllib.parse.urlparse(url).hostname or ""
+
+
+def _power_report() -> tuple[str, str]:
+    """(level, line): level is ok | low | sagged | unreachable."""
+    import subprocess
+    host = _robot_host()
+    if not (_get_json(f"http://{host}:8000/api/daemon/status", timeout=4)):
+        return "unreachable", ("🔌 can't reach my body — battery's probably flat, "
+                               "or it's off the wifi. Plug me in?")
+    try:
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
+             # The robot's name and IP move between networks; a read-only
+             # voltage check on the LAN isn't worth a host-key prompt.
+             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+             "-o", "LogLevel=ERROR",
+             f"pollen@{host}", "vcgencmd get_throttled; cut -d. -f1 /proc/uptime"],
+            capture_output=True, text=True, timeout=10).stdout.split()
+        flags = int(out[0].split("=")[1], 16)
+        up_h = int(out[1]) / 3600
+    except Exception:  # noqa: BLE001
+        return "ok", "🔋 body's up and answering (couldn't read the voltage flags)."
+    if flags & 0x1:
+        return "low", ("🪫 battery's low — the voltage is sagging right now. "
+                       "Plug me in soon.")
+    if flags & 0x10000:
+        return "sagged", (f"🔋 up and answering, but the voltage dipped at some point "
+                          f"in the last {up_h:.0f}h — battery's getting low.")
+    return "ok", f"🔋 body's up, voltage is fine (on for {up_h:.0f}h)."
+
+
+def _power_watcher() -> None:
+    """Text the owner when the battery sags or the body drops off. Once per
+    change, not every check."""
+    last = None
+    while True:
+        time.sleep(120)
+        if not _state().get("owner"):
+            continue
+        level, line = _power_report()
+        if level != last and level in ("low", "unreachable") and last is not None:
+            notify_owner(line, urgent=level == "low")
+        last = level
+
+
 def run() -> None:
     global BOT_HANDLE
     if not TOKEN:
@@ -1376,6 +1433,7 @@ def run() -> None:
     print(f"[tg] up as @{BOT_HANDLE}", flush=True)
     _set_command_menu(_state().get("owner"))
     threading.Thread(target=_sleep_watcher, daemon=True).start()
+    threading.Thread(target=_power_watcher, daemon=True).start()
 
     if MODE == "poll":
         print("[tg] TELEGRAM_MODE=poll: long-polling getUpdates (the webhook "
