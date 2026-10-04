@@ -1554,7 +1554,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             # updating STATE, and a dashboard frozen on "recording" from four
             # minutes ago is worse than no indicator at all.
             cap = reachy_denoise.capture_status()
-            self._json({**STATE, "off": OFF["on"], "scribe": _scribe_status(),
+            self._json({**STATE, "voice_brain": STATE.get("voice_brain") or voice_brain(),
+                        "off": OFF["on"], "scribe": _scribe_status(),
                         "stage": STAGE["n"],
                        "switches": dict(SWITCHES),
                        "ears_closed": EARS_CLOSED["on"],
@@ -1580,8 +1581,18 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/dials"):
             self._json(_dials())
         elif self.path.startswith("/brain"):
-            self._json({"brain": voice_brain(), "options": VOICE_BRAINS,
-                        "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"]})
+            rtm = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
+            models = {"realtime": [rtm], "basic": [rtm],
+                      "live": [os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1"),
+                               os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")]}
+            self._json({"brain": voice_brain(),
+                        "options": {k: {**v, "models": models.get(k, [])}
+                                    for k, v in VOICE_BRAINS.items()},
+                        "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"],
+                        "stage": STAGE["n"], "mic_source": MIC_SOURCE,
+                        "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
+                        "vision_model": os.environ.get("SCENE_MODEL", "gpt-4o-mini"),
+                        "text_model": __import__("reachy_brain").MODEL})
         elif self.path.startswith("/cost/detail"):
             import reachy_cost
             self._json(reachy_cost.detail())

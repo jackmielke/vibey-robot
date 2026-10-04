@@ -6,6 +6,7 @@ struct HomeView: View {
     @State private var volumeKnown = false
     @State private var cost: Cost?
     @State private var showSpend = false
+    @State private var showBrain = false
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -60,6 +61,9 @@ struct HomeView: View {
             .refreshable { await store.refresh(); await loadVolume() }
         }
         .task { await loadVolume() }
+        .sheet(isPresented: $showBrain) {
+            BrainSheet().environmentObject(store).presentationDetents([.large])
+        }
         .sheet(isPresented: $showSpend) {
             SpendSheet().environmentObject(store).presentationDetents([.medium, .large])
         }
@@ -112,7 +116,10 @@ struct HomeView: View {
                 .lineLimit(2)
 
             HStack(spacing: 8) {
-                chip(icon: "waveform", text: brainLabel, on: store.status == .awake)
+                Button { Haptics.tap(); showBrain = true } label: {
+                    chip(icon: "waveform", text: brainLabel, on: store.status == .awake)
+                }
+                .buttonStyle(.plain)
                 chip(icon: privacy ? "eye.slash.fill" : "eye.fill",
                      text: privacy ? "Eyes closed" : "Eyes open", on: !privacy)
                 if s?.muted == true { chip(icon: "mic.slash.fill", text: "Muted", on: false) }
