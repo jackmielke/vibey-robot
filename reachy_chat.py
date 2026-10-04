@@ -770,6 +770,9 @@ def _apply_tracking(on: bool) -> None:
     head turning to follow you. Splitting them would be two controls for a
     thing nobody thinks of as two things.
     """
+    import reachy_privacy
+    if not reachy_privacy.camera_on():
+        on = False      # camera off: the robot's own face-finding stays off too
     verb = "enable" if on else "disable"
     _robot_post(f"/api/media/tracking/{verb}", 8)
     _robot_post(f"/api/media/wobbling/{verb}", 8)
@@ -2699,6 +2702,7 @@ def _dials() -> dict:
     import reachy_privacy
     return {
         "privacy": reachy_privacy.is_on(),
+        "camera": reachy_privacy.camera_on(),
         "awake": not STATE["asleep"],
         "listening": rt.voice_detection_active(),
         "face_tracking": bool(rt.FACE_DETECTION.get("on", True)),
@@ -2717,6 +2721,17 @@ def _dials() -> dict:
 
 def _set_dials(body: dict) -> dict:
     import reachy_openai_realtime as rt
+    if "camera" in body:
+        # Off for real: the camera service sees the file and hangs up its
+        # session, and the robot's own tracking (which reads the camera on the
+        # robot) stops with it.
+        import reachy_privacy
+        on = bool(body["camera"])
+        reachy_privacy.set_camera(on)
+        threading.Thread(target=_apply_tracking, args=(on and SWITCHES["tracking"],),
+                         daemon=True).start()
+        reachy_events.emit("system", "camera on" if on else "camera off",
+                           icon="📷" if on else "🚫")
     if "listening" in body:
         rt.set_voice_detection(bool(body["listening"]))
     if "face_tracking" in body:

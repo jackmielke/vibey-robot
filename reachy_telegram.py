@@ -696,6 +696,15 @@ def _handle(chat_id: int, text: str) -> None:
               "/budget raise [n] | off | on — override the spend cap\n"
               "/verse — what's happening in my VibeVerse lobby")
         return
+    if low.startswith("/camera"):
+        arg = low.replace("/camera", "").strip()
+        if arg in ("on", "off"):
+            _dials(chat_id, {"camera": arg == "on"},
+                   "📷 camera on" if arg == "on" else "🚫 camera off — no video at all")
+        else:
+            on = (_get_json(f"{CHAT_URL}/dials") or {}).get("camera", True)
+            _send(chat_id, f"camera is {'on' if on else 'off'}. /camera on|off")
+        return
     if low.startswith("/privacy"):
         arg = low.replace("/privacy", "").strip()
         if arg in ("on", "off"):
@@ -1197,6 +1206,7 @@ OWNER_COMMANDS = [
     ("tell", "message someone who texted me: /tell sam lol"),
     ("drive", "wheels: /drive forward 1 · /drive stop"),
     ("guests", "who's texted me"),
+    ("camera", "switch the camera off entirely: on|off"),
     ("privacy", "eyes closed, still chats: on|off (default on)"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("mic", "listen with the robot or macbook mic"),
