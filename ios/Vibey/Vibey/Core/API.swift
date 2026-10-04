@@ -384,50 +384,147 @@ struct VibeyAPI {
     /// the moment privacy switches on.
     func frameStream() -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { cont in
-            let task = Task {
-                do {
-                    guard let u = URL(string: "\(camera)/stream?size=small") else {
-                        throw APIError.unreachable("Bad address: \(host)")
-                    }
-                    var req = URLRequest(url: u, timeoutInterval: 8)
-                    if !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-                    let (bytes, resp): (URLSession.AsyncBytes, URLResponse)
-                    do { (bytes, resp) = try await URLSession.shared.bytes(for: req) }
-                    catch { throw APIError.transport(error, url: u, timeout: 8) }
-                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    if code == 401 { throw APIError.unauthorized }
-                    if code == 403 { throw APIError.eyesClosed }
-                    if code >= 400 { throw APIError.server("HTTP \(code) from /stream") }
-                    var header = [UInt8](), frame = [UInt8](), want = -1
-                    for try await b in bytes {
-                        if want < 0 {
-                            header.append(b)
-                            if header.count > 1024 { header.removeFirst(header.count - 1024) }
-                            // End of a part's headers: pull out Content-Length.
-                            if header.count >= 4, header.suffix(4) == [13, 10, 13, 10] {
-                                let text = String(decoding: header, as: UTF8.self).lowercased()
-                                if let r = text.range(of: "content-length:") {
-                                    let n = text[r.upperBound...].prefix { $0 != "\r" }
-                                    want = Int(n.trimmingCharacters(in: .whitespaces)) ?? -1
-                                    frame.removeAll(keepingCapacity: true)
-                                    frame.reserveCapacity(max(want, 0))
-                                }
-                                header.removeAll(keepingCapacity: true)
-                            }
-                        } else {
-                            frame.append(b)
-                            if frame.count == want {
-                                cont.yield(Data(frame))
-                                want = -1
-                            }
-                        }
-                    }
-                    cont.finish()
-                } catch {
-                    cont.finish(throwing: error)
-                }
+            guard let u = URL(string: "\(camera)/stream?size=small") else {
+                cont.finish(throwing: APIError.unreachable("Bad address: \(host)"))
+                return
             }
-            cont.onTermination = { _ in task.cancel() }
+            var req = URLRequest(url: u, timeoutInterval: 8)
+            if !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            // A delegate session, not URLSession.bytes: on iOS 26 the async byte
+            // sequence faults on a never-ending multipart response ("received
+            // data before consuming") and cancels it ~100ms in, so the camera
+            // sat on "Opening eyes…" forever. Chunks also beat one await per byte.
+            let reader = MJPEGReader(url: u, cont: cont)
+            let session = URLSession(configuration: .default, delegate: reader, delegateQueue: nil)
+            let task = session.dataTask(with: req)
+            task.resume()
+            cont.onTermination = { _ in task.cancel(); session.invalidateAndCancel() }
         }
+    }
+}
+
+
+/// Splits a multipart/x-mixed-replace JPEG stream into frames as chunks arrive.
+final class MJPEGReader: NSObject, URLSessionDataDelegate {
+    private let url: URL
+    private let cont: AsyncThrowingStream<Data, Error>.Continuation
+    private var buf = Data()
+    private var want = -1
+
+    init(url: URL, cont: AsyncThrowingStream<Data, Error>.Continuation) {
+        self.url = url
+        self.cont = cont
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 401 { cont.finish(throwing: APIError.unauthorized); completionHandler(.cancel); return }
+        if code == 403 { cont.finish(throwing: APIError.eyesClosed); completionHandler(.cancel); return }
+        if code >= 400 {
+            cont.finish(throwing: APIError.server("HTTP \(code) from /stream"))
+            completionHandler(.cancel); return
+        }
+        // URLSession understands multipart/x-mixed-replace itself: every part
+        // arrives as a fresh response followed by just its body, headers
+        // stripped. A new response means the previous part is complete.
+        flushJPEG()
+        completionHandler(.allow)
+    }
+
+    /// A bare JPEG body (FFD8 … FFD9) sitting in the buffer: hand it over.
+    private func flushJPEG() {
+        if buf.count > 4, buf[buf.startIndex] == 0xFF, buf[buf.startIndex + 1] == 0xD8 {
+            cont.yield(buf)
+        }
+        buf.removeAll(keepingCapacity: true)
+        want = -1
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        buf.append(data)
+        // Split by URLSession: the body alone. Done once it ends in FFD9.
+        if want < 0, buf.count > 4, buf[buf.startIndex] == 0xFF, buf[buf.startIndex + 1] == 0xD8 {
+            if buf[buf.endIndex - 2] == 0xFF, buf[buf.endIndex - 1] == 0xD9 { flushJPEG() }
+            return
+        }
+        let sep = Data([13, 10, 13, 10])
+        while true {
+            if want < 0 {
+                guard let r = buf.range(of: sep) else {
+                    if buf.count > 4096 { buf.removeFirst(buf.count - 4096) }
+                    return
+                }
+                let head = String(decoding: buf[buf.startIndex..<r.lowerBound], as: UTF8.self).lowercased()
+                buf.removeSubrange(buf.startIndex..<r.upperBound)
+                if let cl = head.range(of: "content-length:") {
+                    let n = head[cl.upperBound...].prefix { $0 != "\r" && $0 != "\n" }
+                    want = Int(n.trimmingCharacters(in: .whitespaces)) ?? -1
+                }
+            } else {
+                guard buf.count >= want else { return }
+                let end = buf.startIndex + want
+                cont.yield(Data(buf[buf.startIndex..<end]))
+                buf.removeSubrange(buf.startIndex..<end)
+                want = -1
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error, (error as NSError).code != NSURLErrorCancelled {
+            cont.finish(throwing: APIError.transport(error, url: url, timeout: 8))
+        } else {
+            cont.finish()
+        }
+    }
+}
+
+// MARK: - Friend profile (face service :8773, same bearer token)
+
+/// One captured photo of a friend: a face-recognition sample. Deleting or
+/// moving it changes what Vibey matches against, not just the picture.
+struct FacePhoto: Decodable, Identifiable, Hashable {
+    let id: String
+    let snapshot: String?
+    let created_at: String?
+}
+
+struct FriendProfile: Decodable {
+    let id: String
+    var name: String?
+    var times_seen: Int?
+    var first_seen: String?
+    var last_seen: String?
+    var snapshot: String?
+    var samples: [FacePhoto]?
+}
+
+private struct ReassignResponse: Decodable { let face_id: String?; let name: String?; let merged: Bool? }
+
+extension VibeyAPI {
+    private var faces: String { "http://\(host):8773" }
+
+    func friendProfile(_ id: String) async throws -> FriendProfile {
+        let q = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
+        return try JSONDecoder().decode(FriendProfile.self,
+                                        from: try await request("\(faces)/person?face_id=\(q)", timeout: 15))
+    }
+    /// The Mac refuses to delete someone's last photo (they would become unrecognizable).
+    func deletePhoto(_ sampleID: String) async throws {
+        try await post("\(faces)/deletesample", ["sample_id": sampleID])
+    }
+    /// "This is someone else": to an existing person (faceID) or a name
+    /// (existing person by that name, else a new one). Returns who it went to.
+    @discardableResult
+    func reassignPhoto(_ sampleID: String, toFace faceID: String? = nil,
+                       name: String? = nil) async throws -> (faceID: String?, name: String?) {
+        var body: [String: Any] = ["sample_id": sampleID]
+        if let faceID { body["face_id"] = faceID }
+        if let name { body["name"] = name }
+        let data = try await request("\(faces)/reassignsample", method: "POST", json: body, timeout: 20)
+        let r = try JSONDecoder().decode(ReassignResponse.self, from: data)
+        return (r.face_id, r.name)
     }
 }

@@ -1582,6 +1582,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/brain"):
             self._json({"brain": voice_brain(), "options": VOICE_BRAINS,
                         "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"]})
+        elif self.path.startswith("/cost/detail"):
+            import reachy_cost
+            self._json(reachy_cost.detail())
         elif self.path.startswith("/cost"):
             import reachy_cost
             self._json({**reachy_cost.summary(),

@@ -5,6 +5,7 @@ struct HomeView: View {
     @State private var volume: Double = 50
     @State private var volumeKnown = false
     @State private var cost: Cost?
+    @State private var showSpend = false
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -59,6 +60,9 @@ struct HomeView: View {
             .refreshable { await store.refresh(); await loadVolume() }
         }
         .task { await loadVolume() }
+        .sheet(isPresented: $showSpend) {
+            SpendSheet().environmentObject(store).presentationDetents([.medium, .large])
+        }
         .task {
             while !Task.isCancelled {
                 if let c = try? await store.api.cost() { cost = c }
@@ -113,7 +117,10 @@ struct HomeView: View {
                      text: privacy ? "Eyes closed" : "Eyes open", on: !privacy)
                 if s?.muted == true { chip(icon: "mic.slash.fill", text: "Muted", on: false) }
                 if let today = cost?.today {
-                    chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
+                    Button { Haptics.tap(); showSpend = true } label: {
+                        chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.top, 6)
