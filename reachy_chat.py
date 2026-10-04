@@ -1563,6 +1563,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                        "recording": cap["recording"],
                        "noise_profile": cap["profile"],
                        "privacy": _privacy_on(),
+                       "camera": __import__("reachy_privacy").camera_on(),
                        "frontdesk": _frontdesk_brief(),
                        "transcript": list(TRANSCRIPT)})
         elif self.path.startswith("/transcript"):

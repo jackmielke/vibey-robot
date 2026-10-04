@@ -13,6 +13,7 @@ struct HomeView: View {
         switch s?.voice_brain {
         case "live": return "GPT-Live"
         case "realtime": return "Realtime"
+        case "basic": return "Basic"
         case let b?: return b.capitalized
         default: return "—"
         }
@@ -45,6 +46,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     hero
+                    if cost?.budget?.level == "over" { budgetBanner }
                     primaryButton
                     CameraCard()
                     privacyCard
@@ -63,6 +65,25 @@ struct HomeView: View {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
+    }
+
+    /// Past the daily line: loud, but nothing stops. /sleep or the button does.
+    private var budgetBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 22, weight: .bold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(format: "$%.2f today", cost?.today ?? 0))
+                    .font(.system(.headline, design: .rounded).monospacedDigit())
+                Text(String(format: "Past your $%.0f line. Still running — sleep it to stop.",
+                            cost?.budget?.daily_cap ?? 3))
+                    .font(.system(.caption, design: .rounded))
+            }
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.bad))
     }
 
     private var hero: some View {

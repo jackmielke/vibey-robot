@@ -35,6 +35,7 @@ struct VibeEvent: Identifiable, Hashable {
 }
 
 struct VibeyState: Decodable {
+    var camera: Bool?
     var asleep: Bool?
     var off: Bool?
     var mode: String?
@@ -75,6 +76,7 @@ struct Memory: Decodable, Identifiable, Hashable {
 
 struct Dials: Decodable {
     var privacy: Bool?
+    var camera: Bool?
     var awake: Bool?
     var listening: Bool?
     var face_tracking: Bool?
@@ -169,6 +171,7 @@ private struct SFXResponse: Decodable { let sfx: [SoundFX] }
 private struct FriendsResponse: Decodable { let friends: [Friend] }
 private struct TracksResponse: Decodable { let tracks: [String]? }
 private struct AskResponse: Decodable { let reply: String?; let error: String? }
+private struct TextTurnResponse: Decodable { let delivered: String?; let reply: String?; let spoke: Bool? }
 private struct VolumeResponse: Decodable { let volume: Double? }
 private struct DriveResponse: Decodable { let ok: Bool?; let result: String?; let error: String? }
 
@@ -263,6 +266,15 @@ struct VibeyAPI {
     func setOff(_ off: Bool) async throws { try await post("\(chat)/off", ["off": off], timeout: 30) }
     func setPrivacy(_ on: Bool) async throws { try await post("\(chat)/privacy", ["on": on]) }
     func ask(_ text: String) async throws -> String {
+        // Awake: the message joins the live voice conversation, same as a
+        // Telegram text. Vibey answers by text and decides itself whether to
+        // also say something in the room (🔊 when it did).
+        if let d = try? await request("\(chat)/textturn", method: "POST",
+                                      json: ["text": text, "who": "Jack"], timeout: 35),
+           let t = try? JSONDecoder().decode(TextTurnResponse.self, from: d),
+           t.delivered == "voice", let reply = t.reply, !reply.isEmpty {
+            return (t.spoke == true ? "🔊 " : "") + reply
+        }
         let data = try await request("\(chat)/ask", method: "POST",
                                      json: ["text": text, "channel": "telegram", "name": "Jack"],
                                      timeout: 120)
