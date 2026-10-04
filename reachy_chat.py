@@ -1833,8 +1833,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     self._json({"ok": True, "delivered": "none"})
                     return
                 _log_turn("you", f"(texted) {text}")
-                reply = sess.text_turn(text, who=who)
-                self._json({"ok": True, "delivered": "voice", "reply": reply})
+                w = sess.text_turn(text, who=who) or {}
+                self._json({"ok": True, "delivered": "voice", "reply": w.get("text"),
+                            "spoke": bool(w.get("spoke"))})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/sighting"):

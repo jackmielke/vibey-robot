@@ -138,6 +138,21 @@ def _ephemeral_token():
               flush=True)
         return None
 
+# Texts from the phone are answered BY TEXT, in this same conversation, so the
+# voice side knows what was said. Speaking in the room is a choice the model
+# makes with this tool — "say hi to Sam" gets said, "don't say anything" doesn't.
+SAY_ALOUD_TOOL = {
+    "type": "function",
+    "name": "say_aloud",
+    "description": ("Say something out loud in the room through the robot's speaker. "
+                    "Only for when a text asks you to, or the words are clearly meant "
+                    "for the people in the room. Never when asked to stay quiet."),
+    "parameters": {"type": "object",
+                   "properties": {"words": {"type": "string",
+                                            "description": "Exactly what to say."}},
+                   "required": ["words"]},
+}
+
 # Bare-bones mode (the "basic" brain). Same model and voice, nothing else: no
 # tools, no memory or shared-context block, no background nudges. Every tool
 # call costs a second round trip before Vibey can speak, and the injections are
@@ -2289,17 +2304,19 @@ class RealtimeSession:
         if loop is None or q is None:
             return None
         waiter = {"event": threading.Event(), "text": None}
-        framed = (f"[{who} just texted you from his phone: \"{text[:600]}\". He may not "
-                  f"be in the room. Answer him out loud, in one or two short "
-                  f"sentences — what you say is also sent back to him as a text. "
-                  f"If he asks you to say something to someone in the room, say it.]")
+        framed = (f"[{who} just texted you from his phone: \"{text[:600]}\". "
+                  f"Write your reply to him as text — it goes back to his phone and "
+                  f"nobody in the room hears it. Only if something should ALSO be "
+                  f"heard in the room (he asks you to say something out loud, or it "
+                  f"is plainly meant for whoever is there) call say_aloud with the "
+                  f"exact words. If he says not to talk, or it's private, don't.]")
         self._context_event(f"{who} texted: {text[:200]}", f"{who} texted", True)
         try:
             loop.call_soon_threadsafe(q.put_nowait, {"nudge": framed, "waiter": waiter})
         except RuntimeError:
             return None
         waiter["event"].wait(timeout)
-        return waiter["text"]
+        return waiter   # {"text": reply or None, "spoke": bool}
 
     def note(self, text: str, label: str = "") -> None:
         """Quiet context: goes into the conversation with NO response asked
@@ -2357,8 +2374,6 @@ class RealtimeSession:
                 await asyncio.sleep(0.1)
             if BASIC["on"] and not job.get("waiter"):
                 continue    # basic: texts get through, nothing else does
-            if job.get("waiter"):
-                self._reply_waiter = job["waiter"]
             if job.get("session_refresh"):
                 # A mode changed under us (incognito, so far). Rebuild the
                 # session: instructions and the tool list are both computed
@@ -2382,6 +2397,24 @@ class RealtimeSession:
                     }))
                 except Exception as e:  # noqa: BLE001
                     self.log(f"note failed: {e}")
+                continue
+            if job.get("waiter"):
+                try:
+                    await ws.send(json.dumps({
+                        "type": "conversation.item.create",
+                        "item": {"type": "message", "role": "user",
+                                 "content": [{"type": "input_text", "text": job["nudge"]}]},
+                    }))
+                    self._text_turn = {"waiter": job["waiter"], "text": "", "said": None,
+                                       "started": False}
+                    await ws.send(json.dumps({"type": "response.create", "response": {
+                        "output_modalities": ["text"],
+                        "tools": [SAY_ALOUD_TOOL],
+                        "tool_choice": "auto",
+                    }}))
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"text turn failed: {e}")
+                    job["waiter"]["event"].set()
                 continue
             if job.get("nudge"):
                 nudge = job["nudge"]
@@ -2443,12 +2476,33 @@ class RealtimeSession:
 
             # --- a new reply begins ---
             elif t == "response.created":
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None and not tt["started"]:
+                    tt["started"] = True
+                    self._text_turn_resp = (msg.get("response") or {}).get("id")
                 self._first_audio_at = None
                 self._cancelled = False
                 self._response_active = True
                 self._resp_pcm = bytearray()
 
             # --- the model wants to use a tool ---
+            elif t in ("response.output_text.done", "response.text.done"):
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None and msg.get("response_id") == getattr(self, "_text_turn_resp", None):
+                    tt["text"] = (msg.get("text") or "").strip()
+            elif t == "response.function_call_arguments.done" and msg.get("name") == "say_aloud":
+                try:
+                    words = (json.loads(msg.get("arguments") or "{}").get("words") or "").strip()
+                except (json.JSONDecodeError, TypeError):
+                    words = ""
+                self.log(f"tool → say_aloud({words[:120]!r})")
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None:
+                    tt["said"] = words
+                await ws.send(json.dumps({"type": "conversation.item.create", "item": {
+                    "type": "function_call_output", "call_id": msg.get("call_id") or "",
+                    "output": "said it" if words else "nothing to say"}}))
+                self._say_pending = words or None
             elif t == "response.function_call_arguments.done":
                 await self._handle_function_call(ws, loop, msg)
 
@@ -2474,6 +2528,24 @@ class RealtimeSession:
                        "response.done"):
                 if t == "response.done":
                     self._response_active = False
+                    tt = getattr(self, "_text_turn", None)
+                    rid = (msg.get("response") or {}).get("id")
+                    if tt is not None and rid == getattr(self, "_text_turn_resp", None):
+                        self._text_turn = None
+                        tt["waiter"]["text"] = tt["text"] or (
+                            f"(said out loud) {tt['said']}" if tt["said"] else None)
+                        tt["waiter"]["spoke"] = bool(tt["said"])
+                        tt["waiter"]["event"].set()
+                    words = getattr(self, "_say_pending", None)
+                    if words:
+                        self._say_pending = None
+                        self._tool_reply_due = False
+                        await ws.send(json.dumps({"type": "response.create", "response": {
+                            "output_modalities": ["audio"],
+                            "instructions": ("Say exactly this, out loud, in your own "
+                                             "voice, and nothing else: " + words),
+                            "tools": [],
+                        }}))
                     if getattr(self, "_tool_reply_due", False):
                         self._tool_reply_due = False
                         await ws.send(json.dumps({"type": "response.create"}))
@@ -2503,11 +2575,6 @@ class RealtimeSession:
             elif t in ("response.audio_transcript.done",
                        "response.output_audio_transcript.done"):
                 txt = (msg.get("transcript") or "").strip()
-                w = getattr(self, "_reply_waiter", None)
-                if w is not None and txt:
-                    self._reply_waiter = None
-                    w["text"] = txt
-                    w["event"].set()
                 if txt:
                     self.on_agent_text(txt)
 

@@ -1151,10 +1151,10 @@ def _handle(chat_id: int, text: str) -> None:
             _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
         except Exception:  # noqa: BLE001 — cosmetic
             pass
-        # Awake with a live voice session: the text goes INTO the conversation
-        # in the room and Vibey answers out loud, so there is one Vibey and one
-        # thread rather than a texting brain and a talking brain that don't
-        # hear each other. What it said comes back here as the reply.
+        # Awake with a live voice session: the text goes INTO that conversation,
+        # so there is one Vibey and one thread rather than a texting brain and a
+        # talking brain that don't hear each other. It answers by text and
+        # decides for itself whether anything should also be said in the room.
         try:
             spoken = _post_json(f"{CHAT_URL}/textturn",
                                 {"text": text, "who": _state().get("owner_name") or "Jack"},
@@ -1162,7 +1162,8 @@ def _handle(chat_id: int, text: str) -> None:
         except Exception:  # noqa: BLE001 — fall through to the text brain
             spoken = None
         if (spoken or {}).get("delivered") == "voice" and spoken.get("reply"):
-            _send(chat_id, "🔊 " + spoken["reply"])
+            # 🔊 only when it actually chose to say something in the room.
+            _send(chat_id, ("🔊 " if spoken.get("spoke") else "") + spoken["reply"])
             return
         out = _post_json(f"{CHAT_URL}/ask", {"text": text, "channel": "telegram",
                                              "name": _state().get("owner_name") or "Jack"})
