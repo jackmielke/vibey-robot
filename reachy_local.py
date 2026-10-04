@@ -32,7 +32,7 @@ import numpy as np
 import reachy_denoise
 import reachy_openai_realtime as rt
 
-LLM = os.environ.get("LOCAL_LLM", "qwen3:14b").strip()
+LLM = os.environ.get("LOCAL_LLM", "qwen3:4b-instruct").strip()
 WHISPER = os.environ.get("LOCAL_WHISPER", "small.en").strip()
 VOICE = os.environ.get("LOCAL_VOICE", "Samantha").strip()
 PIPER = os.environ.get("LOCAL_PIPER", os.path.join(

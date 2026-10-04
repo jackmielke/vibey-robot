@@ -1586,7 +1586,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                       "live": [os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1"),
                                os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")],
                       "local": [os.environ.get("LOCAL_WHISPER", "small.en"),
-                                os.environ.get("LOCAL_LLM", "qwen3:14b"),
+                                os.environ.get("LOCAL_LLM", "qwen3:4b-instruct"),
                                 "piper:lessac"]}
             self._json({"brain": voice_brain(),
                         "options": {k: {**v, "models": models.get(k, [])}
