@@ -606,8 +606,26 @@ def _power(chat_id: int, wake: bool) -> None:
     opens the realtime session.
     """
     try:
+        if wake and (_get_json(f"{CHAT_URL}/state") or {}).get("off"):
+            # Switched OFF: "turn on" from the phone means the switch, and
+            # switching on brings the body up by itself.
+            _post_json(f"{CHAT_URL}/off", {"off": False}, timeout=30)
+            time.sleep(3)
+            st = _get_json(f"{CHAT_URL}/state") or {}
+            _send(chat_id, "🌅 switched on — coming up." if not st.get("asleep") else
+                  "🔌 switched on, but I can't reach my body — battery dead or "
+                  "off the wifi? Not starting voice.")
+            return
         _post_json(f"{CHAT_URL}/wake" if wake else f"{CHAT_URL}/sleep",
                    {}, timeout=30)
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.loads(e.read() or b"{}").get("error") or str(e)
+        except Exception:  # noqa: BLE001
+            why = str(e)
+        _send(chat_id, f"🔌 {why}" if e.code == 503 else
+              f"couldn't {'wake' if wake else 'sleep'} ({why})")
+        return
     except Exception as e:  # noqa: BLE001
         _send(chat_id, f"couldn't {'wake' if wake else 'sleep'} ({e})")
         return

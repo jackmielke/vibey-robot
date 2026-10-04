@@ -811,6 +811,21 @@ _SLEEP_RE = re.compile(r"\b(good ?night|go to sleep|bed ?time)\b", re.I)
 _WAKE_RE = re.compile(r"\b(good ?morning|wake up|rise and shine)\b", re.I)
 
 
+def _robot_reachable(timeout: float = 3.0) -> bool:
+    """Is the body there at all? Any HTTP answer counts; only a timeout or a
+    dead host does not. Checked before every wake, because a wake against a
+    flat battery used to fail every motor call and still open the paid
+    realtime session — voice from the laptop, nothing moving in the room."""
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
+    try:
+        urllib.request.urlopen(f"{url}/api/daemon/status", timeout=timeout).read()
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _robot_post(path: str, timeout: float = 20.0) -> None:
     try:
         url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
@@ -1057,6 +1072,11 @@ def _power_up() -> None:
 
     Motors first, because everything downstream needs them to move.
     """
+    if not _robot_reachable():
+        print("[power] ON, but the robot body is unreachable — leaving it asleep",
+              flush=True)
+        reachy_events.emit("system", "switched on, but can't reach the body", icon="🔌")
+        return
     _robot_post("/api/motors/set_mode/enabled", 10)
     if SWITCHES["tracking"]:
         _apply_tracking(True)
@@ -1068,11 +1088,11 @@ def _power_up() -> None:
                    timeout=5).read()
     except Exception:  # noqa: BLE001
         pass
-    # Only resume the conversation if there was one. Switching on a robot that
-    # was already asleep when it was switched off should leave it asleep.
-    if WAS_AWAKE["on"]:
-        WAS_AWAKE["on"] = False
-        _wake_now("manual")
+    # Switching on means the body comes up. It used to stay face-down unless
+    # it had been awake when switched off, which from the phone looked like
+    # "on" doing nothing.
+    WAS_AWAKE["on"] = False
+    _wake_now("manual")
 
 
 def _try_power_voice(text: str) -> bool:
@@ -1885,6 +1905,11 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     # a robot that was simply switched off.
                     self._json({"error": "Vibey is OFF — switch it on first",
                                 "off": True}, 409)
+                    return
+                if not _robot_reachable():
+                    self._json({"error": "can't reach the robot body — battery "
+                                "dead or off the network, so I'm not starting "
+                                "voice", "unreachable": True}, 503)
                     return
                 _wake_now("manual")
                 self._json({"ok": True, "asleep": STATE["asleep"]})
@@ -2815,6 +2840,10 @@ def _wake_now(reason: str = "wake") -> None:
                 play_emote("wave", sound=True)
             except Exception:  # noqa: BLE001
                 pass
+        return
+    if not _robot_reachable():
+        print(f"[chat] ignored {reason} wake — robot body unreachable", flush=True)
+        reachy_events.emit("system", "can't reach the robot body — not waking", icon="🔌")
         return
     if not STATE["asleep"]:
         if reason == "manual" and not OFF["on"]:
