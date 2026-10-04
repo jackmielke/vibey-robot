@@ -16,6 +16,7 @@ struct HomeView: View {
         case "live": return "GPT-Live"
         case "realtime": return "Realtime"
         case "basic": return "Basic"
+        case "local": return "Local"
         case let b?: return b.capitalized
         default: return "—"
         }

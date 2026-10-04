@@ -1584,7 +1584,10 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             rtm = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
             models = {"realtime": [rtm], "basic": [rtm],
                       "live": [os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1"),
-                               os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")]}
+                               os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")],
+                      "local": [os.environ.get("LOCAL_WHISPER", "small.en"),
+                                os.environ.get("LOCAL_LLM", "qwen3:14b"),
+                                "piper:lessac"]}
             self._json({"brain": voice_brain(),
                         "options": {k: {**v, "models": models.get(k, [])}
                                     for k, v in VOICE_BRAINS.items()},
@@ -2641,6 +2644,8 @@ VOICE_BRAINS = {
                  "blurb": "Voice layer + gpt-5.5 brain. Snappier. $0.05/min + backend tokens."},
     "basic":    {"label": "Basic", "module": "reachy_openai_basic",
                  "blurb": "Realtime 2.1 with no tools, memory or extras. Just talks."},
+    "local":    {"label": "Local", "module": "reachy_local",
+                 "blurb": "Everything on this Mac: whisper, qwen3, Piper voice. Free, private, offline. Slower."},
 }
 
 

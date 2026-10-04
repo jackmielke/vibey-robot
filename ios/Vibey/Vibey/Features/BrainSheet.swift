@@ -41,7 +41,7 @@ struct BrainSheet: View {
     @State private var problem: String?
     @State private var switching: String?
 
-    private let order = ["basic", "realtime", "live"]
+    private let order = ["basic", "realtime", "live", "local"]
 
     var body: some View {
         NavigationStack {
