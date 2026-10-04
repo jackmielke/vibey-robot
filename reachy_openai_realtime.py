@@ -739,6 +739,29 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "spotify",
+        "description": (
+            "Jack's Spotify, playing from the Mac's speaker. Use it when anyone "
+            "asks for a song, an artist, a playlist or a vibe that isn't in your "
+            "own music folder, or to pause, skip, go back, change Spotify's "
+            "volume, or say what's on. For 'play X' pass the words they said as "
+            "query; kind=playlist for moods ('chill playlist'), artist for an "
+            "artist. Play with no query resumes. One short line after, then let "
+            "it play."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string",
+                           "enum": ["play", "pause", "next", "previous", "volume", "now_playing"]},
+                "query": {"type": "string", "description": "What to play."},
+                "kind": {"type": "string", "enum": ["track", "playlist", "album", "artist"]},
+                "level": {"type": "number", "description": "Volume 0-100."},
+            },
+            "required": ["action"],
+        },
+    },
+    {
+        "type": "function",
         "name": "dj_tempo",
         "description": (
             "Change the tempo of what's playing, live, like a pitch fader. Use "
@@ -1635,7 +1658,7 @@ _TOOL_KIND = {
 _TOOL_ICON = {"move": "🤖", "dance": "💃", "drive": "🛞", "remember": "📌",
               "remember_face": "🙂", "who_is_here": "👀", "look_at_the_room": "📷",
               "send_text_message": "✉", "text_jack": "✉", "set_volume": "🔊",
-              "dj_play": "🎧", "dj_tempo": "🎧", "dj_stop": "🎧", "dj_tracks": "🎧",
+              "spotify": "🎵", "dj_play": "🎧", "dj_tempo": "🎧", "dj_stop": "🎧", "dj_tracks": "🎧",
               "go_to_sleep": "🌙", "take_notes": "📝", "improve_yourself": "🛠",
               "front_desk_check_in": "🎟", "vibe_check": "✨", "recall": "🔎"}
 
@@ -1721,6 +1744,11 @@ def _dispatch_tool_inner(name: str, args: dict, announce) -> str:
             return _tool_voice_detection(args)
         if name == "dj_play":
             return _tool_dj_play(args)
+        if name == "spotify":
+            import reachy_spotify
+            return reachy_spotify.control(str(args.get("action", "")), args.get("level"),
+                                          str(args.get("query") or ""),
+                                          str(args.get("kind") or "track"))
         if name == "dj_tempo":
             return _tool_dj_tempo(args)
         if name == "dj_stop":
