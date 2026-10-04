@@ -2979,7 +2979,14 @@ VOICE_SINCE = {"t": 0.0}
 BUDGET = {"blocked": False, "why": ""}
 
 
+# The cap is a WARNING, not a wall: crossing it texts a big heads-up and
+# keeps going. VIBEY_BUDGET_HARD=1 brings back sleep-and-refuse.
+BUDGET_HARD = os.environ.get("VIBEY_BUDGET_HARD", "").strip() == "1"
+
+
 def _budget_blocked() -> bool:
+    if not BUDGET_HARD:
+        return False
     try:
         import reachy_cost
         over = reachy_cost.over_budget()
@@ -3018,7 +3025,14 @@ def _budget_watcher() -> None:
             cap = b["monthly_cap"] if b["binding"] == "month" else b["daily_cap"]
             spent = b["month"] if b["binding"] == "month" else b["today"]
             per = "this month" if b["binding"] == "month" else "today"
-            if b["level"] == "over":
+            if b["level"] == "over" and not BUDGET_HARD:
+                BUDGET.update(blocked=False, why="")
+                _budget_note("over", f"🚨🚨 BUDGET: ${spent:.2f} spent on OpenAI {per} — "
+                             f"past your ${cap:.2f} line. Still running. /sleep to stop, "
+                             f"/cost for the breakdown.", urgent=True)
+                reachy_events.emit("system", f"over budget: ${spent:.2f} of ${cap:.2f} {per}",
+                                   icon="🚨")
+            elif b["level"] == "over":
                 BUDGET.update(blocked=True,
                               why=f"out of budget: ${spent:.2f} of ${cap:.2f} {per}")
                 if not STATE["asleep"]:

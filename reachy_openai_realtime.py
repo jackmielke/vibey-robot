@@ -163,7 +163,9 @@ BASIC_INSTRUCTIONS = (
     "You are Vibey, a small friendly robot sitting in Jack's home. You are "
     "talking out loud, so keep every reply short and natural — one to three "
     "sentences, like a person in the room. Be warm, a little playful, and "
-    "direct. If you didn't catch something, just ask them to say it again."
+    "direct. If you didn't catch something, just ask them to say it again. "
+    "You have a camera: whenever someone asks what you see or anything visual, "
+    "call look_at_the_room and tell them what's there."
 )
 
 DEFAULT_INSTRUCTIONS = (
@@ -521,19 +523,19 @@ TOOLS = [
         "type": "function",
         "name": "look_at_the_room",
         "description": (
-            "Look through your own camera and say what is going on around you — "
-            "the activity, the objects, the light. Use it when somebody asks "
-            "what you can see, what's happening, whether the lights are on, or "
-            "what they're holding. This is the SCENE; `who_is_here` is the "
-            "people. Set watch=true when they ask you to keep an eye on things "
-            "for a while, and watch=false when they say that's enough — while "
-            "watching you refresh what you can see every ten seconds, and you "
-            "stop by yourself after a few minutes. You never volunteer what you "
-            "see unasked, you never say who someone is from this, and you never "
-            "read text off their screen or papers. Takes a second or two."),
+            "Look through your own camera right now and see what's there. Use it "
+            "whenever anyone asks what you see, what's happening, what they're "
+            "holding or wearing, whether the lights are on — anything visual. "
+            "Just look; you don't need permission. Pass their question so the "
+            "answer is specific. Set watch=true to keep an eye on things for a "
+            "while, watch=false to stop. Takes a second or two."),
         "parameters": {
             "type": "object",
             "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "What they asked, e.g. 'what am I holding?'",
+                },
                 "watch": {
                     "type": "boolean",
                     "description": ("true to keep looking every ten seconds, "
@@ -1312,12 +1314,12 @@ def _tool_look(args: dict) -> str:
     misheard sentence can't talk Vibey into narrating the room all evening."""
     import reachy_privacy
     if reachy_privacy.is_on():
-        return ("My eyes are closed: privacy mode is on. Say so lightly and keep "
-                "chatting; don't describe the room or guess what's in it.")
+        return ("My eyes are closed: privacy mode is on (Jack can text /privacy "
+                "off). Say so lightly; don't guess what's in the room.")
     import reachy_scene
     if "watch" in args and args.get("watch") is not None:
         return reachy_scene.watch(bool(args["watch"]), args.get("minutes"))
-    return reachy_scene.look()
+    return reachy_scene.look(question=(args.get("question") or "").strip() or None)
 
 
 def _tool_remember_face(args: dict) -> str:
@@ -2066,6 +2068,8 @@ class RealtimeSession:
                 "session": {
                     "type": "realtime",
                     "instructions": BASIC_INSTRUCTIONS,
+                    "tools": [t for t in TOOLS if t.get("name") == "look_at_the_room"],
+                    "tool_choice": "auto",
                     "output_modalities": ["audio"],
                     "audio": {
                         "input": {
