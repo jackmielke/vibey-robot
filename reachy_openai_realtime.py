@@ -1792,6 +1792,103 @@ def _normalise(pcm: bytes) -> bytes:
     return samples.tobytes()
 
 
+class _Streamer:
+    """Plays reply audio as it arrives instead of after the reply is done.
+
+    Robot speaker: each chunk goes to the mic bridge's /play (reachy_robot_mic,
+    WebRTC send chain), which pushes it straight to the robot. Laptop speaker:
+    a sounddevice output stream. Either way the first word is heard while the
+    rest is still being generated. A worker thread does the I/O so the
+    websocket loop never waits on it. `ok` False means neither is available
+    and the caller falls back to the old play-the-whole-clip path.
+    """
+
+    GAIN = float(os.environ.get("STREAM_GAIN", "2.0"))
+
+    def __init__(self, log=print):
+        import queue
+        self.log = log
+        self.q: "queue.Queue[bytes | None]" = queue.Queue()
+        self.gen = 0                  # bumped by clear(): stale chunks are dropped
+        self.out = None
+        self.mode = None
+        if SPEAKER_SOURCE == "laptop":
+            try:
+                import sounddevice as sd
+                self.out = sd.RawOutputStream(samplerate=RT_SR, channels=1, dtype="int16")
+                self.out.start()
+                self.mode = "laptop"
+            except Exception as e:  # noqa: BLE001
+                log(f"[openai-rt] laptop stream unavailable: {e}")
+        else:
+            try:
+                with urllib.request.urlopen(f"{ROBOT_MIC_URL}/status", timeout=3) as r:
+                    if json.loads(r.read()).get("speaker_stream"):
+                        self.mode = "robot"
+            except Exception as e:  # noqa: BLE001
+                log(f"[openai-rt] robot speaker stream unavailable: {e}")
+        if self.mode:
+            threading.Thread(target=self._worker, daemon=True).start()
+            log(f"[openai-rt] streaming replies to the {self.mode} speaker")
+
+    @property
+    def ok(self) -> bool:
+        return self.mode is not None
+
+    def push(self, pcm: bytes) -> float:
+        """Queue a chunk; returns its duration in seconds."""
+        import numpy as np
+        a = np.frombuffer(pcm, dtype="<i2").astype(np.float32) * self.GAIN
+        self.q.put((self.gen, np.clip(a, -32767, 32767).astype("<i2").tobytes()))
+        return len(pcm) / 2 / RT_SR
+
+    def clear(self) -> None:
+        self.gen += 1
+        try:
+            while True:
+                self.q.get_nowait()
+        except Exception:  # noqa: BLE001 — queue.Empty
+            pass
+        if self.mode == "robot":
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{ROBOT_MIC_URL}/clear", data=b"", method="POST"), timeout=3).read()
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[openai-rt] stream clear failed: {e}")
+        elif self.mode == "laptop":
+            try:
+                self.out.abort()
+                self.out.start()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def close(self) -> None:
+        self.q.put(None)
+        if self.out is not None:
+            try:
+                self.out.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _worker(self) -> None:
+        while True:
+            item = self.q.get()
+            if item is None:
+                return
+            gen, pcm = item
+            if gen != self.gen:
+                continue
+            try:
+                if self.mode == "robot":
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"{ROBOT_MIC_URL}/play?sr={RT_SR}", data=pcm, method="POST"),
+                        timeout=3).read()
+                else:
+                    self.out.write(pcm)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[openai-rt] stream chunk failed: {e}")
+
+
 def _play_pcm_on_robot(pcm24: bytes) -> float:
     """Upload a 24kHz PCM16 buffer as a WAV and play it on Vibey's speaker.
     Returns the clip duration in seconds (so the caller can gate the mic)."""
@@ -1927,6 +2024,9 @@ class RealtimeSession:
         # handler — the loop stops and the caller says so out loud.
         self.fatal: str | None = None
         self._speaking_until = 0.0        # wall-clock when our clip finishes
+        self._stream = None               # _Streamer, set per connection
+        self._turn_end_at = 0.0           # when the server heard you stop
+        self._first_audio_at = None
         self._loop = None                 # set once we're running
         self._announce_q = None           # finished background jobs, to announce
         self._response_active = False     # a reply is being generated right now
@@ -2071,6 +2171,8 @@ class RealtimeSession:
         self._cancelled = True
         self._resp_pcm = bytearray()
         self._speaking_until = 0.0
+        if self._stream is not None and self._stream.ok:
+            self._stream.clear()
         # The clip stops here, so the freeze on the noise estimate has to stop
         # here too — otherwise the room stays un-learnable for the rest of a
         # sentence that isn't being spoken any more.
@@ -2311,9 +2413,12 @@ class RealtimeSession:
             # --- user started talking → barge-in ---
             if t == "input_audio_buffer.speech_started":
                 self._on_barge_in()
+            elif t == "input_audio_buffer.speech_stopped":
+                self._turn_end_at = time.time()
 
             # --- a new reply begins ---
             elif t == "response.created":
+                self._first_audio_at = None
                 self._cancelled = False
                 self._response_active = True
                 self._resp_pcm = bytearray()
@@ -2325,7 +2430,19 @@ class RealtimeSession:
             # --- streamed reply audio (accept classic + GA event names) ---
             elif t in ("response.audio.delta", "response.output_audio.delta"):
                 if not self._cancelled:
-                    self._resp_pcm.extend(base64.b64decode(msg.get("delta", "")))
+                    chunk = base64.b64decode(msg.get("delta", ""))
+                    if self._first_audio_at is None:
+                        self._first_audio_at = time.time()
+                        self.log(f"[latency] first audio {1000*(self._first_audio_at - self._turn_end_at):.0f}ms after you stopped talking"
+                                 if self._turn_end_at else "[latency] first audio")
+                    if self._stream is not None and self._stream.ok:
+                        # Straight to the speaker. The mic gate and the noise
+                        # estimate follow the audio queued so far.
+                        dur = self._stream.push(chunk)
+                        self._speaking_until = max(self._speaking_until, time.time()) + dur
+                        reachy_denoise.set_speaking(self._speaking_until - time.time() + 0.3)
+                    else:
+                        self._resp_pcm.extend(chunk)
 
             # --- reply audio finished → play it ---
             elif t in ("response.audio.done", "response.output_audio.done",
@@ -2424,6 +2541,8 @@ class RealtimeSession:
                         max_size=16 * 1024 * 1024) as ws:
                     await ws.send(json.dumps(self._session_update()))
                     self.log("connected — full-duplex, just talk")
+                    if self._stream is None:
+                        self._stream = _Streamer(self.log)
                     # A connection that worked clears whatever the last one failed
                     # with, so a topped-up account is noticed immediately.
                     FATAL_REASON["why"] = None
@@ -2516,6 +2635,8 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         # stop once the loop it feeds is gone.
         stop.set()
         _reap_pumps(log or print)
+        if session._stream is not None:
+            session._stream.close()
         LIVE_SESSION["session"] = None
         if SLEEP_REQUESTED.is_set():
             (log or print)("[openai-rt] asked to sleep — session closed")
