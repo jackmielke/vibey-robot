@@ -96,8 +96,10 @@ def play(query: str = "", kind: str = "track") -> str:
             return ("I can control Spotify but can't search it yet — I've opened the "
                     "search for it. Jack needs to add a Spotify app key to my .env.")
         hit = search(query, kind)
-        if not hit and kind == "track":
-            hit = search(query, "playlist")
+        # App keys can't see most user playlists; a mood still finds a track.
+        for other in ("playlist", "track"):
+            if not hit and kind != other:
+                hit = search(query, other)
         if not hit:
             return f"Spotify has nothing for \"{query}\"."
         _app(f'play track "{hit["uri"]}"')
