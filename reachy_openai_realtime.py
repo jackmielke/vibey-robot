@@ -2280,6 +2280,27 @@ class RealtimeSession:
         except RuntimeError:
             pass
 
+    def text_turn(self, text: str, who: str = "Jack", timeout: float = 25.0):
+        """A text from the phone, answered OUT LOUD in the room. Blocks until
+        Vibey has said its reply and returns the words (so they can go back as
+        the text reply), or None if nothing came in time. Called from other
+        threads — the HTTP handler — never from the event loop."""
+        loop, q = self._loop, self._announce_q
+        if loop is None or q is None:
+            return None
+        waiter = {"event": threading.Event(), "text": None}
+        framed = (f"[{who} just texted you from his phone: \"{text[:600]}\". He may not "
+                  f"be in the room. Answer him out loud, in one or two short "
+                  f"sentences — what you say is also sent back to him as a text. "
+                  f"If he asks you to say something to someone in the room, say it.]")
+        self._context_event(f"{who} texted: {text[:200]}", f"{who} texted", True)
+        try:
+            loop.call_soon_threadsafe(q.put_nowait, {"nudge": framed, "waiter": waiter})
+        except RuntimeError:
+            return None
+        waiter["event"].wait(timeout)
+        return waiter["text"]
+
     def note(self, text: str, label: str = "") -> None:
         """Quiet context: goes into the conversation with NO response asked
         for. The model sees it next time it speaks and decides for itself
@@ -2334,6 +2355,10 @@ class RealtimeSession:
                 if not self._response_active and time.time() >= self._speaking_until:
                     break
                 await asyncio.sleep(0.1)
+            if BASIC["on"] and not job.get("waiter"):
+                continue    # basic: texts get through, nothing else does
+            if job.get("waiter"):
+                self._reply_waiter = job["waiter"]
             if job.get("session_refresh"):
                 # A mode changed under us (incognito, so far). Rebuild the
                 # session: instructions and the tool list are both computed
@@ -2478,6 +2503,11 @@ class RealtimeSession:
             elif t in ("response.audio_transcript.done",
                        "response.output_audio_transcript.done"):
                 txt = (msg.get("transcript") or "").strip()
+                w = getattr(self, "_reply_waiter", None)
+                if w is not None and txt:
+                    self._reply_waiter = None
+                    w["text"] = txt
+                    w["event"].set()
                 if txt:
                     self.on_agent_text(txt)
 
@@ -2549,8 +2579,7 @@ class RealtimeSession:
                     sender = asyncio.ensure_future(
                         self._sender(ws, queue, should_run, stop))
                     announcer = asyncio.ensure_future(
-                        asyncio.sleep(0) if BASIC["on"]
-                        else self._announcer(ws, should_run, stop))
+                        self._announcer(ws, should_run, stop))
                     try:
                         await self._receiver(ws, loop, should_run, stop)
                     finally:

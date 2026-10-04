@@ -1818,6 +1818,25 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "vibe": STATE["vibe"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/textturn"):
+            # A text from the owner's phone, answered aloud by the live voice
+            # session. Returns what was said so it can go back as the reply.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                text = (body.get("text") or "").strip()
+                who = str(body.get("who") or "Jack")[:40]
+                import reachy_openai_realtime as _rt
+                sess = _rt.LIVE_SESSION.get("session")
+                if not text or sess is None or not STATE["openai"] or STATE["asleep"] \
+                        or not hasattr(sess, "text_turn"):
+                    self._json({"ok": True, "delivered": "none"})
+                    return
+                _log_turn("you", f"(texted) {text}")
+                reply = sess.text_turn(text, who=who)
+                self._json({"ok": True, "delivered": "voice", "reply": reply})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/sighting"):
             # Somebody appeared in front of the camera. Handed to whichever brain
             # is holding the conversation so IT says something, in its own voice,
