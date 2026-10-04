@@ -1832,8 +1832,12 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 who = str(body.get("who") or "Jack")[:40]
                 import reachy_openai_realtime as _rt
                 sess = _rt.LIVE_SESSION.get("session")
+                # GPT-Live speaks a different wire protocol: a text turn there
+                # never answers, so it goes straight to the text brain instead
+                # of making the sender wait out the timeout.
                 if not text or sess is None or not STATE["openai"] or STATE["asleep"] \
-                        or not hasattr(sess, "text_turn"):
+                        or not hasattr(sess, "text_turn") \
+                        or type(sess).__name__ == "LiveSession":
                     self._json({"ok": True, "delivered": "none"})
                     return
                 _log_turn("you", f"(texted) {text}")

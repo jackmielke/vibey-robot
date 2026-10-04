@@ -508,6 +508,9 @@ def _asleep() -> bool:
 
 
 def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> None:
+    if not reachy_privacy.camera_on():
+        _send(chat_id, reachy_privacy.CAMERA_OFF + ". /camera on to turn it back on")
+        return
     if reachy_privacy.is_on():
         _send(chat_id, reachy_privacy.CLOSED + ". /privacy off to open them")
         return
@@ -578,7 +581,7 @@ def _now_line() -> str:
     d = _get_json(f"{CHAT_URL}/dials") or {}
     if not st:
         return "chat service is down, try /status"
-    brain = "GPT-Live" if d.get("voice_brain") == "live" else "Realtime 2.1"
+    brain = {"live": "GPT-Live", "basic": "Basic"}.get(d.get("voice_brain"), "Realtime 2.1")
     sc = st.get("scribe") or {}
     if st.get("off"):
         head = "⚫ off"
@@ -589,7 +592,11 @@ def _now_line() -> str:
     else:
         head = f"🟢 voice on · {brain}"
     yn = lambda k: "on" if d.get(k) else "off"
+    cam = "📷 camera on" if d.get("camera", True) else "🚫 camera off"
+    if d.get("camera", True) and d.get("privacy"):
+        cam += " (privacy: no photos)"
     return (f"{head}\n\n"
+            f"{cam}\n"
             f"mic {'muted' if d.get('muted') else 'live'} · volume {d.get('volume', '?')}\n"
             f"listening {yn('listening')} · tracking {yn('face_tracking')}\n"
             f"incognito {yn('incognito')} · think aloud {yn('think_aloud')}\n"
@@ -874,6 +881,13 @@ def _handle(chat_id: int, text: str) -> None:
         return
     if cmd in ("/battery", "/power"):
         _send(chat_id, _power_report()[1])
+        return
+    if cmd == "/droid":
+        # A different one every time, from the whole droid shelf.
+        import random
+        import reachy_sfx
+        pick = random.choice([e["name"] for e in reachy_sfx.SFX if e.get("group") == "droid"])
+        _sfx(chat_id, pick)
         return
     if cmd in ("/wave", "/whistle"):
         _act(chat_id, cmd[1:])
@@ -1202,7 +1216,11 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
 
 # The "/" menu in Telegram. Owner only: guests get no commands at all.
 OWNER_COMMANDS = [
-    ("now", "what i'm doing + all switches"),
+    ("wake", "get me up"),
+    ("sleep", "put me to bed"),
+    ("photo", "see through my eyes right now"),
+    ("now", "what i'm doing + all switches, camera included"),
+    ("droid", "a random droid sound in the room"),
     ("tell", "message someone who texted me: /tell sam lol"),
     ("drive", "wheels: /drive forward 1 · /drive stop"),
     ("guests", "who's texted me"),
@@ -1223,14 +1241,11 @@ OWNER_COMMANDS = [
     ("wave", "wave in the room"),
     ("whistle", "whistle a little tune"),
     ("sfx", "sound effects: /sfx lists, /sfx <name> plays"),
-    ("photo", "see through my eyes right now"),
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),
     ("status", "stack health"),
     ("battery", "is my body powered and reachable"),
     ("alarm", "wake-up show: /alarm 07:30 [daily], /alarm off"),
-    ("sleep", "put me to bed"),
-    ("wake", "get me up"),
     ("scribe", "just listen and take notes: /scribe, /scribe off"),
     ("code", "set Claude Code on a task in my repo"),
     ("jobs", "what Claude Code is doing"),

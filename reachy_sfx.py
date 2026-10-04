@@ -69,6 +69,23 @@ SFX = [
     {"name": "fail", "label": "Sad Trombone Bot", "icon": "Womp", "group": "mood"},
     {"name": "mischief", "label": "Mischief", "icon": "Hmm", "group": "mood"},
     {"name": "robot_boop", "label": "Robot Boop", "icon": "Boop", "group": "droid"},
+    {"name": "droid_excited", "label": "Droid Excited", "icon": "Woo", "group": "droid"},
+    {"name": "droid_sad", "label": "Droid Sad", "icon": "Aww", "group": "droid"},
+    {"name": "droid_scream", "label": "Droid Scream", "icon": "Eek", "group": "droid"},
+    {"name": "droid_whistle", "label": "Droid Whistle", "icon": "Wheet", "group": "droid"},
+    {"name": "droid_curious", "label": "Droid Curious", "icon": "Hm?", "group": "droid"},
+    {"name": "droid_giggle", "label": "Droid Giggle", "icon": "Hehe", "group": "droid"},
+    {"name": "droid_alarm", "label": "Droid Alarm", "icon": "Alert", "group": "droid"},
+    {"name": "mouse_droid", "label": "Mouse Droid", "icon": "Squeak", "group": "droid"},
+    {"name": "probe_droid", "label": "Probe Droid", "icon": "Probe", "group": "droid"},
+    {"name": "thermal_detonator", "label": "Thermal Detonator", "icon": "Boom", "group": "space"},
+    {"name": "seismic_charge", "label": "Seismic Charge", "icon": "Wham", "group": "space"},
+    {"name": "carbon_freeze", "label": "Carbon Freeze", "icon": "Frost", "group": "space"},
+    {"name": "force_push", "label": "Force Push", "icon": "Push", "group": "space"},
+    {"name": "hologram", "label": "Hologram Message", "icon": "Holo", "group": "space"},
+    {"name": "hyperdrive_fail", "label": "Hyperdrive Fail", "icon": "Fizzle", "group": "space"},
+    {"name": "imperial_alarm", "label": "Imperial Alarm", "icon": "Klaxon", "group": "dark"},
+    {"name": "red_blade", "label": "Crackling Red Blade", "icon": "Crack", "group": "dark"},
     {"name": "cartoon_boing", "label": "Cartoon Boing", "icon": "Boing", "group": "mood"},
     {"name": "sparkle_up", "label": "Sparkle Up", "icon": "Ping", "group": "mood"},
 ]
@@ -115,6 +132,14 @@ _ALIASES = {
     "no": "droid_no", "negative": "droid_no",
     "chatter": "droid_gossip", "gossip": "droid_gossip", "beeping": "droid_gossip",
     "boop": "robot_boop", "beep": "robot_boop", "robot beep": "robot_boop",
+    "excited": "droid_excited", "happy droid": "droid_excited", "sad": "droid_sad",
+    "scream": "droid_scream", "whistle": "droid_whistle", "curious": "droid_curious",
+    "giggle": "droid_giggle", "laugh": "droid_giggle", "alarm": "droid_alarm",
+    "mouse": "mouse_droid", "probe": "probe_droid", "detonator": "thermal_detonator",
+    "grenade": "thermal_detonator", "seismic": "seismic_charge", "freeze": "carbon_freeze",
+    "carbonite": "carbon_freeze", "force": "force_push", "hologram": "hologram",
+    "holo": "hologram", "fizzle": "hyperdrive_fail", "klaxon": "imperial_alarm",
+    "red saber": "red_blade", "crackle": "red_blade",
     "boing": "cartoon_boing", "sproing": "cartoon_boing", "bounce": "cartoon_boing",
     "sparkle": "sparkle_up", "twinkle": "sparkle_up", "magic": "sparkle_up",
     "win": "success", "ta da": "success", "tada": "success", "fanfare": "success",
@@ -361,6 +386,91 @@ def _effect(name: str) -> list[float]:
         s = _mix(_sine(420, .9, .18, bend=760, vibrato=10), _sine(1180, .9, .08, bend=-500))
         for at in (.12, .28, .44, .60, .76):
             _overlay(s, _sine(1800, .035, .18, bend=-250), at)
+    # --- more droids: every one an original pattern of whistles and blips ---
+    elif name == "droid_excited":
+        s = []
+        for i, (f, b) in enumerate([(700, 500), (1100, -300), (900, 700), (1300, 400)]):
+            _overlay(s, _sine(f, .09, .28, bend=b, vibrato=40), i * .08)
+        _overlay(s, _sine(1500, .22, .26, bend=900, vibrato=60), .34)
+    elif name == "droid_sad":
+        s = _sine(900, .35, .28, bend=-450, vibrato=8) + _silence(.06) + \
+            _sine(520, .55, .26, bend=-260, vibrato=5)
+    elif name == "droid_scream":
+        s = []
+        for i in range(6):
+            _overlay(s, _sine(1700 + 260 * (i % 2), .14, .30, bend=-700, vibrato=110), i * .1)
+        _overlay(s, _sine(2300, .35, .26, bend=-1600), .62)
+    elif name == "droid_whistle":
+        s = _sine(900, .16, .30, bend=1100) + _silence(.05) + _sine(1100, .3, .30, bend=-700)
+    elif name == "droid_curious":
+        s = _sine(600, .08, .26) + _silence(.03) + _sine(640, .08, .26) + _silence(.04) + \
+            _sine(700, .28, .28, bend=700, vibrato=20)
+    elif name == "droid_giggle":
+        s = []
+        for i, f in enumerate((1200, 1050, 1250, 1000, 1300, 950, 1350)):
+            _overlay(s, _sine(f, .045, .26, bend=-150), i * .06)
+    elif name == "droid_alarm":
+        s = []
+        for i in range(8):
+            _overlay(s, _sine(1400 if i % 2 else 950, .09, .28, vibrato=30), i * .1)
+    elif name == "mouse_droid":
+        s = []
+        rnd = random.Random(81)
+        for i in range(12):
+            _overlay(s, _sine(rnd.choice([2200, 2600, 3000, 2400]), .03, .20,
+                              bend=rnd.choice([-600, 500])), i * .045)
+    elif name == "probe_droid":
+        s = _mix(_noise(1.4, .05, 82), _sine(140, 1.4, .10, vibrato=6))
+        for at, f in ((.1, 880), (.35, 660), (.5, 990), (.85, 520), (1.05, 740)):
+            _overlay(s, _sine(f, .12, .18, vibrato=90), at)
+    # --- more space ---
+    elif name == "thermal_detonator":
+        s = []
+        for i in range(6):
+            _overlay(s, _sine(1650, .05, .26), i * (.32 - i * .04))
+        at = sum(.32 - i * .04 for i in range(6)) + .05
+        _overlay(s, _mix(_noise(.9, .45, 83), _sine(60, .9, .4, bend=-30)), at)
+        n = len(s)
+        start = int(SR * at)
+        s = [v if i < start else v * (1 - (i - start) / max(1, n - start)) ** 1.5
+             for i, v in enumerate(s)]
+    elif name == "seismic_charge":
+        s = _silence(.45)
+        boom = _mix(_sine(48, 2.2, .5, bend=-14), _sine(96, 2.2, .18, bend=-30),
+                    _noise(2.2, .06, 84))
+        boom = [v * (1 - i / len(boom)) ** 1.2 for i, v in enumerate(boom)]
+        s = _overlay(s, boom, .45)
+        s = _overlay(s, _sine(3100, 1.9, .05, bend=-900), .5)      # the ringing
+    elif name == "carbon_freeze":
+        s = _mix(_noise(1.6, .14, 85), _sine(400, 1.6, .16, bend=-330, vibrato=4))
+        n = len(s)
+        s = [v * (1 - i / n) ** .7 for i, v in enumerate(s)]
+        s = _overlay(s, _sine(120, .4, .3, bend=-50), 1.4)          # clunk
+    elif name == "force_push":
+        s = _mix(_sine(80, .7, .4, bend=-35), _noise(.7, .22, 86))
+        n = len(s)
+        s = [v * math.sin(math.pi * min(1.0, i / (n * .35))) ** .5 * (1 - i / n)
+             for i, v in enumerate(s)]
+    elif name == "hologram":
+        s = _mix(_sine(660, 1.3, .12, vibrato=25), _sine(990, 1.3, .07, vibrato=40),
+                 _noise(1.3, .05, 87))
+        rnd = random.Random(88)
+        s = [v * (0.4 if rnd.random() < .08 else 1.0) for v in s]     # flicker
+    elif name == "hyperdrive_fail":
+        s = _mix(_sine(200, .6, .22, bend=900), _noise(.6, .05, 89))
+        s = s + _mix(_sine(1100, 1.0, .22, bend=-1000, vibrato=20), _noise(1.0, .1, 90))
+        s = _overlay(s, _sine(90, .25, .3, bend=-40), 1.55)
+    elif name == "imperial_alarm":
+        s = []
+        for i in range(4):
+            _overlay(s, _mix(_sine(620, .32, .22), _sine(930, .32, .10)), i * .7)
+            _overlay(s, _mix(_sine(465, .32, .22), _sine(698, .32, .10)), i * .7 + .35)
+    elif name == "red_blade":
+        rnd = random.Random(91)
+        hum = _mix(_sine(78, 1.4, .30, bend=25, vibrato=3), _sine(156, 1.4, .14, bend=40))
+        crack = [rnd.uniform(-1, 1) * .22 if rnd.random() < .12 else 0.0 for _ in hum]
+        s = _mix(hum, crack)
+        s = _overlay(s, _sine(700, .2, .2, bend=250), .02)
     elif name == "cantina":
         s = []
         melody = [(440, .12), (554, .12), (659, .12), (554, .12),

@@ -138,6 +138,25 @@ def _ephemeral_token():
               flush=True)
         return None
 
+def _now_line() -> str:
+    """The time, in words, for the top of every session's prompt. Without it
+    the model guesses — and greeted a morning with "good afternoon"."""
+    try:
+        import reachy_clock
+        from datetime import datetime
+        zone = reachy_clock.resolve_zone(None)
+        now = datetime.now(zone)
+        part = ("morning" if 5 <= now.hour < 12 else "afternoon" if now.hour < 17
+                else "evening" if now.hour < 22 else "night")
+        return (f"\n\nRIGHT NOW it is {now.strftime('%A, %B %-d, %-I:%M %p')} "
+                f"{'Pacific time' if now.strftime('%Z') in ('PDT', 'PST') else reachy_clock.zone_label(zone, now)} — {part}. Greet and talk "
+                f"accordingly (good {part if part != 'night' else 'evening'}, not "
+                f"some other time of day). This was true when the conversation "
+                f"started; it is at most twenty minutes old.")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 # Texts from the phone are answered BY TEXT, in this same conversation, so the
 # voice side knows what was said. Speaking in the room is a choice the model
 # makes with this tool — "say hi to Sam" gets said, "don't say anything" doesn't.
@@ -152,6 +171,12 @@ SAY_ALOUD_TOOL = {
                                             "description": "Exactly what to say."}},
                    "required": ["words"]},
 }
+
+def _text_turn_tools() -> list:
+    """A text gets the voice and the eyes: say_aloud, and a look at the room
+    ("what's going on there?" from the phone deserves a real answer)."""
+    return [SAY_ALOUD_TOOL] + [t for t in TOOLS if t.get("name") == "look_at_the_room"]
+
 
 # Bare-bones mode (the "basic" brain). Same model and voice, nothing else: no
 # tools, no memory or shared-context block, no background nudges. Every tool
@@ -2067,7 +2092,7 @@ class RealtimeSession:
                 "type": "session.update",
                 "session": {
                     "type": "realtime",
-                    "instructions": BASIC_INSTRUCTIONS,
+                    "instructions": BASIC_INSTRUCTIONS + _now_line(),
                     "tools": [t for t in TOOLS if t.get("name") == "look_at_the_room"],
                     "tool_choice": "auto",
                     "output_modalities": ["audio"],
@@ -2089,6 +2114,7 @@ class RealtimeSession:
         # Lessons taught in earlier conversations ride along in the prompt, so
         # a `remember` from last night is in force on tonight's first word.
         instructions += memory_block()
+        instructions += _now_line()
         # What was said lately on either side, texts included, so a voice
         # session that starts after a text already knows about it. Texts that
         # arrive mid-session come in through note(). See reachy_brain.
@@ -2313,7 +2339,8 @@ class RealtimeSession:
                   f"nobody in the room hears it. Only if something should ALSO be "
                   f"heard in the room (he asks you to say something out loud, or it "
                   f"is plainly meant for whoever is there) call say_aloud with the "
-                  f"exact words. If he says not to talk, or it's private, don't.]")
+                  f"exact words. If he says not to talk, or it's private, don't. If "
+                  f"he asks anything about the room, look_at_the_room first.]")
         self._context_event(f"{who} texted: {text[:200]}", f"{who} texted", True)
         try:
             loop.call_soon_threadsafe(q.put_nowait, {"nudge": framed, "waiter": waiter})
@@ -2413,7 +2440,7 @@ class RealtimeSession:
                                        "started": False}
                     await ws.send(json.dumps({"type": "response.create", "response": {
                         "output_modalities": ["text"],
-                        "tools": [SAY_ALOUD_TOOL],
+                        "tools": _text_turn_tools(),
                         "tool_choice": "auto",
                     }}))
                 except Exception as e:  # noqa: BLE001
@@ -2534,7 +2561,18 @@ class RealtimeSession:
                     self._response_active = False
                     tt = getattr(self, "_text_turn", None)
                     rid = (msg.get("response") or {}).get("id")
-                    if tt is not None and rid == getattr(self, "_text_turn_resp", None):
+                    if (tt is not None and rid == getattr(self, "_text_turn_resp", None)
+                            and getattr(self, "_tool_reply_due", False)):
+                        # It looked (or used another tool) before answering the
+                        # text: the answer is the NEXT response, still text-only.
+                        self._tool_reply_due = False
+                        tt["started"] = False
+                        await ws.send(json.dumps({"type": "response.create", "response": {
+                            "output_modalities": ["text"],
+                            "tools": _text_turn_tools(),
+                            "tool_choice": "auto",
+                        }}))
+                    elif tt is not None and rid == getattr(self, "_text_turn_resp", None):
                         self._text_turn = None
                         tt["waiter"]["text"] = tt["text"] or (
                             f"(said out loud) {tt['said']}" if tt["said"] else None)
