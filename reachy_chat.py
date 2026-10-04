@@ -2597,6 +2597,8 @@ VOICE_BRAINS = {
                  "blurb": "One model hears, thinks and speaks. ~$0.03-0.10/min by tokens."},
     "live":     {"label": "GPT-Live 1", "module": "reachy_openai_live",
                  "blurb": "Voice layer + gpt-5.5 brain. Snappier. $0.05/min + backend tokens."},
+    "basic":    {"label": "Basic", "module": "reachy_openai_basic",
+                 "blurb": "Realtime 2.1 with no tools, memory or extras. Just talks."},
 }
 
 

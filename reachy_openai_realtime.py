@@ -138,6 +138,19 @@ def _ephemeral_token():
               flush=True)
         return None
 
+# Bare-bones mode (the "basic" brain). Same model and voice, nothing else: no
+# tools, no memory or shared-context block, no background nudges. Every tool
+# call costs a second round trip before Vibey can speak, and the injections are
+# what race each other into "conversation already has an active response".
+# When the full kit misbehaves, this is the one that just talks.
+BASIC = {"on": False}
+BASIC_INSTRUCTIONS = (
+    "You are Vibey, a small friendly robot sitting in Jack's home. You are "
+    "talking out loud, so keep every reply short and natural — one to three "
+    "sentences, like a person in the room. Be warm, a little playful, and "
+    "direct. If you didn't catch something, just ask them to say it again."
+)
+
 DEFAULT_INSTRUCTIONS = (
     "You are Vibey, a small expressive desk robot in Jack's living room, "
     "speaking out loud through your own speaker. Keep replies SHORT and "
@@ -1932,6 +1945,26 @@ class RealtimeSession:
             "create_response": True,
             "interrupt_response": True,   # server auto-cancels a reply on barge-in
         }
+        if BASIC["on"]:
+            return {
+                "type": "session.update",
+                "session": {
+                    "type": "realtime",
+                    "instructions": BASIC_INSTRUCTIONS,
+                    "output_modalities": ["audio"],
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": RT_SR},
+                            "turn_detection": turn,
+                            "transcription": {"model": "gpt-4o-mini-transcribe"},
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": RT_SR},
+                            "voice": VOICE,
+                        },
+                    },
+                },
+            }
         instructions = (os.environ.get("OPENAI_RT_INSTRUCTIONS")
                         or DEFAULT_INSTRUCTIONS)
         # Lessons taught in earlier conversations ride along in the prompt, so
@@ -2397,7 +2430,8 @@ class RealtimeSession:
                     sender = asyncio.ensure_future(
                         self._sender(ws, queue, should_run, stop))
                     announcer = asyncio.ensure_future(
-                        self._announcer(ws, should_run, stop))
+                        asyncio.sleep(0) if BASIC["on"]
+                        else self._announcer(ws, should_run, stop))
                     try:
                         await self._receiver(ws, loop, should_run, stop)
                     finally:

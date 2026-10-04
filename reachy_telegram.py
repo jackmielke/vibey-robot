@@ -677,7 +677,7 @@ def _handle(chat_id: int, text: str) -> None:
               "/now — what I'm doing + every switch\n"
               "/talk, /talk off — voice on/off · /mute, /unmute\n"
               "/volume 0-100|up|down (/volume start N = the level I wake at)\n"
-              "/brain live|realtime\n"
+              "/brain live|realtime|basic\n"
               "/listening, /tracking, /incognito, /thinkaloud on|off\n"
               "/frontdesk on|off|status — scan Luma tickets at the door (load <csv>, export)\n"
               "/photo — see through my eyes right now\n"
@@ -838,10 +838,11 @@ def _handle(chat_id: int, text: str) -> None:
         _dials(chat_id, {"volume": v}, f"🔊 volume {v}")
         return
     if cmd == "/brain":
-        pick = {"live": "live", "gpt-live": "live", "realtime": "realtime", "rt": "realtime"}.get(arg)
+        pick = {"live": "live", "gpt-live": "live", "realtime": "realtime", "rt": "realtime",
+                "basic": "basic", "simple": "basic"}.get(arg)
         if not pick:
             cur = (_get_json(f"{CHAT_URL}/brain") or {}).get("brain")
-            _send(chat_id, f"🧠 on {cur}. /brain live or /brain realtime")
+            _send(chat_id, f"🧠 on {cur}. /brain live · realtime · basic")
             return
         try:
             out = _post_json(f"{CHAT_URL}/brain", {"brain": pick}, timeout=20)
@@ -1190,7 +1191,7 @@ OWNER_COMMANDS = [
     ("mute", "mute my mic"),
     ("unmute", "unmute my mic"),
     ("volume", "0-100, up or down · start N = the level I wake at"),
-    ("brain", "live or realtime"),
+    ("brain", "live, realtime or basic"),
     ("listening", "hear the room: on|off"),
     ("tracking", "follow faces: on|off"),
     ("incognito", "remember nothing: on|off"),
