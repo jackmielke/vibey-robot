@@ -886,7 +886,8 @@ def _handle(chat_id: int, text: str) -> None:
         # A different one every time, from the whole droid shelf.
         import random
         import reachy_sfx
-        pick = random.choice([e["name"] for e in reachy_sfx.SFX if e.get("group") == "droid"])
+        pick = random.choice([e["name"] for e in reachy_sfx.SFX
+                              if e.get("group") in ("droid", "astromech")])
         _sfx(chat_id, pick)
         return
     if cmd in ("/wave", "/whistle"):
@@ -1220,7 +1221,7 @@ OWNER_COMMANDS = [
     ("sleep", "put me to bed"),
     ("photo", "see through my eyes right now"),
     ("now", "what i'm doing + all switches, camera included"),
-    ("droid", "a random droid sound in the room"),
+    ("droid", "a random droid / R2-style sound in the room"),
     ("tell", "message someone who texted me: /tell sam lol"),
     ("drive", "wheels: /drive forward 1 · /drive stop"),
     ("guests", "who's texted me"),
