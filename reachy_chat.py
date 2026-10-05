@@ -3145,6 +3145,15 @@ def main():
     _start_ctrl_server()
     threading.Thread(target=_idle_watcher, daemon=True).start()
     threading.Thread(target=_budget_watcher, daemon=True).start()
+
+    def _rest_if_asleep():
+        # Starting up asleep never passes through _sleep_now, so the senses
+        # were left running flat out. Give the other services time to come up.
+        for _ in range(6):
+            time.sleep(10)
+            if STATE["asleep"]:
+                _rest_senses(True)
+    threading.Thread(target=_rest_if_asleep, daemon=True).start()
     global BRAIN
     brain = Brain()
     BRAIN = brain
