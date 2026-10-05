@@ -845,7 +845,7 @@ def _robot_post(path: str, timeout: float = 20.0) -> None:
 #   vibe 🎮       one up one cocked — "hands in the code"
 #   openai 🅾️    both forward/perked — "on a live call"
 # antennas-only goto leaves the head to the daemon's face tracker.
-ANTENNA_POSES = {"cli": [0.15, -0.15], "fast": [0.9, -0.9], "vibe": [0.9, 0.3],
+ANTENNA_POSES = {"cli": [0.25, -0.25], "fast": [0.9, -0.9], "vibe": [0.9, 0.3],
                  "openai": [-0.6, 0.6]}
 
 
