@@ -950,6 +950,20 @@ def _mem_pause(paused: bool) -> None:
         pass
 
 
+def _rest_senses(resting: bool) -> None:
+    """Asleep means idle on the Mac too. Face recognition and hand-gesture
+    tracking ran flat out on every camera frame while Vibey slept — ~65% of a
+    core between them for a robot nobody was talking to. Paused on sleep,
+    resumed on wake."""
+    _mem_pause(resting)
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            "http://localhost:8776/toggle", data=json.dumps({"on": not resting}).encode(),
+            method="POST", headers={"Content-Type": "application/json"}), timeout=3).read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _end_voice_session(timeout: float = 15.0) -> None:
     """Close a live voice session without putting the body down."""
     STATE["openai"] = False
@@ -2964,6 +2978,7 @@ def _wake_now(reason: str = "wake") -> None:
             reachy_idle.start()
         except Exception as e:  # noqa: BLE001
             print(f"[chat] wake body failed: {e}", flush=True)
+        threading.Thread(target=_rest_senses, args=(False,), daemon=True).start()
         threading.Thread(target=_mode_antennas, daemon=True).start()
 
     threading.Thread(target=_body, daemon=True).start()
@@ -2980,6 +2995,7 @@ def _sleep_now() -> None:
         reachy_idle.stop()
     except Exception:  # noqa: BLE001
         pass
+    threading.Thread(target=_rest_senses, args=(True,), daemon=True).start()
     if STATE["asleep"]:
         return
     print("[chat] going to sleep", flush=True)

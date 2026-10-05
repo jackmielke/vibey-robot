@@ -328,7 +328,10 @@ class WakeListener(threading.Thread):
             # I be" — the fuzzy matcher rescues that, but a model that hears the
             # name is better than a matcher that forgives it not being heard.
             name = os.environ.get("VIBEY_WAKE_MODEL", "base.en")
-            self._model = WhisperModel(name, device="cpu", compute_type="int8")
+            # Two threads: a wake check is a 2s clip, and letting it fan out
+            # over every core made the Mac run hot whenever a TV was on.
+            self._model = WhisperModel(name, device="cpu", compute_type="int8",
+                                       cpu_threads=int(os.environ.get("VIBEY_WAKE_THREADS", "2")))
             self.log(f"[wake] whisper ready ({name})")
         return self._model
 
@@ -350,6 +353,14 @@ class WakeListener(threading.Thread):
         self.last_rms = rms
         if rms < self.SPEECH_RMS:
             return False                      # room tone; do not pay for a transcribe
+        # Constant talk in the room (a TV, a podcast) used to mean a transcribe
+        # every 1.5s, all day. Past a dozen a minute, check every 4s instead —
+        # someone actually saying "hey vibey" repeats it; a TV never stops.
+        now = time.time()
+        self._recent = [t for t in getattr(self, "_recent", []) if now - t < 60]
+        if len(self._recent) >= 12 and now - self._recent[-1] < 4.0:
+            return False
+        self._recent.append(now)
         segments, _ = self._whisper().transcribe(audio, language="en", beam_size=1)
         text = " ".join(s.text for s in segments).strip()
         # Whisper invents these on near-silence, every few seconds, forever. They
