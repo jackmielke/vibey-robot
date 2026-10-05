@@ -227,7 +227,15 @@ def wake_score(text: str) -> float:
     because the name on its own is somebody discussing the robot, not addressing
     it.
     """
-    s = re.sub(r"\s+", "", normalise(text))
+    words = normalise(text).split()
+    s = "".join(words)
+    # Where each word begins in the run-together string. A match may only
+    # start there: "t-h-ey've already been" put an "h" mid-word in front of
+    # "eyvealreadyb", scored 0.83 and woke the robot for a podcast.
+    starts, pos = set(), 0
+    for w in words:
+        starts.add(pos)
+        pos += len(w)
     # "wake up", said plainly, wakes it.
     #
     # The shape-matching below only ever fires on windows starting with "h",
@@ -240,7 +248,7 @@ def wake_score(text: str) -> float:
         return 1.0
     best = 0.0
     for i, ch in enumerate(s):
-        if ch != "h":
+        if ch != "h" or i not in starts:
             continue
         for target in _WAKE_TARGETS:
             w = len(target)
