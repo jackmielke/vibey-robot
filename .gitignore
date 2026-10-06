@@ -40,3 +40,4 @@ memories/
 supabase/.temp/
 .cost.json.migrated
 .camera_off
+memory/
