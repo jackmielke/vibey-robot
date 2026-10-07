@@ -1610,6 +1610,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                         "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
                         "vision_model": os.environ.get("SCENE_MODEL", "gpt-4o-mini"),
                         "text_model": __import__("reachy_brain").MODEL})
+        elif self.path.startswith("/macmusic"):
+            import reachy_spotify
+            self._json(reachy_spotify.status())
         elif self.path.startswith("/cost/detail"):
             import reachy_cost
             self._json(reachy_cost.detail())
@@ -1851,6 +1854,20 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     STATE["openai"] = False
                 threading.Thread(target=_mode_antennas, daemon=True).start()
                 self._json({"ok": True, "vibe": STATE["vibe"]})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/macmusic"):
+            # Music playing on the MAC (Spotify) — the robot's volume slider
+            # never reached it, so the app has its own row for it.
+            try:
+                import reachy_spotify
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                if body.get("volume") is not None:
+                    reachy_spotify.control("volume", int(body["volume"]))
+                if body.get("action") in ("play", "pause", "next", "previous"):
+                    reachy_spotify.control(body["action"])
+                self._json(reachy_spotify.status())
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/textturn"):

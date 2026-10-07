@@ -55,3 +55,28 @@ extension VibeyAPI {
         return try JSONDecoder().decode(SpendDetail.self, from: data)
     }
 }
+
+/// Music playing on the Mac (Spotify) — GET/POST :8772/macmusic.
+struct MacMusic: Decodable {
+    var state: String?
+    var volume: Int?
+    var track: String?
+    var artist: String?
+}
+
+extension VibeyAPI {
+    func macMusic(_ body: [String: Any]? = nil) async throws -> MacMusic {
+        guard let u = URL(string: "http://\(host):8772/macmusic") else {
+            throw APIError.unreachable("Bad address: \(host)")
+        }
+        var req = URLRequest(url: u, timeoutInterval: 10)
+        if !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let body {
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(MacMusic.self, from: data)
+    }
+}

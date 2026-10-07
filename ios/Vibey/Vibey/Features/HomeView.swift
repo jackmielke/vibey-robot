@@ -7,6 +7,8 @@ struct HomeView: View {
     @State private var cost: Cost?
     @State private var showSpend = false
     @State private var showBrain = false
+    @State private var music: MacMusic?
+    @State private var musicVol: Double = 50
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -218,9 +220,54 @@ struct HomeView: View {
                 .tint(Palette.ink)
                 Image(systemName: "speaker.wave.3.fill").foregroundStyle(Palette.inkDim)
             }
+            Text("Robot speaker — Vibey's voice and sounds")
+                .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+            if let m = music, m.state == "playing" || m.state == "paused" {
+                Divider().padding(.vertical, 4)
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Music on Mac").font(.system(.headline, design: .rounded))
+                        Text([m.track, m.artist].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button {
+                        Haptics.tap()
+                        Task { music = try? await store.api.macMusic(["action": m.state == "playing" ? "pause" : "play"]) }
+                    } label: {
+                        Image(systemName: m.state == "playing" ? "pause.fill" : "play.fill")
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Palette.ink.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    Text("\(Int(musicVol))")
+                        .font(.system(.headline, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Palette.inkDim)
+                }
+                HStack(spacing: 12) {
+                    Image(systemName: "music.note").foregroundStyle(Palette.inkDim)
+                    Slider(value: $musicVol, in: 0...100, step: 1) { editing in
+                        if !editing {
+                            let v = Int(musicVol)
+                            Task { music = try? await store.api.macMusic(["volume": v]) }
+                        }
+                    }
+                    .tint(Palette.ink)
+                }
+            }
         }
         .shell()
         .disabled(isDown)
+        .task {
+            while !Task.isCancelled {
+                if let m = try? await store.api.macMusic() {
+                    music = m
+                    if let v = m.volume { musicVol = Double(v) }
+                }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
     }
 
     private var isDown: Bool {

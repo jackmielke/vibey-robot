@@ -31,9 +31,9 @@ struct ControlsView: View {
 
                         SectionLabel(text: "Brain")
                         VStack(alignment: .leading, spacing: 10) {
-                            ChoicePills(options: [("basic", "Basic"), ("realtime", "Realtime"), ("live", "GPT-Live")],
+                            ChoicePills(options: [("basic", "Basic"), ("realtime", "Realtime"), ("live", "GPT-Live"), ("local", "Local")],
                                         selected: d?.voice_brain ?? s?.voice_brain) { b in
-                                let label = ["basic": "Basic", "realtime": "Realtime", "live": "GPT-Live"][b] ?? b
+                                let label = ["basic": "Basic", "realtime": "Realtime", "live": "GPT-Live", "local": "Local"][b] ?? b
                                 store.run("\(label) brain") { try await $0.setBrain(b) }
                                 d?.voice_brain = b
                             }
@@ -41,6 +41,7 @@ struct ControlsView: View {
                                 switch d?.voice_brain ?? s?.voice_brain {
                                 case "basic": return "Realtime with no tools, memory or extras. Just talks — and can look."
                                 case "realtime": return "One model hears, thinks and speaks. All the tools."
+                                case "local": return "Everything on the Mac — free, private, offline. Slower."
                                 default: return "Voice layer plus a smarter backend brain."
                                 }
                             }())

@@ -130,3 +130,16 @@ def control(action: str, level: int | None = None, query: str = "", kind: str = 
         return now_playing()
     except Exception as e:  # noqa: BLE001
         return f"Spotify didn't take that ({e})."
+
+
+def status() -> dict:
+    """For the app's volume card: is Spotify playing on this Mac, how loud, what."""
+    try:
+        state = _app("player state as string")
+        out = {"app": "spotify", "state": state, "volume": int(float(_app("sound volume")))}
+        if state in ("playing", "paused"):
+            out["track"] = _app("name of current track")
+            out["artist"] = _app("artist of current track")
+        return out
+    except Exception as e:  # noqa: BLE001
+        return {"app": "spotify", "state": "unavailable", "error": str(e)}
