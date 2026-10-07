@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Vibey Demo Reel</title>
+<!--
+  The Vibey demo reel. Open it in a browser and it plays (42s, loops).
+  render.mjs drives render(t) frame by frame to make vibey-demo.mp4.
+  Everything here is drawn from the real repo: ports, modules, app tabs.
+-->
+<style>
+  :root {
+    --space: #05060c; --duck: #FFD23F; --beak: #FF7A1C; --live: #5BE3FF;
+    --ink: #14141c; --dim: #6b6e85; --lav: #e2e4f4; --violet: #7b5cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--space); }
+  body { font-family: "Inter", "Noto Color Emoji", sans-serif; color: #fff; -webkit-font-smoothing: antialiased; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  canvas#bg { position: absolute; inset: 0; }
+  .scene { position: absolute; inset: 0; opacity: 0; will-change: opacity, transform; }
+  .abs { position: absolute; }
+  .display { font-family: "Inter Display", "Inter", "Noto Color Emoji", sans-serif; font-weight: 800; letter-spacing: -0.03em; }
+  .mono { font-family: "DejaVu Sans Mono", "Liberation Mono", monospace; }
+  .kicker { font-weight: 700; font-size: 26px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--live); }
+  .grad { background: linear-gradient(90deg, #fff 0%, var(--lav) 40%, var(--duck) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .shell { background: linear-gradient(#ffffff, #e2e4f4); color: var(--ink); border-radius: 28px; box-shadow: 0 0 40px rgba(255,255,255,.18), 0 0 6px rgba(255,255,255,.1); }
+  .glass { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 22px; backdrop-filter: blur(8px); }
+  .pill { display: inline-block; padding: 8px 18px; border-radius: 999px; font-weight: 700; font-size: 22px; }
+
+  /* S1 */
+  #s1-photo { left: 1060px; top: 70px; width: 600px; height: 940px; border-radius: 40px; overflow: hidden; box-shadow: 0 30px 120px rgba(91,227,255,.25), 0 0 0 6px rgba(255,255,255,.9); }
+  #s1-photo img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 40%; }
+  #s1-title { left: 150px; top: 300px; font-size: 190px; line-height: 0.95; }
+  #s1-title span { display: inline-block; }
+  #s1-sub { left: 156px; top: 560px; font-size: 40px; color: #cfd3ef; font-weight: 500; width: 860px; line-height: 1.35; }
+  #s1-tag { left: 156px; top: 220px; }
+  #s1-sticker { left: 1480px; top: 820px; transform: rotate(-8deg); background: var(--duck); color: var(--ink); font-weight: 800; font-size: 30px; padding: 14px 26px; border-radius: 18px; box-shadow: 0 10px 40px rgba(255,210,63,.4); }
+
+  /* S2 */
+  #s2-code { left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; opacity: .07; font-size: 19px; -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 30%, transparent 75%); line-height: 1.55; color: var(--live); white-space: pre; padding-left: 60px; }
+  #s2-head { left: 150px; top: 150px; }
+  #s2-title { left: 150px; top: 200px; font-size: 120px; line-height: 1.0; width: 1200px; }
+  #s2-card { left: 150px; top: 520px; width: 1000px; padding: 40px 48px; }
+  #s2-card .repo { font-size: 46px; font-weight: 700; }
+  #s2-card .repo b { color: #2f6fff; }
+  #s2-card .desc { font-size: 26px; color: #4a4d63; margin-top: 14px; line-height: 1.4; }
+  #s2-card .row { display: flex; gap: 14px; margin-top: 26px; }
+  #s2-card .row .pill { background: #eceefa; color: var(--ink); font-size: 20px; }
+  #s2-stats { left: 1260px; top: 300px; width: 520px; }
+  .stat { margin-bottom: 44px; }
+  .stat .n { font-size: 110px; line-height: 1; }
+  .stat .l { font-size: 26px; color: #b9bdd9; font-weight: 600; margin-top: 6px; }
+
+  /* S3 */
+  #s3-title { left: 0; width: 1920px; top: 60px; text-align: center; font-size: 84px; }
+  #s3-sub { left: 0; width: 1920px; top: 160px; text-align: center; font-size: 30px; color: #b9bdd9; }
+  #s3-svg { left: 0; top: 0; }
+  .node { background: rgba(17,18,38,.92) !important; position: absolute; width: 300px; padding: 18px 22px; transform: translate(-50%, -50%); }
+  .node .port { font-size: 22px; font-weight: 800; color: var(--live); }
+  .node .nm { font-size: 30px; font-weight: 800; margin-top: 2px; }
+  .node .ds { font-size: 19px; color: #b9bdd9; margin-top: 4px; }
+
+  /* S4 */
+  #s4-title { left: 150px; top: 110px; font-size: 104px; width: 1700px; }
+  #s4-sub { left: 156px; top: 240px; font-size: 32px; color: #b9bdd9; }
+  .brain { position: absolute; top: 400px; width: 470px; height: 470px; padding: 40px; border-radius: 34px; }
+  .brain .ic { font-size: 84px; }
+  .brain .nm { font-size: 44px; font-weight: 800; margin-top: 18px; }
+  .brain .by { font-size: 24px; font-weight: 700; color: var(--live); margin-top: 6px; }
+  .brain .ds { font-size: 26px; color: #c9cce6; margin-top: 18px; line-height: 1.4; }
+  .brain .on { position: absolute; top: 36px; right: 36px; font-size: 20px; font-weight: 800; color: var(--ink); background: var(--duck); padding: 6px 14px; border-radius: 999px; }
+  #s4-vibey { left: 1650px; top: 520px; }
+
+  /* S5 */
+  #s5-title { left: 150px; top: 70px; font-size: 96px; }
+  #s5-count { left: 1420px; top: 60px; text-align: right; width: 360px; }
+  #s5-grid { left: 150px; top: 230px; width: 1620px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; }
+  .tile { height: 245px; padding: 26px; border-radius: 26px; position: relative; overflow: hidden; }
+  .tile .ic { font-size: 62px; }
+  .tile .nm { font-size: 30px; font-weight: 800; margin-top: 10px; line-height: 1.1; }
+  .tile .ds { font-size: 20px; color: #b9bdd9; margin-top: 8px; line-height: 1.3; }
+  .tile .file { position: absolute; bottom: 16px; left: 26px; font-size: 15px; color: rgba(91,227,255,.75); }
+
+  /* S6 phone */
+  #s6-copy { left: 150px; top: 280px; width: 800px; }
+  #s6-copy h1 { font-size: 120px; line-height: 1; }
+  #s6-copy p { font-size: 34px; color: #c9cce6; line-height: 1.45; margin-top: 30px; }
+  #s6-tabs-legend { margin-top: 40px; display: flex; gap: 12px; flex-wrap: wrap; }
+  #s6-tabs-legend .pill { background: rgba(255,255,255,.08); color: #cfd3ef; border: 1px solid rgba(255,255,255,.14); }
+  #s6-tabs-legend .pill.on { background: var(--duck); color: var(--ink); border-color: var(--duck); }
+  #phone { left: 1150px; top: 60px; width: 470px; height: 960px; border-radius: 74px; background: #0b0c14; border: 12px solid #1c1d2a; box-shadow: 0 0 0 2px #3a3c52, 0 40px 140px rgba(91,227,255,.25); overflow: hidden; }
+  #phone .notch { position: absolute; left: 50%; top: 14px; width: 130px; height: 36px; margin-left: -65px; background: #000; border-radius: 20px; z-index: 5; }
+  #phone .scr { position: absolute; inset: 0; padding: 74px 22px 110px; }
+  #phone .stars { position: absolute; inset: 0; }
+  #phone .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 100px; display: flex; justify-content: space-around; align-items: flex-start; padding-top: 14px; background: rgba(10,11,20,.92); border-top: 1px solid rgba(255,255,255,.08); }
+  #phone .tab { text-align: center; font-size: 13px; color: #6b6e85; font-weight: 600; width: 80px; }
+  #phone .tab .i { font-size: 26px; display: block; filter: grayscale(1) brightness(1.3); opacity: .6; }
+  #phone .tab.on { color: var(--duck); }
+  #phone .tab.on .i { filter: none; opacity: 1; }
+  .pscreen { position: absolute; left: 22px; right: 22px; top: 74px; bottom: 110px; }
+  .ph-h { font-size: 38px; font-weight: 800; margin-bottom: 14px; }
+  .pcard { padding: 18px; margin-bottom: 14px; border-radius: 24px; }
+  .pcard h4 { font-size: 20px; font-weight: 800; }
+  .pcard small { font-size: 15px; color: var(--dim); }
+  .bubble { max-width: 78%; padding: 12px 16px; border-radius: 20px; font-size: 18px; margin-bottom: 10px; line-height: 1.3; }
+  .bubble.me { margin-left: auto; background: var(--duck); color: var(--ink); border-bottom-right-radius: 6px; }
+  .bubble.bot { background: #fff; color: var(--ink); border-bottom-left-radius: 6px; }
+  .evt { font-size: 14px; color: var(--live); margin: 4px 0 10px 4px; }
+  .sfx { display: inline-block; width: 31%; margin: 0 1% 10px 0; padding: 12px 0; text-align: center; background: #eef0fb; border-radius: 16px; font-size: 26px; }
+  .slider { height: 10px; border-radius: 5px; background: #d9dcef; position: relative; margin: 14px 0 6px; }
+  .slider i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: linear-gradient(90deg, var(--live), var(--violet)); }
+  .slider b { position: absolute; top: -9px; width: 28px; height: 28px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.3); margin-left: -14px; }
+  .faces { display: flex; flex-wrap: wrap; gap: 12px; }
+  .face { width: 120px; text-align: center; font-size: 15px; font-weight: 700; color: var(--ink); }
+  .face .av { width: 96px; height: 96px; border-radius: 50%; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: 46px; }
+  .dpad { display: grid; grid-template-columns: 70px 70px 70px; gap: 8px; justify-content: center; margin-top: 10px; }
+  .dpad div { height: 70px; border-radius: 18px; background: #eef0fb; display: flex; align-items: center; justify-content: center; font-size: 30px; color: var(--ink); }
+  .dpad div.hot { background: var(--duck); }
+
+  /* S7 mac */
+  #s7-title { left: 150px; top: 70px; font-size: 96px; }
+  #s7-sub { left: 156px; top: 180px; font-size: 32px; color: #b9bdd9; }
+  #mac { left: 150px; top: 260px; width: 1620px; height: 780px; border-radius: 26px; overflow: hidden; background: #0d0e18; box-shadow: 0 0 0 2px #2a2c40, 0 40px 140px rgba(123,92,255,.25); }
+  #mac .menubar { height: 44px; background: rgba(28,29,44,.95); display: flex; align-items: center; padding: 0 22px; font-size: 18px; font-weight: 600; gap: 26px; color: #e6e7f4; }
+  #mac .menubar .right { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+  #mac .statusitem { padding: 4px 12px; border-radius: 8px; background: rgba(255,255,255,.12); display: flex; gap: 8px; align-items: center; }
+  #mac .dot { width: 12px; height: 12px; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 10px #3ddc84; }
+  #macmenu { position: absolute; right: 150px; top: 50px; width: 330px; padding: 10px; border-radius: 14px; background: rgba(40,41,60,.97); box-shadow: 0 20px 60px rgba(0,0,0,.5); font-size: 20px; z-index: 4; transform-origin: top right; }
+  #macmenu div { padding: 9px 14px; border-radius: 8px; }
+  #macmenu div.hi { background: #2f6fff; }
+  #macmenu hr { border: 0; border-top: 1px solid rgba(255,255,255,.12); margin: 6px 0; }
+  #dash { position: absolute; left: 0; right: 0; top: 44px; bottom: 0; display: grid; grid-template-columns: 1.25fr 1fr 0.9fr; gap: 20px; padding: 22px; }
+  .panel { border-radius: 18px; background: #151627; border: 1px solid rgba(255,255,255,.08); padding: 18px; overflow: hidden; position: relative; }
+  .panel h5 { font-size: 16px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); margin-bottom: 12px; }
+  #cam { position: absolute; left: 18px; right: 18px; top: 50px; bottom: 18px; border-radius: 12px; overflow: hidden; }
+  #cam img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; filter: saturate(.9) contrast(1.05); }
+  #cam .box { position: absolute; border: 3px solid var(--duck); border-radius: 10px; }
+  #cam .box span { position: absolute; left: -3px; top: -36px; background: var(--duck); color: var(--ink); font-weight: 800; font-size: 17px; padding: 4px 10px; border-radius: 8px; white-space: nowrap; }
+  #cam .rec { position: absolute; left: 14px; top: 14px; font-size: 16px; font-weight: 800; background: rgba(0,0,0,.55); padding: 4px 10px; border-radius: 8px; }
+  .live-row { font-size: 18px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.04); margin-bottom: 8px; display: flex; gap: 10px; }
+  .live-row em { font-style: normal; color: var(--dim); font-size: 15px; margin-left: auto; }
+
+  /* S8 */
+  #s8-photo { left: 820px; top: 0; width: 1100px; height: 1080px; overflow: hidden; }
+  #s8-photo img { width: 100%; height: 100%; object-fit: cover; object-position: 18% 50%; }
+  #s8-shade { inset: 0; background: linear-gradient(90deg, rgba(5,6,12,1) 0%, rgba(5,6,12,1) 43%, rgba(5,6,12,.55) 52%, rgba(5,6,12,0) 64%); }
+  #s8-title { left: 150px; top: 250px; font-size: 150px; line-height: .95; width: 1100px; }
+  #s8-url { left: 150px; top: 600px; font-size: 46px; padding: 22px 32px; }
+  #s8-url .caret { display: inline-block; width: 4px; height: 46px; background: var(--duck); vertical-align: -8px; margin-left: 4px; }
+  #s8-meta { left: 156px; top: 740px; display: flex; gap: 14px; }
+  #s8-meta .pill { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); color: #e6e7f4; }
+  #s8-icon { left: 150px; top: 880px; display: flex; align-items: center; gap: 22px; font-size: 30px; font-weight: 700; color: #cfd3ef; }
+  #s8-icon img { width: 100px; height: 100px; border-radius: 24px; box-shadow: 0 0 40px rgba(91,227,255,.35); }
+
+  #wm { position: absolute; right: 40px; bottom: 30px; font-size: 20px; font-weight: 700; color: rgba(255,255,255,.45); letter-spacing: .02em; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="bg" width="1920" height="1080"></canvas>
+
+  <!-- 1. Meet Vibey -->
+  <section class="scene" id="s1">
+    <div class="abs" id="s1-photo"><img src="vibey-shelf.jpg" alt=""></div>
+    <div class="abs kicker" id="s1-tag">Open source robot</div>
+    <div class="abs display" id="s1-title"></div>
+    <div class="abs" id="s1-sub">A Reachy Mini with a personality. Camera eyes, mic ears, antenna eyebrows, a British voice, and a duck in sunglasses.</div>
+    <div class="abs" id="s1-sticker">yes, this is the real one 🦆</div>
+  </section>
+
+  <!-- 2. Open source -->
+  <section class="scene" id="s2">
+    <div class="abs mono" id="s2-code"></div>
+    <div class="abs kicker" id="s2-head">github.com/jackmielke/vibey-robot</div>
+    <div class="abs display" id="s2-title">The whole robot,<br><span class="grad">open sourced.</span></div>
+    <div class="abs shell" id="s2-card">
+      <div class="repo">📦 jackmielke / <b>vibey-robot</b></div>
+      <div class="desc">Its eyes, voice, memory, body language, dashboard, apps, and the brains it thinks with. And it has write access to its own source code.</div>
+      <div class="row"><span class="pill">Python</span><span class="pill">Swift</span><span class="pill">Reachy Mini SDK</span><span class="pill">Supabase</span></div>
+    </div>
+    <div class="abs" id="s2-stats">
+      <div class="stat"><div class="n display grad" data-to="49">0</div><div class="l">Python modules</div></div>
+      <div class="stat"><div class="n display grad" data-to="25" data-suffix="k">0</div><div class="l">lines of Python</div></div>
+      <div class="stat"><div class="n display grad" data-to="2">0</div><div class="l">native apps: iPhone + Mac</div></div>
+    </div>
+  </section>
+
+  <!-- 3. Services -->
+  <section class="scene" id="s3">
+    <svg class="abs" id="s3-svg" width="1920" height="1080"></svg>
+    <div class="abs display" id="s3-title">Tiny services. <span class="grad">One personality.</span></div>
+    <div class="abs" id="s3-sub">Each piece is a small program on its own port, talking over localhost.</div>
+    <div id="s3-nodes"></div>
+    <div class="abs" id="s3-vibey"></div>
+  </section>
+
+  <!-- 4. Brains -->
+  <section class="scene" id="s4">
+    <div class="abs display" id="s4-title">Three brains. <span class="grad">Swap them by voice.</span></div>
+    <div class="abs" id="s4-sub">The antennas change posture so you can tell which one is thinking.</div>
+    <div class="brain glass" id="b0" style="left:150px"><div class="on">ACTIVE</div><div class="ic">🎙️</div><div class="nm">Realtime voice</div><div class="by">OpenAI Realtime</div><div class="ds">The default. Hears, thinks and talks back live, with tools for the body, camera and memory.</div></div>
+    <div class="brain glass" id="b1" style="left:650px"><div class="on">ACTIVE</div><div class="ic">⚡</div><div class="nm">Fast</div><div class="by">ElevenLabs ConvAI</div><div class="ds">Speech in, speech out, in one realtime call. For snappy back and forth.</div></div>
+    <div class="brain glass" id="b2" style="left:1150px"><div class="on">ACTIVE</div><div class="ic">🎮</div><div class="nm">Vibe</div><div class="by">OpenClaw agent + Claude</div><div class="ds">Its workspace is this repo, so it can improve its own code mid-conversation.</div></div>
+    <div class="abs" id="s4-vibey"></div>
+  </section>
+
+  <!-- 5. Features -->
+  <section class="scene" id="s5">
+    <div class="abs display" id="s5-title">And it does <span class="grad">a lot.</span></div>
+    <div class="abs" id="s5-count"><div class="display grad" style="font-size:120px;line-height:1" id="s5-n">0</div><div style="font-size:24px;color:#b9bdd9;font-weight:700">skills and counting</div></div>
+    <div class="abs" id="s5-grid"></div>
+  </section>
+
+  <!-- 6. iPhone -->
+  <section class="scene" id="s6">
+    <div class="abs" id="s6-copy">
+      <div class="kicker">ios/Vibey · SwiftUI</div>
+      <h1 class="display" style="margin-top:20px">Vibey in<br><span class="grad">your pocket.</span></h1>
+      <p>Wake it, drive it, make it talk, play sounds, DJ, and browse everything it remembers.</p>
+      <div id="s6-tabs-legend"></div>
+    </div>
+    <div class="abs" id="phone">
+      <canvas class="stars" id="phonestars" width="446" height="936"></canvas>
+      <div class="notch"></div>
+      <div id="pscreens"></div>
+      <div class="tabbar" id="tabbar"></div>
+    </div>
+  </section>
+
+  <!-- 7. Mac -->
+  <section class="scene" id="s7">
+    <div class="abs display" id="s7-title">Vibey.app <span class="grad">for Mac.</span></div>
+    <div class="abs" id="s7-sub">A menu bar status item plus the full live dashboard. Or just type <span class="mono" style="color:var(--duck)">./vibey</span>.</div>
+    <div class="abs" id="mac">
+      <div class="menubar"><span>  Vibey</span><span style="opacity:.7">File</span><span style="opacity:.7">View</span><span style="opacity:.7">Window</span>
+        <div class="right"><span style="opacity:.7">📶</span><span class="statusitem"><span class="dot"></span>🦆 Vibey</span><span style="opacity:.8">Wed 9:41</span></div></div>
+      <div id="macmenu">
+        <div style="opacity:.75">Vibey: awake · OpenAI Realtime</div><hr>
+        <div>☀️ Wake</div><div id="mm-sleep">🌙 Sleep</div><div id="mm-priv">🙈 Privacy Mode</div><hr><div id="mm-dash">🖥 Open Dashboard</div><div>📜 Logs</div>
+      </div>
+      <div id="dash">
+        <div class="panel"><h5>Camera · :8771</h5><div id="cam"><img src="vibey-desk.jpg" alt=""><div class="rec">● LIVE</div><div class="box" id="facebox"><span>🤖 that's me · 🦆 duck 99%</span></div></div></div>
+        <div class="panel"><h5>Chat · :8772</h5><div id="macchat"></div></div>
+        <div class="panel"><h5>Stream of consciousness</h5><div id="macl"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. Outro -->
+  <section class="scene" id="s8">
+    <div class="abs" id="s8-photo"><img src="vibey-desk.jpg" alt=""></div>
+    <div class="abs" id="s8-shade"></div>
+    <div class="abs display" id="s8-title">Build your<br>own <span class="grad">Vibey.</span></div>
+    <div class="abs shell mono" id="s8-url"><span id="s8-typed"></span><span class="caret" id="caret"></span></div>
+    <div class="abs" id="s8-meta"><span class="pill">🤖 Reachy Mini</span><span class="pill">🐍 Python</span><span class="pill">📱 iOS</span><span class="pill">💻 macOS</span><span class="pill">⭐ star it</span></div>
+    <div class="abs" id="s8-icon"><img src="vibey-icon.jpg" alt=""><span>Vibey · made with love and a rubber duck</span></div>
+  </section>
+
+  <div id="wm">🦆 vibey-robot</div>
+  <div id="flash"></div>
+</div>
+
+<script>
+const DURATION = 42;
+const $ = (s) => document.querySelector(s);
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eo = (k) => 1 - Math.pow(1 - k, 3);                       // ease out cubic
+const eio = (k) => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const back = (k) => { const c = 1.9; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+function rnd(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+// Scene windows [start, end]; each fades in and out over FADE seconds.
+const SCENES = { s1: [0, 5], s2: [5, 10], s3: [10, 16], s4: [16, 21], s5: [21, 27], s6: [27, 32.5], s7: [32.5, 37.5], s8: [37.5, 42] };
+const FADE = 0.45;
+
+// ---------- Vector Vibey (after ios RobotFace.swift) ----------
+function vibeySVG(id, w) {
+  return `<svg id="${id}" width="${w}" height="${w}" viewBox="0 0 200 200" style="overflow:visible">
+    <defs><linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#e2e4f4"/></linearGradient>
+    <radialGradient id="${id}h"><stop offset="0" stop-color="#5BE3FF" stop-opacity=".45"/><stop offset="1" stop-color="#5BE3FF" stop-opacity="0"/></radialGradient></defs>
+    <circle cx="100" cy="112" r="110" fill="url(#${id}h)"/>
+    <g id="${id}aL" style="transform-origin:62px 62px"><line x1="62" y1="62" x2="52" y2="4" stroke="#1a1a22" stroke-width="3.5" stroke-linecap="round"/><circle cx="52" cy="4" r="5" fill="#FFD23F"/></g>
+    <g id="${id}aR" style="transform-origin:138px 62px"><line x1="138" y1="62" x2="148" y2="4" stroke="#1a1a22" stroke-width="3.5" stroke-linecap="round"/><circle cx="148" cy="4" r="5" fill="#FFD23F"/></g>
+    <path d="M52 150 h96 q4 0 4 6 v18 q0 26 -30 26 h-44 q-30 0 -30 -26 v-18 q0 -6 4 -6z" fill="url(#${id}g)"/>
+    <g id="${id}head"><rect x="30" y="62" width="140" height="88" rx="30" fill="url(#${id}g)"/>
+      <g id="${id}eyes"><circle cx="76" cy="106" r="20" fill="#14141c"/><circle cx="124" cy="106" r="20" fill="#14141c"/><rect x="92" y="103.5" width="16" height="4" fill="#14141c"/>
+      <circle cx="70" cy="99" r="5" fill="#fff" opacity=".8"/><circle cx="118" cy="99" r="5" fill="#fff" opacity=".8"/></g>
+      <g id="${id}duck"><ellipse cx="100" cy="54" rx="22" ry="12" fill="#FFD23F"/><circle cx="98" cy="36" r="13" fill="#FFD23F"/>
+        <path d="M108 38 q12 1 13 5 q-6 3 -14 1z" fill="#FF7A1C"/><rect x="86" y="31" width="22" height="6" rx="3" fill="#14141c"/></g></g>
+  </svg>`;
+}
+function poseVibey(id, aL, aR, bob = 0, tilt = 0) {
+  document.getElementById(id + 'aL').style.transform = `rotate(${aL}deg)`;
+  document.getElementById(id + 'aR').style.transform = `rotate(${aR}deg)`;
+  const h = document.getElementById(id + 'head');
+  h.style.transformOrigin = '100px 140px';
+  h.style.transform = `translateY(${bob}px) rotate(${tilt}deg)`;
+}
+
+// ---------- Background starfield ----------
+const bg = $('#bg').getContext('2d');
+const STARS = (() => { const r = rnd(7); return Array.from({ length: 420 }, () => ({ x: r() * 1920, y: r() * 1080, z: .2 + r() * .8, p: r() * 6.28 })); })();
+function drawBG(t) {
+  bg.fillStyle = '#05060c'; bg.fillRect(0, 0, 1920, 1080);
+  const hue = (t / DURATION);
+  const g1 = bg.createRadialGradient(1500 + Math.sin(t * .2) * 200, 300, 0, 1500, 300, 900);
+  g1.addColorStop(0, `rgba(123,92,255,${.22 + .05 * Math.sin(t)})`); g1.addColorStop(1, 'rgba(123,92,255,0)');
+  bg.fillStyle = g1; bg.fillRect(0, 0, 1920, 1080);
+  const g2 = bg.createRadialGradient(300, 900 - hue * 200, 0, 300, 900, 800);
+  g2.addColorStop(0, 'rgba(91,227,255,.13)'); g2.addColorStop(1, 'rgba(91,227,255,0)');
+  bg.fillStyle = g2; bg.fillRect(0, 0, 1920, 1080);
+  for (const s of STARS) {
+    const x = (s.x - t * 22 * s.z + 1920 * 10) % 1920, y = s.y;
+    const a = (.35 + .65 * s.z) * (.6 + .4 * Math.sin(t * 2 + s.p));
+    bg.fillStyle = `rgba(255,255,255,${a})`;
+    bg.beginPath(); bg.arc(x, y, s.z * 1.8, 0, 6.283); bg.fill();
+  }
+}
+
+// ---------- Scene 1 ----------
+const TITLE = 'Meet Vibey.';
+$('#s1-title').innerHTML = TITLE.split('').map(c => `<span>${c === ' ' ? '&nbsp;' : c}</span>`).join('');
+const s1letters = [...document.querySelectorAll('#s1-title span')];
+function s1(t) {
+  s1letters.forEach((el, i) => {
+    const k = eo(seg(t, .25 + i * .05, .85 + i * .05));
+    el.style.opacity = k; el.style.transform = `translateY(${(1 - k) * 90}px) rotate(${(1 - k) * 8}deg)`;
+    if (i >= 5) el.style.color = '#FFD23F';
+  });
+  const p = back(seg(t, 0, 1.1));
+  $('#s1-photo').style.transform = `translateX(${(1 - p) * 500}px) rotate(${lerp(9, 3, p) + Math.sin(t * 1.3) * .6}deg) scale(${lerp(.9, 1, p)})`;
+  $('#s1-photo img').style.transform = `scale(${1.04 + t * .02})`;
+  const sk = eo(seg(t, 1.2, 1.7));
+  $('#s1-tag').style.opacity = eo(seg(t, .1, .6));
+  $('#s1-sub').style.opacity = sk; $('#s1-sub').style.transform = `translateY(${(1 - sk) * 30}px)`;
+  const st = back(seg(t, 2.0, 2.5));
+  $('#s1-sticker').style.transform = `rotate(-8deg) scale(${st})`;
+}
+
+// ---------- Scene 2 ----------
+const CODE = `# vibey: the on button for the Reachy Mini stack
+#   vibey              start services, enable motors, wake the robot, open dashboard
+#   vibey stop         put the robot to sleep and stop everything
+#   vibey wifi scan    list nearby networks
+#   vibey look [path]  grab one camera frame to a jpeg
+wake() {
+  curl -s -m 8 -X POST -H 'Content-Type: application/json' \\
+       -d '{"openai":true}' http://localhost:8772/openaimode
+  if curl -s -m 25 -X POST http://localhost:8772/wake; then
+    echo "awake, brain: OpenAI Realtime"
+  fi
+}
+"""Vibey's wheels: a Waveshare WAVE ROVER driven over Wi-Fi."""
+"""Front desk mode: Vibey scans Luma ticket QR codes at the door."""
+"""Vibey as a DJ: plays a track, changes its tempo live, and bobs to the beat."""
+"""reachy_gestures.py: Vibey waves back."""
+"""reachy_idle.py: the small motion that makes Vibey look alive between gestures."""
+"""reachy_heal.py: notice when the robot falls off the network, and put the
+stack back together when it returns."""
+"""Privacy mode: Vibey keeps talking and texting, but its eyes stay shut."""
+"""Vibey's stream of consciousness: one small shared event log."""
+emit("action", "waved", detail={...}, source="voice")
+"""What Vibey costs on OpenAI, per source, in dollars, and the budget guard."""
+"""reachy_scene.py: what the room is doing, in one sentence."""
+"""reachy_supermemory.py: what Vibey remembers about conversations."""
+`;
+$('#s2-code').textContent = (CODE + '\n').repeat(4);
+function s2(t) {
+  $('#s2-code').style.transform = `translateY(${-t * 60}px)`;
+  const a = eo(seg(t, 0, .7));
+  $('#s2-title').style.opacity = a; $('#s2-title').style.transform = `translateY(${(1 - a) * 60}px)`;
+  $('#s2-head').style.opacity = eo(seg(t, .3, .8));
+  const c = back(seg(t, .7, 1.4));
+  $('#s2-card').style.opacity = clamp(c); $('#s2-card').style.transform = `translateY(${(1 - c) * 80}px) rotate(${(1 - c) * -3}deg)`;
+  document.querySelectorAll('#s2-stats .stat').forEach((el, i) => {
+    const k = eo(seg(t, 1.3 + i * .35, 2.6 + i * .35));
+    el.style.opacity = clamp(k * 3); el.style.transform = `translateX(${(1 - clamp(k * 2)) * 60}px)`;
+    const n = el.querySelector('.n');
+    n.textContent = Math.round(+n.dataset.to * k) + (n.dataset.suffix || '');
+  });
+}
+
+// ---------- Scene 3 ----------
+const NODES = [
+  [':8770', 'Dashboard', 'camera, chat, faces, controls', -135],
+  [':8771', 'Camera', 'robot eyes to MJPEG', -90],
+  [':8772', 'The mind', 'hears, thinks, speaks', -45],
+  [':8773', 'Faces + memory', 'greets you by name', 0],
+  [':8774', 'VibeVerse', 'its avatar in a 3D world', 45],
+  [':8775', 'Robot mic', 'its own ears', 90],
+  [':8776', 'DJ', 'tempo + head bobs', 135],
+  [':8000', 'Reachy daemon', 'motors, antennas, moves', 180],
+];
+const CX = 960, CY = 600, RX = 640, RY = 300;
+$('#s3-vibey').innerHTML = vibeySVG('v3', 260);
+$('#s3-vibey').style.left = (CX - 130) + 'px'; $('#s3-vibey').style.top = (CY - 140) + 'px';
+$('#s3-nodes').innerHTML = NODES.map((n, i) => `<div class="node glass" id="n${i}"><div class="port mono">${n[0]}</div><div class="nm">${n[1]}</div><div class="ds">${n[2]}</div></div>`).join('');
+$('#s3-svg').innerHTML = NODES.map((_, i) => `<line id="l${i}" stroke="rgba(91,227,255,.35)" stroke-width="2" stroke-dasharray="6 8"/><circle id="p${i}" r="7" fill="#FFD23F"/><circle id="q${i}" r="5" fill="#5BE3FF"/>`).join('');
+function s3(t) {
+  const a = eo(seg(t, 0, .6));
+  $('#s3-title').style.opacity = a; $('#s3-title').style.transform = `translateY(${(1 - a) * -40}px)`;
+  $('#s3-sub').style.opacity = eo(seg(t, .3, .9));
+  const v = back(seg(t, .2, .9));
+  $('#s3-vibey').style.transform = `scale(${v})`;
+  poseVibey('v3', -10 + Math.sin(t * 3) * 8, 10 - Math.sin(t * 3 + 1) * 8, Math.sin(t * 2) * 3, Math.sin(t * 1.2) * 3);
+  NODES.forEach((n, i) => {
+    const ang = (n[3] + t * 3) * Math.PI / 180;
+    const k = back(seg(t, .6 + i * .22, 1.2 + i * .22));
+    const x = CX + Math.cos(ang) * RX * clamp(k, 0, 1.2), y = CY + 20 + Math.sin(ang) * RY * clamp(k, 0, 1.2);
+    const el = $('#n' + i);
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    el.style.opacity = clamp(k * 2); el.style.transform = `translate(-50%,-50%) scale(${clamp(k, 0, 1.2)})`;
+    const L = $('#l' + i);
+    L.setAttribute('x1', CX); L.setAttribute('y1', CY); L.setAttribute('x2', x); L.setAttribute('y2', y);
+    L.style.opacity = clamp(k); L.style.strokeDashoffset = -t * 40;
+    const ph = ((t * .9 + i * .37) % 1), ph2 = ((t * .7 + i * .61) % 1);
+    const P = $('#p' + i), Q = $('#q' + i);
+    P.setAttribute('cx', lerp(CX, x, ph)); P.setAttribute('cy', lerp(CY, y, ph)); P.style.opacity = clamp(k) * Math.sin(ph * Math.PI);
+    Q.setAttribute('cx', lerp(x, CX, ph2)); Q.setAttribute('cy', lerp(y, CY, ph2)); Q.style.opacity = clamp(k) * Math.sin(ph2 * Math.PI);
+  });
+}
+
+// ---------- Scene 4 ----------
+$('#s4-vibey').innerHTML = vibeySVG('v4', 230);
+// Antenna postures per brain (degrees, left/right) and the active-brain timeline.
+const POSTURE = [[-14, 14], [-38, 38], [22, -30]];
+function s4(t) {
+  const a = eo(seg(t, 0, .6));
+  $('#s4-title').style.opacity = a; $('#s4-title').style.transform = `translateY(${(1 - a) * 50}px)`;
+  $('#s4-sub').style.opacity = eo(seg(t, .3, .9));
+  const active = t < 1.9 ? 0 : t < 3.2 ? 1 : 2;
+  for (let i = 0; i < 3; i++) {
+    const el = $('#b' + i);
+    const k = back(seg(t, .4 + i * .18, 1.0 + i * .18));
+    const on = i === active && t > 1.0;
+    el.style.opacity = clamp(k * 2);
+    el.style.transform = `translateY(${(1 - clamp(k, 0, 1.1)) * 120}px) scale(${on ? 1.05 : .97})`;
+    el.style.borderColor = on ? '#FFD23F' : 'rgba(255,255,255,.14)';
+    el.style.boxShadow = on ? '0 0 60px rgba(255,210,63,.35)' : 'none';
+    el.style.background = on ? 'rgba(255,210,63,.10)' : 'rgba(255,255,255,.05)';
+    el.querySelector('.on').style.opacity = on ? 1 : 0;
+    // antenna glyph above each card
+    el.querySelector('.ic').style.transform = on ? `rotate(${Math.sin(t * 8) * 8}deg) scale(1.1)` : 'none';
+  }
+  // Vibey's antennas ease into each brain's posture
+  const prev = POSTURE[Math.max(0, active - 1)], cur = POSTURE[active];
+  const sw = eio(seg(t, [0, 1.9, 3.2][active], [0, 1.9, 3.2][active] + .4));
+  const v = back(seg(t, .6, 1.2));
+  $('#s4-vibey').style.opacity = clamp(v); $('#s4-vibey').style.transform = `scale(${clamp(v, 0, 1.2)})`;
+  poseVibey('v4', lerp(prev[0], cur[0], sw) + Math.sin(t * 6) * 3, lerp(prev[1], cur[1], sw) - Math.sin(t * 6) * 3, Math.sin(t * 2.5) * 3, Math.sin(t * 1.5) * 4);
+}
+
+// ---------- Scene 5 ----------
+const FEATURES = [
+  ['👤', 'Face memory', 'Knows who you are and greets you by name', 'reachy_memory.py'],
+  ['💬', 'Telegram', 'Text it from anywhere. Ask for a photo.', 'reachy_telegram.py'],
+  ['🎟️', 'Front desk', 'Scans Luma ticket QR codes at the door', 'reachy_frontdesk.py'],
+  ['🎧', 'DJ mode', 'Changes tempo live and bobs to the beat', 'reachy_dj.py'],
+  ['🛞', 'Wheels', 'Drives a Waveshare WAVE ROVER over Wi-Fi', 'reachy_rover.py'],
+  ['👋', 'Gestures', 'Wave and it waves back. Flip it off, it laughs.', 'reachy_gestures.py'],
+  ['👁️', 'Scene sense', 'Says what the room is doing in one sentence', 'reachy_scene.py'],
+  ['📝', 'Scribe', 'A quiet note-taker that never talks back', 'reachy_scribe.py'],
+  ['⏰', 'Wake-up shows', '7am song plus a dance', 'reachy_alarm.py'],
+  ['🙈', 'Privacy mode', 'Keeps talking, eyes stay shut', 'reachy_privacy.py'],
+  ['✨', 'Vibe check', 'Scores the conversation 1 to 100', 'reachy_vibe.py'],
+  ['🧠', 'Long memory', 'Remembers what you actually talked about', 'reachy_supermemory.py'],
+  ['🩹', 'Self-healing', 'Watchdog restarts dead services, pings you', 'reachy_heal.py'],
+  ['💸', 'Cost meter', 'Every API call priced, with a budget guard', 'reachy_cost.py'],
+  ['🌌', 'VibeVerse', 'Lives as an avatar in a 3D world too', 'reachy_vibeverse.py'],
+];
+$('#s5-grid').innerHTML = FEATURES.map((f, i) => `<div class="tile glass" id="f${i}"><div class="ic">${f[0]}</div><div class="nm">${f[1]}</div><div class="ds">${f[2]}</div><div class="file mono">${f[3]}</div></div>`).join('');
+function s5(t) {
+  const a = eo(seg(t, 0, .6));
+  $('#s5-title').style.opacity = a; $('#s5-title').style.transform = `translateX(${(1 - a) * -60}px)`;
+  let shown = 0;
+  FEATURES.forEach((_, i) => {
+    const st = .5 + i * .24;
+    const k = back(seg(t, st, st + .45));
+    if (t > st + .1) shown++;
+    const el = $('#f' + i);
+    el.style.opacity = clamp(k * 2);
+    el.style.transform = `scale(${clamp(k, 0, 1.2)}) rotate(${(1 - clamp(k)) * (i % 2 ? 6 : -6)}deg)`;
+    const glow = Math.exp(-Math.pow((t - st - .3) * 3, 2));
+    el.style.borderColor = `rgba(255,210,63,${.14 + glow * .8})`;
+    el.style.boxShadow = `0 0 ${glow * 50}px rgba(255,210,63,${glow * .4})`;
+  });
+  $('#s5-n').textContent = shown + (shown === FEATURES.length ? '+' : '');
+  $('#s5-count').style.opacity = eo(seg(t, .4, .8));
+}
+
+// ---------- Scene 6: iPhone (tabs from ios/Vibey/Vibey/App/VibeyApp.swift) ----------
+const TABS = [['✨', 'Home'], ['😎', 'Play'], ['💬', 'Chat'], ['🧠', 'Memory'], ['🎛️', 'Controls']];
+$('#tabbar').innerHTML = TABS.map((x, i) => `<div class="tab" id="tb${i}"><span class="i">${x[0]}</span>${x[1]}</div>`).join('');
+$('#s6-tabs-legend').innerHTML = TABS.map((x, i) => `<span class="pill" id="lg${i}">${x[0]} ${x[1]}</span>`).join('');
+$('#pscreens').innerHTML = `
+  <div class="pscreen" id="ps0">
+    <div style="text-align:center;margin-top:6px" id="phvibey"></div>
+    <div style="text-align:center;font-size:30px;font-weight:800;margin:6px 0 2px">Vibey</div>
+    <div style="text-align:center;font-size:17px;color:#3ddc84;font-weight:700;margin-bottom:16px">● awake · Realtime brain</div>
+    <div class="pcard shell"><h4>☀️ Wake  ·  🌙 Sleep</h4><small>one tap, it stretches and looks up</small></div>
+    <div class="pcard shell"><h4>🙈 Privacy</h4><small>camera off, still chatting</small></div>
+    <div class="pcard shell"><h4>🔊 Volume</h4><div class="slider"><i style="width:68%"></i><b style="left:68%"></b></div></div>
+  </div>
+  <div class="pscreen" id="ps1">
+    <div class="ph-h">Play</div>
+    <div class="pcard shell"><h4>Say</h4><small>word for word</small><div style="margin-top:10px;padding:12px;border-radius:14px;background:#eef0fb;font-size:18px" id="saytxt"></div></div>
+    <div class="pcard shell"><div><span class="sfx">🚀</span><span class="sfx">🎺</span><span class="sfx">👽</span><span class="sfx">🥁</span><span class="sfx">🔔</span><span class="sfx">🦆</span></div></div>
+    <div class="pcard shell"><h4>Drive</h4><small>D-pad for the rover wheels</small>
+      <div class="dpad"><div style="visibility:hidden"></div><div id="dpU">▲</div><div style="visibility:hidden"></div><div>◀</div><div>■</div><div>▶</div></div></div>
+  </div>
+  <div class="pscreen" id="ps2">
+    <div class="ph-h">Chat</div>
+    <div class="bubble me" id="c0">Vibey, what do you see?</div>
+    <div class="evt" id="c1">👁 looked at the room</div>
+    <div class="bubble bot" id="c2">A laptop, a La Croix, and someone who should probably drink some water. 🦆</div>
+    <div class="bubble me" id="c3">play something upbeat</div>
+    <div class="evt" id="c4">🎧 dj.play · 124 bpm</div>
+    <div class="bubble bot" id="c5">Right then. Brace yourself.</div>
+  </div>
+  <div class="pscreen" id="ps3">
+    <div class="ph-h">Memory</div>
+    <div class="pcard shell"><h4>Faces it knows</h4>
+      <div class="faces" style="margin-top:12px">
+        <div class="face"><div class="av" style="background:#FFD23F">🧑</div>Jack</div>
+        <div class="face"><div class="av" style="background:#5BE3FF">👩</div>Friend</div>
+        <div class="face"><div class="av" style="background:#c9b8ff">🧔</div>Guest</div>
+      </div></div>
+    <div class="pcard shell"><h4>📓 Journal</h4><small>"Jack built me wheels today. Exhilarating."</small></div>
+    <div class="pcard shell"><h4>🧠 Remembered</h4><small>likes grapefruit La Croix · demo on Friday</small></div>
+  </div>
+  <div class="pscreen" id="ps4">
+    <div class="ph-h">Controls</div>
+    <div class="pcard shell"><h4>Head</h4><div class="slider"><i id="hs" style="width:50%"></i><b id="hb" style="left:50%"></b></div><small>look left · right</small></div>
+    <div class="pcard shell"><h4>Antennas</h4><div class="slider"><i id="as" style="width:30%"></i><b id="ab" style="left:30%"></b></div><small>eyebrows, basically</small></div>
+    <div class="pcard shell"><h4>🎵 Tempo</h4><div class="slider"><i id="ts" style="width:40%"></i><b id="tb" style="left:40%"></b></div><small id="bpm">120 bpm</small></div>
+  </div>`;
+$('#phvibey').innerHTML = vibeySVG('v6', 190);
+const ps = (() => { const c = $('#phonestars').getContext('2d'); const r = rnd(3); return { c, s: Array.from({ length: 90 }, () => [r() * 446, r() * 936, r()]) }; })();
+function s6(t) {
+  const a = eo(seg(t, 0, .7));
+  $('#s6-copy').style.opacity = a; $('#s6-copy').style.transform = `translateX(${(1 - a) * -80}px)`;
+  const p = back(seg(t, 0, 1.0));
+  $('#phone').style.transform = `perspective(1600px) translateY(${(1 - p) * 700}px) rotateY(${-14 + Math.sin(t * .8) * 4}deg) rotateX(${4}deg)`;
+  ps.c.fillStyle = '#05060c'; ps.c.fillRect(0, 0, 446, 936);
+  for (const [x, y, z] of ps.s) { ps.c.fillStyle = `rgba(255,255,255,${.3 + .6 * z * (.6 + .4 * Math.sin(t * 3 + x))})`; ps.c.fillRect(x, (y + t * 10 * z) % 936, 2, 2); }
+  const tab = Math.min(4, Math.floor(Math.max(0, t - .6) / .95));
+  for (let i = 0; i < 5; i++) {
+    const el = $('#ps' + i);
+    const k = clamp((t - .6 - i * .95) / .25);
+    const vis = i === tab;
+    el.style.opacity = vis ? k : 0;
+    el.style.transform = `translateX(${(1 - eo(k)) * 40}px)`;
+    $('#tb' + i).classList.toggle('on', vis);
+    $('#lg' + i).classList.toggle('on', vis);
+  }
+  poseVibey('v6', -12 + Math.sin(t * 4) * 10, 12 - Math.sin(t * 4) * 10, Math.sin(t * 3) * 2, 0);
+  const say = 'Good morning, Jack!';
+  $('#saytxt').textContent = say.slice(0, Math.floor(clamp((t - 1.7) / .5) * say.length)) || ' ';
+  $('#dpU').classList.toggle('hot', Math.sin(t * 10) > 0 && tab === 1);
+  for (let i = 0; i < 6; i++) $('#c' + i).style.opacity = clamp((t - 2.6 - i * .12) / .1);
+  const s = .5 + .35 * Math.sin(t * 2.4), q = .3 + .4 * Math.abs(Math.sin(t * 1.7)), tm = clamp((t - 4.4) / .6);
+  $('#hs').style.width = $('#hb').style.left = (s * 100) + '%';
+  $('#as').style.width = $('#ab').style.left = (q * 100) + '%';
+  $('#ts').style.width = $('#tb').style.left = lerp(40, 70, tm) + '%';
+  $('#bpm').textContent = Math.round(lerp(120, 132, tm)) + ' bpm';
+}
+
+// ---------- Scene 7: Mac (mac/Sources/main.swift + reachy_viewer dashboard) ----------
+const MCHAT = [['me', 'what time is it?'], ['bot', "It's twenty past nine. Fashionably on time."], ['me', 'privacy mode on'], ['bot', 'Eyes shut. Ears open. 🙈']];
+$('#macchat').innerHTML = MCHAT.map((m, i) => `<div class="bubble ${m[0]}" id="mc${i}" style="font-size:19px;max-width:88%">${m[1]}</div>`).join('');
+const LIVE = [['👁', 'face seen', 'Jack'], ['🗣', 'heard', '"what time is it?"'], ['🕘', 'tool', 'clock.now'], ['📱', 'telegram', 'photo sent'], ['🙈', 'privacy', 'on'], ['💸', 'cost', '$0.012 today']];
+$('#macl').innerHTML = LIVE.map((m, i) => `<div class="live-row" id="lv${i}"><span>${m[0]}</span><b>${m[1]}</b><span style="color:#cfd3ef">${m[2]}</span></div>`).join('');
+function s7(t) {
+  const a = eo(seg(t, 0, .6));
+  $('#s7-title').style.opacity = a; $('#s7-sub').style.opacity = eo(seg(t, .3, .9));
+  const m = eo(seg(t, .1, .9));
+  $('#mac').style.transform = `translateY(${(1 - m) * 400}px) scale(${lerp(.92, 1, m)})`;
+  $('#mac').style.opacity = m;
+  // menu drops at 0.9, highlight walks, closes at 2.6
+  const mo = seg(t, .9, 1.15), mc = seg(t, 2.6, 2.8);
+  $('#macmenu').style.opacity = mo * (1 - mc);
+  $('#macmenu').style.transform = `scale(${lerp(.9, 1, eo(mo))})`;
+  ['#mm-sleep', '#mm-priv', '#mm-dash'].forEach((s, i) => $(s).classList.toggle('hi', t > 1.3 + i * .4 && t < 1.7 + i * .4 + (i === 2 ? 1 : 0)));
+  for (let i = 0; i < MCHAT.length; i++) $('#mc' + i).style.opacity = clamp((t - 1.0 - i * .55) / .2);
+  for (let i = 0; i < LIVE.length; i++) { const k = clamp((t - .9 - i * .4) / .2); $('#lv' + i).style.opacity = k; $('#lv' + i).style.transform = `translateX(${(1 - k) * 30}px)`; }
+  const fb = $('#facebox'); const bx = eo(seg(t, 1.2, 1.8));
+  fb.style.left = lerp(10, 17, bx) + '%'; fb.style.top = lerp(20, 34, bx) + '%'; fb.style.width = '33%'; fb.style.height = '52%'; fb.style.opacity = bx;
+  $('#cam img').style.transform = `scale(${1.1 + t * .02})`;
+}
+
+// ---------- Scene 8 ----------
+const URL_TXT = 'github.com/jackmielke/vibey-robot';
+function s8(t) {
+  $('#s8-photo img').style.transform = `scale(${1.15 - t * .02}) translateX(${t * 6}px)`;
+  const a = eo(seg(t, .2, .9));
+  $('#s8-title').style.opacity = a; $('#s8-title').style.transform = `translateY(${(1 - a) * 60}px)`;
+  const u = back(seg(t, .8, 1.3));
+  $('#s8-url').style.opacity = clamp(u * 2); $('#s8-url').style.transform = `scale(${clamp(u, 0, 1.2)})`;
+  $('#s8-typed').textContent = URL_TXT.slice(0, Math.floor(clamp((t - 1.1) / 1.2) * URL_TXT.length));
+  $('#caret').style.opacity = Math.floor(t * 2.5) % 2 ? 0 : 1;
+  document.querySelectorAll('#s8-meta .pill').forEach((el, i) => { const k = back(seg(t, 2.1 + i * .1, 2.5 + i * .1)); el.style.opacity = clamp(k * 2); el.style.transform = `translateY(${(1 - clamp(k)) * 30}px)`; });
+  const ic = eo(seg(t, 2.6, 3.1)); $('#s8-icon').style.opacity = ic;
+  $('#s8-icon img').style.transform = `rotate(${Math.sin(t * 3) * 4}deg)`;
+}
+
+const FNS = { s1, s2, s3, s4, s5, s6, s7, s8 };
+function render(t) {
+  drawBG(t);
+  for (const [id, [a, b]] of Object.entries(SCENES)) {
+    const el = document.getElementById(id);
+    const vis = t >= a - .01 && t <= b + .01;
+    if (!vis) { el.style.opacity = 0; el.style.display = 'none'; continue; }
+    el.style.display = 'block';
+    const fin = id === 's1' ? 1 : eo(seg(t, a, a + FADE));
+    const fout = id === 's8' ? 1 : 1 - seg(t, b - FADE, b);
+    el.style.opacity = Math.min(fin, fout);
+    el.style.transform = `scale(${lerp(1.04, 1, fin) * lerp(.97, 1, fout)})`;
+    FNS[id](t - a);
+  }
+  // white flash on cuts
+  let fl = 0;
+  for (const [a] of Object.values(SCENES)) if (a > 0) fl = Math.max(fl, .12 * Math.exp(-Math.pow((t - a) * 9, 2)));
+  $('#flash').style.opacity = fl;
+  $('#wm').style.opacity = t > 37.5 ? 0 : 1;
+}
+window.render = render;
+window.DURATION = DURATION;
+
+// Live playback when opened in a browser (render.mjs sets ?capture to drive it itself).
+if (!location.search.includes('capture')) {
+  const t0 = performance.now();
+  const loop = () => { render(((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+} else render(0);
+</script>
+</body>
+</html>

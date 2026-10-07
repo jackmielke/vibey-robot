@@ -4,6 +4,13 @@ Vibey is a physical [Reachy Mini](https://www.pollen-robotics.com/) robot with a
 personality: camera eyes, mic ears, antenna eyebrows, a British-robot voice, face
 memory, games, and — unusually — write access to its own source code.
 
+[![Watch the 42 second Vibey demo](docs/demo/poster.jpg)](docs/demo/vibey-demo.mp4)
+
+▶️ **[Watch the demo (42s)](docs/demo/vibey-demo.mp4)**: the robot, the services,
+the three brains, the iPhone app and the Mac app. The reel itself is code: an
+animated page (`docs/demo/demo.html`), a synthesized soundtrack
+(`docs/demo/soundtrack.py`), and `node docs/demo/render.mjs` to re-render it.
+
 This repo is the whole robot: its eyes, voice, memory, body language, dashboard,
 and the three "brains" it can think with. It was split out of the
 [`handsfree`](https://github.com/jackmielke/handsfree) gesture-OS repo, where it
