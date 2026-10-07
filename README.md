@@ -4,9 +4,9 @@ Vibey is a physical [Reachy Mini](https://www.pollen-robotics.com/) robot with a
 personality: camera eyes, mic ears, antenna eyebrows, a British-robot voice, face
 memory, games, and — unusually — write access to its own source code.
 
-[![Watch the Vibey demo](docs/demo/poster.jpg)](docs/demo/vibey-demo.mp4)
+[![Watch the Vibey demo](docs/demo/poster.jpg)](https://github.com/jackmielke/vibey-robot/raw/main/docs/demo/vibey-demo.mp4)
 
-▶️ **[Watch the demo (47s)](docs/demo/vibey-demo.mp4)**: the whole thing in one reel.
+▶️ **[Watch the demo (47s)](https://github.com/jackmielke/vibey-robot/raw/main/docs/demo/vibey-demo.mp4)**: the whole thing in one reel.
 
 Four ways in:
 
