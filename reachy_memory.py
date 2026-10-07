@@ -784,6 +784,18 @@ class _MemHandler(BaseHTTPRequestHandler):
                 self._json(store.samples_for(face_id))
             except Exception as e:
                 self._json({"error": str(e)}, 500)
+        elif self.path.startswith("/person"):
+            # One friend's profile for the phone: /person?face_id=<uuid> →
+            # basics (first/last seen) + every sample photo with its id.
+            try:
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                face = store.get_face((q.get("face_id") or [""])[0])
+                if not face:
+                    self._json({"error": "no such person"}, 404)
+                else:
+                    self._json(face)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
         elif self.path.startswith("/people"):
             try:
                 faces = sb_get_faces()
@@ -908,6 +920,52 @@ class _MemHandler(BaseHTTPRequestHandler):
                 _invalidate_samples_cache()
                 print(f"[memory] deleted sample {sample_id} of {face_id}", flush=True)
                 self._json({"ok": True, "remaining": total - 1})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/reassignsample"):
+            # "This photo is someone else": move ONE sample, embedding and all,
+            # to another person ({face_id}) or a name ({name}: an existing
+            # person by that name, else a new one). Recognition reads samples,
+            # so the correction takes effect on the next cache refresh.
+            # Moving the last photo of a stranger is just naming them (merge);
+            # the last photo of a named person is refused like /deletesample.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n))
+                sample_id = body.get("sample_id")
+                if not sample_id:
+                    raise ValueError("sample_id required")
+                src = store.sample_face(sample_id)
+                if not src:
+                    raise ValueError("sample not found")
+                dst, name = body.get("face_id"), (body.get("name") or "").strip()[:60]
+                if dst:
+                    target = store.get_face(dst)
+                    if not target:
+                        raise ValueError("no such person")
+                    name = target.get("name")
+                elif name:
+                    existing = store.find_face_by_name_ci(name)
+                    dst = existing["id"] if existing else None
+                    name = existing["name"] if existing else name
+                else:
+                    raise ValueError("face_id or name required")
+                if dst == src:
+                    raise ValueError("that photo is already filed under them")
+                last = store.count_samples(src) <= 1
+                if last and (store.get_face(src) or {}).get("name"):
+                    raise ValueError("last photo — delete or rename the person instead")
+                if not dst:
+                    dst = store.insert_face(store.sample_snapshot(sample_id))["id"]
+                    store.name_face(dst, name)
+                if last:
+                    sb_merge_faces(src, dst)
+                else:
+                    store.move_sample(sample_id, dst)
+                _invalidate_samples_cache()
+                print(f"[memory] moved sample {sample_id} {src} -> {dst} ({name})"
+                      f"{' (merged)' if last else ''}", flush=True)
+                self._json({"ok": True, "face_id": dst, "name": name, "merged": last})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/deleteface"):

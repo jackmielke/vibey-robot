@@ -12,15 +12,15 @@ struct CameraCard: View {
             HStack {
                 Text("Eyes").font(.system(.headline, design: .rounded))
                 Spacer()
-                Text(store.privacy ? "closed" : "live")
+                Text(!store.cameraOn ? "off" : store.privacy ? "closed" : "live")
                     .font(.system(.caption, design: .rounded).weight(.heavy))
                     .textCase(.uppercase)
-                    .foregroundStyle(store.privacy ? Palette.inkDim : Palette.ink)
+                    .foregroundStyle(store.privacy || !store.cameraOn ? Palette.inkDim : Palette.ink)
             }
             .padding(.horizontal, 6)
             CameraFeed(active: !full)
                 .onTapGesture {
-                    guard !store.privacy else { return }
+                    guard !store.privacy, store.cameraOn else { return }
                     Haptics.soft(); full = true
                 }
         }
@@ -56,15 +56,17 @@ struct CameraFeed: View {
     @State private var refused = false
     @State private var fps: Double = 0
 
-    private var closed: Bool { store.privacy || refused }
-    private var key: String { "\(store.privacy)-\(active)-\(phase == .active)-\(store.host)" }
+    private var closed: Bool { store.privacy || refused || !store.cameraOn }
+    private var key: String { "\(store.privacy)-\(store.cameraOn)-\(active)-\(phase == .active)-\(store.host)" }
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .fill(LinearGradient(colors: [Palette.ink, Color(red: 0.05, green: 0.06, blue: 0.12)],
                                      startPoint: .top, endPoint: .bottom))
-            if closed {
+            if !store.cameraOn {
+                CameraOff()
+            } else if closed {
                 EyesClosed()
             } else if let image {
                 Image(uiImage: image)
@@ -102,13 +104,13 @@ struct CameraFeed: View {
 
     private func loop() async {
         refused = false
-        guard active, phase == .active, !store.privacy else {
+        guard active, phase == .active, !store.privacy, store.cameraOn else {
             image = nil
             return
         }
         var stamps: [Date] = []
         while !Task.isCancelled {
-            if store.privacy { image = nil; return }   // never fetch with eyes closed
+            if store.privacy || !store.cameraOn { image = nil; return }   // never fetch with eyes closed
             do {
                 // One long MJPEG stream, newest frame only. Replaces polling
                 // /frame.jpg, which paid a full request per frame and topped
@@ -140,6 +142,38 @@ struct CameraFeed: View {
 }
 
 /// Two shut eyes and a word. Shown instead of the camera in privacy mode.
+/// The camera switch is off: no video session exists at all.
+struct CameraOff: View {
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "video.slash.fill")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(.white.opacity(0.7))
+            VStack(spacing: 3) {
+                Text("Camera off")
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundStyle(.white)
+                Text("No video on the robot or the Mac.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Button {
+                Haptics.tap()
+                store.run("Camera on") { _ = try await $0.setDials(["camera": true]) }
+            } label: {
+                Text("Turn on")
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .background(Capsule().fill(.white.opacity(0.15)))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 struct EyesClosed: View {
     var body: some View {
         VStack(spacing: 14) {

@@ -42,19 +42,24 @@ from reachy_voice import load_env
 
 load_env()
 
-# This bridge only wants the robot's INCOMING mic audio. The SDK's WebRTC
-# client also sets up a SEND chain (streaming this laptop's own mic to the
-# robot's speaker) which we have no use for here — disable it, same fix as
-# reachy_camera.py, to avoid wasted bandwidth and any barge-in interference.
-try:
-    from reachy_mini.media.webrtc_client_gstreamer import GstWebRTCClient
+# Speaker streaming. The SDK's WebRTC client can also SEND audio to the robot's
+# speaker, sample by sample. Replies used to be uploaded as a whole WAV and
+# played with /api/media/play_sound, which meant waiting for the entire reply
+# to be generated before a word came out. With the send chain on, the voice
+# engine POSTs each chunk to /play here the moment OpenAI sends it, and the
+# robot starts talking while the rest is still being generated — the way the
+# ChatGPT app does. ROBOT_SPEAKER_STREAM=0 restores the old receive-only bridge.
+SPEAKER_STREAM = os.environ.get("ROBOT_SPEAKER_STREAM", "1").strip() != "0"
+if not SPEAKER_STREAM:
+    try:
+        from reachy_mini.media.webrtc_client_gstreamer import GstWebRTCClient
 
-    def _no_audio_send(self):  # noqa: ANN001
-        self.logger.info("audio send chain disabled (receive-only mic bridge)")
+        def _no_audio_send(self):  # noqa: ANN001
+            self.logger.info("audio send chain disabled (receive-only mic bridge)")
 
-    GstWebRTCClient._setup_audio_send_chain = _no_audio_send
-except Exception as _e:  # noqa: BLE001
-    print(f"[robotmic] WARNING: could not disable audio send chain: {_e}", flush=True)
+        GstWebRTCClient._setup_audio_send_chain = _no_audio_send
+    except Exception as _e:  # noqa: BLE001
+        print(f"[robotmic] WARNING: could not disable audio send chain: {_e}", flush=True)
 
 
 def _default_host() -> str:
@@ -80,16 +85,54 @@ _lock = threading.Condition()
 _buf = bytearray()
 _connected = False
 _actual_sr = TARGET_SR
+_mini = None          # the live ReachyMini, for the speaker side
+_out_sr = 16000
+
+
+class _Resampler:
+    """Linear resampler that carries its phase across chunks, so a reply
+    arriving in hundreds of small deltas comes out as one continuous wave."""
+
+    def __init__(self):
+        self.src = self.dst = 0
+        self.pos = 0.0
+        self.last = 0.0
+
+    def __call__(self, x, src: int, dst: int):
+        if (src, dst) != (self.src, self.dst):
+            self.src, self.dst, self.pos, self.last = src, dst, 0.0, 0.0
+        if src == dst or not len(x):
+            return x
+        x = np.concatenate(([self.last], x))
+        step = src / dst
+        idx = np.arange(self.pos, len(x) - 1, step)
+        out = np.interp(idx, np.arange(len(x)), x).astype(np.float32)
+        self.pos = (idx[-1] + step) - (len(x) - 1) if len(idx) else self.pos - (len(x) - 1)
+        self.last = x[-1]
+        return out
+
+
+_resample = _Resampler()
+_play_lock = threading.Lock()
 
 
 def _capture_loop():
-    global _connected, _actual_sr
+    global _connected, _actual_sr, _mini
     while True:
         try:
             print(f"[robotmic] connecting to {REACHY_HOST} …", flush=True)
             mini = ReachyMini(host=REACHY_HOST, connection_mode=CONNECTION_MODE)
             mini.media.start_recording()
             _actual_sr = mini.media.get_input_audio_samplerate() or TARGET_SR
+            if SPEAKER_STREAM:
+                global _out_sr
+                try:
+                    mini.media.start_playing()
+                    _out_sr = mini.media.get_output_audio_samplerate() or 16000
+                    _mini = mini
+                    print(f"[robotmic] speaker streaming on ({_out_sr}Hz out)", flush=True)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[robotmic] speaker streaming unavailable: {e}", flush=True)
             _connected = True
             print(f"[robotmic] connected — {_actual_sr}Hz, streaming", flush=True)
             misses = 0
@@ -114,6 +157,7 @@ def _capture_loop():
                     _lock.notify_all()
         except Exception as e:  # noqa: BLE001 - keep retrying forever
             _connected = False
+            _mini = None
             print(f"[robotmic] connection lost ({e}); retrying in 3s", flush=True)
             time.sleep(3)
 
@@ -128,7 +172,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/status"):
             import json
             body = json.dumps({"connected": _connected,
-                               "samplerate": _actual_sr}).encode()
+                               "samplerate": _actual_sr,
+                               "speaker_stream": _mini is not None}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -137,6 +182,40 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+    def do_POST(self):
+        """/play?sr=24000 — raw mono PCM16 to push to the robot's speaker now.
+        /clear — drop whatever is queued (barge-in)."""
+        import json
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        data = self.rfile.read(n) if n else b""
+        mini = _mini
+        if mini is None:
+            self.send_response(503)
+            self.end_headers()
+            return
+        try:
+            if self.path.startswith("/play"):
+                import urllib.parse
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                sr = int((q.get("sr") or ["24000"])[0])
+                x = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+                with _play_lock:
+                    mini.media.push_audio_sample(_resample(x, sr, _out_sr))
+            elif self.path.startswith("/clear"):
+                with _play_lock:
+                    mini.media.audio.clear_player()
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+        except Exception as e:  # noqa: BLE001
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
 
     def _stream(self):
         self.send_response(200)

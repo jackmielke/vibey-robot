@@ -249,6 +249,39 @@ def delete_sample(sample_id: str) -> None:
         _drop_snap(r[0])
 
 
+def get_face(face_id: str) -> dict | None:
+    """One person for the phone's profile: basics plus every photo (sample),
+    newest first, each with its own id so it can be deleted or moved."""
+    with _db() as c:
+        r = c.execute("select id, name, times_seen, first_seen, last_seen, snapshot "
+                      "from faces where id = ?", (face_id,)).fetchone()
+    if not r:
+        return None
+    return dict(r, snapshot=_load_snap(r["snapshot"]), samples=samples_for(face_id))
+
+
+def find_face_by_name_ci(name: str) -> dict | None:
+    """Like find_face_by_name, but "jack" finds Jack: typing a name on a phone
+    should not quietly start a second Jack."""
+    with _db() as c:
+        r = c.execute("select id, name, times_seen from faces where lower(name) = lower(?) "
+                      "order by times_seen desc limit 1", (name.strip(),)).fetchone()
+    return dict(r) if r else None
+
+
+def sample_snapshot(sample_id: str) -> str | None:
+    with _db() as c:
+        r = c.execute("select snapshot from face_samples where id = ?", (sample_id,)).fetchone()
+    return _load_snap(r[0]) if r else None
+
+
+def move_sample(sample_id: str, face_id: str) -> None:
+    """Re-file one photo (and its embedding) under another person. The
+    embedding moves with it, so recognition learns from the correction."""
+    with _db() as c:
+        c.execute("update face_samples set face_id = ? where id = ?", (face_id, sample_id))
+
+
 # ------------------------------------------------------------------- journal
 def add_journal(body: str, message_count: int = 0, source_summary: str = "reachy-robot",
                 community_id: str | None = None) -> None:

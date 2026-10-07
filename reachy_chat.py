@@ -770,6 +770,9 @@ def _apply_tracking(on: bool) -> None:
     head turning to follow you. Splitting them would be two controls for a
     thing nobody thinks of as two things.
     """
+    import reachy_privacy
+    if not reachy_privacy.camera_on():
+        on = False      # camera off: the robot's own face-finding stays off too
     verb = "enable" if on else "disable"
     _robot_post(f"/api/media/tracking/{verb}", 8)
     _robot_post(f"/api/media/wobbling/{verb}", 8)
@@ -811,6 +814,21 @@ _SLEEP_RE = re.compile(r"\b(good ?night|go to sleep|bed ?time)\b", re.I)
 _WAKE_RE = re.compile(r"\b(good ?morning|wake up|rise and shine)\b", re.I)
 
 
+def _robot_reachable(timeout: float = 3.0) -> bool:
+    """Is the body there at all? Any HTTP answer counts; only a timeout or a
+    dead host does not. Checked before every wake, because a wake against a
+    flat battery used to fail every motor call and still open the paid
+    realtime session — voice from the laptop, nothing moving in the room."""
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
+    try:
+        urllib.request.urlopen(f"{url}/api/daemon/status", timeout=timeout).read()
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _robot_post(path: str, timeout: float = 20.0) -> None:
     try:
         url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
@@ -827,7 +845,7 @@ def _robot_post(path: str, timeout: float = 20.0) -> None:
 #   vibe 🎮       one up one cocked — "hands in the code"
 #   openai 🅾️    both forward/perked — "on a live call"
 # antennas-only goto leaves the head to the daemon's face tracker.
-ANTENNA_POSES = {"cli": [0.15, -0.15], "fast": [0.9, -0.9], "vibe": [0.9, 0.3],
+ANTENNA_POSES = {"cli": [0.25, -0.25], "fast": [0.9, -0.9], "vibe": [0.9, 0.3],
                  "openai": [-0.6, 0.6]}
 
 
@@ -928,6 +946,20 @@ def _mem_pause(paused: bool) -> None:
                               method="POST",
                               headers={"Content-Type": "application/json"}),
                    timeout=5).read()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _rest_senses(resting: bool) -> None:
+    """Asleep means idle on the Mac too. Face recognition and hand-gesture
+    tracking ran flat out on every camera frame while Vibey slept — ~65% of a
+    core between them for a robot nobody was talking to. Paused on sleep,
+    resumed on wake."""
+    _mem_pause(resting)
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            "http://localhost:8776/toggle", data=json.dumps({"on": not resting}).encode(),
+            method="POST", headers={"Content-Type": "application/json"}), timeout=3).read()
     except Exception:  # noqa: BLE001
         pass
 
@@ -1057,6 +1089,11 @@ def _power_up() -> None:
 
     Motors first, because everything downstream needs them to move.
     """
+    if not _robot_reachable():
+        print("[power] ON, but the robot body is unreachable — leaving it asleep",
+              flush=True)
+        reachy_events.emit("system", "switched on, but can't reach the body", icon="🔌")
+        return
     _robot_post("/api/motors/set_mode/enabled", 10)
     if SWITCHES["tracking"]:
         _apply_tracking(True)
@@ -1068,11 +1105,11 @@ def _power_up() -> None:
                    timeout=5).read()
     except Exception:  # noqa: BLE001
         pass
-    # Only resume the conversation if there was one. Switching on a robot that
-    # was already asleep when it was switched off should leave it asleep.
-    if WAS_AWAKE["on"]:
-        WAS_AWAKE["on"] = False
-        _wake_now("manual")
+    # Switching on means the body comes up. It used to stay face-down unless
+    # it had been awake when switched off, which from the phone looked like
+    # "on" doing nothing.
+    WAS_AWAKE["on"] = False
+    _wake_now("manual")
 
 
 def _try_power_voice(text: str) -> bool:
@@ -1531,7 +1568,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             # updating STATE, and a dashboard frozen on "recording" from four
             # minutes ago is worse than no indicator at all.
             cap = reachy_denoise.capture_status()
-            self._json({**STATE, "off": OFF["on"], "scribe": _scribe_status(),
+            self._json({**STATE, "voice_brain": STATE.get("voice_brain") or voice_brain(),
+                        "off": OFF["on"], "scribe": _scribe_status(),
                         "stage": STAGE["n"],
                        "switches": dict(SWITCHES),
                        "ears_closed": EARS_CLOSED["on"],
@@ -1540,6 +1578,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                        "recording": cap["recording"],
                        "noise_profile": cap["profile"],
                        "privacy": _privacy_on(),
+                       "camera": __import__("reachy_privacy").camera_on(),
                        "frontdesk": _frontdesk_brief(),
                        "transcript": list(TRANSCRIPT)})
         elif self.path.startswith("/transcript"):
@@ -1556,8 +1595,27 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/dials"):
             self._json(_dials())
         elif self.path.startswith("/brain"):
-            self._json({"brain": voice_brain(), "options": VOICE_BRAINS,
-                        "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"]})
+            rtm = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime-2.1-mini")
+            models = {"realtime": [rtm], "basic": [rtm],
+                      "live": [os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1"),
+                               os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")],
+                      "local": [os.environ.get("LOCAL_WHISPER", "small.en"),
+                                os.environ.get("LOCAL_LLM", "qwen3:4b-instruct"),
+                                "piper:lessac"]}
+            self._json({"brain": voice_brain(),
+                        "options": {k: {**v, "models": models.get(k, [])}
+                                    for k, v in VOICE_BRAINS.items()},
+                        "in_use": STATE.get("voice_brain"), "awake": not STATE["asleep"],
+                        "stage": STAGE["n"], "mic_source": MIC_SOURCE,
+                        "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
+                        "vision_model": os.environ.get("SCENE_MODEL", "gpt-4o-mini"),
+                        "text_model": __import__("reachy_brain").MODEL})
+        elif self.path.startswith("/macmusic"):
+            import reachy_spotify
+            self._json(reachy_spotify.status())
+        elif self.path.startswith("/cost/detail"):
+            import reachy_cost
+            self._json(reachy_cost.detail())
         elif self.path.startswith("/cost"):
             import reachy_cost
             self._json({**reachy_cost.summary(),
@@ -1798,6 +1856,44 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "vibe": STATE["vibe"]})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/macmusic"):
+            # Music playing on the MAC (Spotify) — the robot's volume slider
+            # never reached it, so the app has its own row for it.
+            try:
+                import reachy_spotify
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                if body.get("volume") is not None:
+                    reachy_spotify.control("volume", int(body["volume"]))
+                if body.get("action") in ("play", "pause", "next", "previous"):
+                    reachy_spotify.control(body["action"])
+                self._json(reachy_spotify.status())
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/textturn"):
+            # A text from the owner's phone, answered aloud by the live voice
+            # session. Returns what was said so it can go back as the reply.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                text = (body.get("text") or "").strip()
+                who = str(body.get("who") or "Jack")[:40]
+                import reachy_openai_realtime as _rt
+                sess = _rt.LIVE_SESSION.get("session")
+                # GPT-Live speaks a different wire protocol: a text turn there
+                # never answers, so it goes straight to the text brain instead
+                # of making the sender wait out the timeout.
+                if not text or sess is None or not STATE["openai"] or STATE["asleep"] \
+                        or not hasattr(sess, "text_turn") \
+                        or type(sess).__name__ == "LiveSession":
+                    self._json({"ok": True, "delivered": "none"})
+                    return
+                _log_turn("you", f"(texted) {text}")
+                w = sess.text_turn(text, who=who) or {}
+                self._json({"ok": True, "delivered": "voice", "reply": w.get("text"),
+                            "spoke": bool(w.get("spoke"))})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
         elif self.path.startswith("/sighting"):
             # Somebody appeared in front of the camera. Handed to whichever brain
             # is holding the conversation so IT says something, in its own voice,
@@ -1885,6 +1981,11 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     # a robot that was simply switched off.
                     self._json({"error": "Vibey is OFF — switch it on first",
                                 "off": True}, 409)
+                    return
+                if not _robot_reachable():
+                    self._json({"error": "can't reach the robot body — battery "
+                                "dead or off the network, so I'm not starting "
+                                "voice", "unreachable": True}, 503)
                     return
                 _wake_now("manual")
                 self._json({"ok": True, "asleep": STATE["asleep"]})
@@ -2572,6 +2673,10 @@ VOICE_BRAINS = {
                  "blurb": "One model hears, thinks and speaks. ~$0.03-0.10/min by tokens."},
     "live":     {"label": "GPT-Live 1", "module": "reachy_openai_live",
                  "blurb": "Voice layer + gpt-5.5 brain. Snappier. $0.05/min + backend tokens."},
+    "basic":    {"label": "Basic", "module": "reachy_openai_basic",
+                 "blurb": "Realtime 2.1 with no tools, memory or extras. Just talks."},
+    "local":    {"label": "Local", "module": "reachy_local",
+                 "blurb": "Everything on this Mac: whisper, qwen3, Piper voice. Free, private, offline. Slower."},
 }
 
 
@@ -2652,6 +2757,7 @@ def _dials() -> dict:
     import reachy_privacy
     return {
         "privacy": reachy_privacy.is_on(),
+        "camera": reachy_privacy.camera_on(),
         "awake": not STATE["asleep"],
         "listening": rt.voice_detection_active(),
         "face_tracking": bool(rt.FACE_DETECTION.get("on", True)),
@@ -2670,6 +2776,17 @@ def _dials() -> dict:
 
 def _set_dials(body: dict) -> dict:
     import reachy_openai_realtime as rt
+    if "camera" in body:
+        # Off for real: the camera service sees the file and hangs up its
+        # session, and the robot's own tracking (which reads the camera on the
+        # robot) stops with it.
+        import reachy_privacy
+        on = bool(body["camera"])
+        reachy_privacy.set_camera(on)
+        threading.Thread(target=_apply_tracking, args=(on and SWITCHES["tracking"],),
+                         daemon=True).start()
+        reachy_events.emit("system", "camera on" if on else "camera off",
+                           icon="📷" if on else "🚫")
     if "listening" in body:
         rt.set_voice_detection(bool(body["listening"]))
     if "face_tracking" in body:
@@ -2816,6 +2933,10 @@ def _wake_now(reason: str = "wake") -> None:
             except Exception:  # noqa: BLE001
                 pass
         return
+    if not _robot_reachable():
+        print(f"[chat] ignored {reason} wake — robot body unreachable", flush=True)
+        reachy_events.emit("system", "can't reach the robot body — not waking", icon="🔌")
+        return
     if not STATE["asleep"]:
         if reason == "manual" and not OFF["on"]:
             # Already awake in software, but the body can be limp (motors
@@ -2874,6 +2995,7 @@ def _wake_now(reason: str = "wake") -> None:
             reachy_idle.start()
         except Exception as e:  # noqa: BLE001
             print(f"[chat] wake body failed: {e}", flush=True)
+        threading.Thread(target=_rest_senses, args=(False,), daemon=True).start()
         threading.Thread(target=_mode_antennas, daemon=True).start()
 
     threading.Thread(target=_body, daemon=True).start()
@@ -2890,6 +3012,7 @@ def _sleep_now() -> None:
         reachy_idle.stop()
     except Exception:  # noqa: BLE001
         pass
+    threading.Thread(target=_rest_senses, args=(True,), daemon=True).start()
     if STATE["asleep"]:
         return
     print("[chat] going to sleep", flush=True)
@@ -2913,7 +3036,14 @@ VOICE_SINCE = {"t": 0.0}
 BUDGET = {"blocked": False, "why": ""}
 
 
+# The cap is a WARNING, not a wall: crossing it texts a big heads-up and
+# keeps going. VIBEY_BUDGET_HARD=1 brings back sleep-and-refuse.
+BUDGET_HARD = os.environ.get("VIBEY_BUDGET_HARD", "").strip() == "1"
+
+
 def _budget_blocked() -> bool:
+    if not BUDGET_HARD:
+        return False
     try:
         import reachy_cost
         over = reachy_cost.over_budget()
@@ -2952,7 +3082,14 @@ def _budget_watcher() -> None:
             cap = b["monthly_cap"] if b["binding"] == "month" else b["daily_cap"]
             spent = b["month"] if b["binding"] == "month" else b["today"]
             per = "this month" if b["binding"] == "month" else "today"
-            if b["level"] == "over":
+            if b["level"] == "over" and not BUDGET_HARD:
+                BUDGET.update(blocked=False, why="")
+                _budget_note("over", f"🚨🚨 BUDGET: ${spent:.2f} spent on OpenAI {per} — "
+                             f"past your ${cap:.2f} line. Still running. /sleep to stop, "
+                             f"/cost for the breakdown.", urgent=True)
+                reachy_events.emit("system", f"over budget: ${spent:.2f} of ${cap:.2f} {per}",
+                                   icon="🚨")
+            elif b["level"] == "over":
                 BUDGET.update(blocked=True,
                               why=f"out of budget: ${spent:.2f} of ${cap:.2f} {per}")
                 if not STATE["asleep"]:
@@ -3025,6 +3162,15 @@ def main():
     _start_ctrl_server()
     threading.Thread(target=_idle_watcher, daemon=True).start()
     threading.Thread(target=_budget_watcher, daemon=True).start()
+
+    def _rest_if_asleep():
+        # Starting up asleep never passes through _sleep_now, so the senses
+        # were left running flat out. Give the other services time to come up.
+        for _ in range(6):
+            time.sleep(10)
+            if STATE["asleep"]:
+                _rest_senses(True)
+    threading.Thread(target=_rest_if_asleep, daemon=True).start()
     global BRAIN
     brain = Brain()
     BRAIN = brain

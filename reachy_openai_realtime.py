@@ -138,6 +138,61 @@ def _ephemeral_token():
               flush=True)
         return None
 
+def _now_line() -> str:
+    """The time, in words, for the top of every session's prompt. Without it
+    the model guesses — and greeted a morning with "good afternoon"."""
+    try:
+        import reachy_clock
+        from datetime import datetime
+        zone = reachy_clock.resolve_zone(None)
+        now = datetime.now(zone)
+        part = ("morning" if 5 <= now.hour < 12 else "afternoon" if now.hour < 17
+                else "evening" if now.hour < 22 else "night")
+        return (f"\n\nRIGHT NOW it is {now.strftime('%A, %B %-d, %-I:%M %p')} "
+                f"{'Pacific time' if now.strftime('%Z') in ('PDT', 'PST') else reachy_clock.zone_label(zone, now)} — {part}. Greet and talk "
+                f"accordingly (good {part if part != 'night' else 'evening'}, not "
+                f"some other time of day). This was true when the conversation "
+                f"started; it is at most twenty minutes old.")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# Texts from the phone are answered BY TEXT, in this same conversation, so the
+# voice side knows what was said. Speaking in the room is a choice the model
+# makes with this tool — "say hi to Sam" gets said, "don't say anything" doesn't.
+SAY_ALOUD_TOOL = {
+    "type": "function",
+    "name": "say_aloud",
+    "description": ("Say something out loud in the room through the robot's speaker. "
+                    "Only for when a text asks you to, or the words are clearly meant "
+                    "for the people in the room. Never when asked to stay quiet."),
+    "parameters": {"type": "object",
+                   "properties": {"words": {"type": "string",
+                                            "description": "Exactly what to say."}},
+                   "required": ["words"]},
+}
+
+def _text_turn_tools() -> list:
+    """A text gets the voice and the eyes: say_aloud, and a look at the room
+    ("what's going on there?" from the phone deserves a real answer)."""
+    return [SAY_ALOUD_TOOL] + [t for t in TOOLS if t.get("name") == "look_at_the_room"]
+
+
+# Bare-bones mode (the "basic" brain). Same model and voice, nothing else: no
+# tools, no memory or shared-context block, no background nudges. Every tool
+# call costs a second round trip before Vibey can speak, and the injections are
+# what race each other into "conversation already has an active response".
+# When the full kit misbehaves, this is the one that just talks.
+BASIC = {"on": False}
+BASIC_INSTRUCTIONS = (
+    "You are Vibey, a small friendly robot sitting in Jack's home. You are "
+    "talking out loud, so keep every reply short and natural — one to three "
+    "sentences, like a person in the room. Be warm, a little playful, and "
+    "direct. If you didn't catch something, just ask them to say it again. "
+    "You have a camera: whenever someone asks what you see or anything visual, "
+    "call look_at_the_room and tell them what's there."
+)
+
 DEFAULT_INSTRUCTIONS = (
     "You are Vibey, a small expressive desk robot in Jack's living room, "
     "speaking out loud through your own speaker. Keep replies SHORT and "
@@ -493,19 +548,19 @@ TOOLS = [
         "type": "function",
         "name": "look_at_the_room",
         "description": (
-            "Look through your own camera and say what is going on around you — "
-            "the activity, the objects, the light. Use it when somebody asks "
-            "what you can see, what's happening, whether the lights are on, or "
-            "what they're holding. This is the SCENE; `who_is_here` is the "
-            "people. Set watch=true when they ask you to keep an eye on things "
-            "for a while, and watch=false when they say that's enough — while "
-            "watching you refresh what you can see every ten seconds, and you "
-            "stop by yourself after a few minutes. You never volunteer what you "
-            "see unasked, you never say who someone is from this, and you never "
-            "read text off their screen or papers. Takes a second or two."),
+            "Look through your own camera right now and see what's there. Use it "
+            "whenever anyone asks what you see, what's happening, what they're "
+            "holding or wearing, whether the lights are on — anything visual. "
+            "Just look; you don't need permission. Pass their question so the "
+            "answer is specific. Set watch=true to keep an eye on things for a "
+            "while, watch=false to stop. Takes a second or two."),
         "parameters": {
             "type": "object",
             "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "What they asked, e.g. 'what am I holding?'",
+                },
                 "watch": {
                     "type": "boolean",
                     "description": ("true to keep looking every ten seconds, "
@@ -680,6 +735,29 @@ TOOLS = [
             "properties": {"track": {"type": "string",
                                      "description": "Track name, roughly."}},
             "required": ["track"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "spotify",
+        "description": (
+            "Jack's Spotify, playing from the Mac's speaker. Use it when anyone "
+            "asks for a song, an artist, a playlist or a vibe that isn't in your "
+            "own music folder, or to pause, skip, go back, change Spotify's "
+            "volume, or say what's on. For 'play X' pass the words they said as "
+            "query; kind=playlist for moods ('chill playlist'), artist for an "
+            "artist. Play with no query resumes. One short line after, then let "
+            "it play."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string",
+                           "enum": ["play", "pause", "next", "previous", "volume", "now_playing"]},
+                "query": {"type": "string", "description": "What to play."},
+                "kind": {"type": "string", "enum": ["track", "playlist", "album", "artist"]},
+                "level": {"type": "number", "description": "Volume 0-100."},
+            },
+            "required": ["action"],
         },
     },
     {
@@ -1284,12 +1362,12 @@ def _tool_look(args: dict) -> str:
     misheard sentence can't talk Vibey into narrating the room all evening."""
     import reachy_privacy
     if reachy_privacy.is_on():
-        return ("My eyes are closed: privacy mode is on. Say so lightly and keep "
-                "chatting; don't describe the room or guess what's in it.")
+        return ("My eyes are closed: privacy mode is on (Jack can text /privacy "
+                "off). Say so lightly; don't guess what's in the room.")
     import reachy_scene
     if "watch" in args and args.get("watch") is not None:
         return reachy_scene.watch(bool(args["watch"]), args.get("minutes"))
-    return reachy_scene.look()
+    return reachy_scene.look(question=(args.get("question") or "").strip() or None)
 
 
 def _tool_remember_face(args: dict) -> str:
@@ -1580,7 +1658,7 @@ _TOOL_KIND = {
 _TOOL_ICON = {"move": "🤖", "dance": "💃", "drive": "🛞", "remember": "📌",
               "remember_face": "🙂", "who_is_here": "👀", "look_at_the_room": "📷",
               "send_text_message": "✉", "text_jack": "✉", "set_volume": "🔊",
-              "dj_play": "🎧", "dj_tempo": "🎧", "dj_stop": "🎧", "dj_tracks": "🎧",
+              "spotify": "🎵", "dj_play": "🎧", "dj_tempo": "🎧", "dj_stop": "🎧", "dj_tracks": "🎧",
               "go_to_sleep": "🌙", "take_notes": "📝", "improve_yourself": "🛠",
               "front_desk_check_in": "🎟", "vibe_check": "✨", "recall": "🔎"}
 
@@ -1666,6 +1744,11 @@ def _dispatch_tool_inner(name: str, args: dict, announce) -> str:
             return _tool_voice_detection(args)
         if name == "dj_play":
             return _tool_dj_play(args)
+        if name == "spotify":
+            import reachy_spotify
+            return reachy_spotify.control(str(args.get("action", "")), args.get("level"),
+                                          str(args.get("query") or ""),
+                                          str(args.get("kind") or "track"))
         if name == "dj_tempo":
             return _tool_dj_tempo(args)
         if name == "dj_stop":
@@ -1777,6 +1860,103 @@ def _normalise(pcm: bytes) -> bytes:
         scaled = int(v * gain)
         samples[i] = 32767 if scaled > 32767 else (-32767 if scaled < -32767 else scaled)
     return samples.tobytes()
+
+
+class _Streamer:
+    """Plays reply audio as it arrives instead of after the reply is done.
+
+    Robot speaker: each chunk goes to the mic bridge's /play (reachy_robot_mic,
+    WebRTC send chain), which pushes it straight to the robot. Laptop speaker:
+    a sounddevice output stream. Either way the first word is heard while the
+    rest is still being generated. A worker thread does the I/O so the
+    websocket loop never waits on it. `ok` False means neither is available
+    and the caller falls back to the old play-the-whole-clip path.
+    """
+
+    GAIN = float(os.environ.get("STREAM_GAIN", "2.0"))
+
+    def __init__(self, log=print):
+        import queue
+        self.log = log
+        self.q: "queue.Queue[bytes | None]" = queue.Queue()
+        self.gen = 0                  # bumped by clear(): stale chunks are dropped
+        self.out = None
+        self.mode = None
+        if SPEAKER_SOURCE == "laptop":
+            try:
+                import sounddevice as sd
+                self.out = sd.RawOutputStream(samplerate=RT_SR, channels=1, dtype="int16")
+                self.out.start()
+                self.mode = "laptop"
+            except Exception as e:  # noqa: BLE001
+                log(f"[openai-rt] laptop stream unavailable: {e}")
+        else:
+            try:
+                with urllib.request.urlopen(f"{ROBOT_MIC_URL}/status", timeout=3) as r:
+                    if json.loads(r.read()).get("speaker_stream"):
+                        self.mode = "robot"
+            except Exception as e:  # noqa: BLE001
+                log(f"[openai-rt] robot speaker stream unavailable: {e}")
+        if self.mode:
+            threading.Thread(target=self._worker, daemon=True).start()
+            log(f"[openai-rt] streaming replies to the {self.mode} speaker")
+
+    @property
+    def ok(self) -> bool:
+        return self.mode is not None
+
+    def push(self, pcm: bytes) -> float:
+        """Queue a chunk; returns its duration in seconds."""
+        import numpy as np
+        a = np.frombuffer(pcm, dtype="<i2").astype(np.float32) * self.GAIN
+        self.q.put((self.gen, np.clip(a, -32767, 32767).astype("<i2").tobytes()))
+        return len(pcm) / 2 / RT_SR
+
+    def clear(self) -> None:
+        self.gen += 1
+        try:
+            while True:
+                self.q.get_nowait()
+        except Exception:  # noqa: BLE001 — queue.Empty
+            pass
+        if self.mode == "robot":
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{ROBOT_MIC_URL}/clear", data=b"", method="POST"), timeout=3).read()
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[openai-rt] stream clear failed: {e}")
+        elif self.mode == "laptop":
+            try:
+                self.out.abort()
+                self.out.start()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def close(self) -> None:
+        self.q.put(None)
+        if self.out is not None:
+            try:
+                self.out.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _worker(self) -> None:
+        while True:
+            item = self.q.get()
+            if item is None:
+                return
+            gen, pcm = item
+            if gen != self.gen:
+                continue
+            try:
+                if self.mode == "robot":
+                    urllib.request.urlopen(urllib.request.Request(
+                        f"{ROBOT_MIC_URL}/play?sr={RT_SR}", data=pcm, method="POST"),
+                        timeout=3).read()
+                else:
+                    self.out.write(pcm)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[openai-rt] stream chunk failed: {e}")
 
 
 def _play_pcm_on_robot(pcm24: bytes) -> float:
@@ -1914,6 +2094,9 @@ class RealtimeSession:
         # handler — the loop stops and the caller says so out loud.
         self.fatal: str | None = None
         self._speaking_until = 0.0        # wall-clock when our clip finishes
+        self._stream = None               # _Streamer, set per connection
+        self._turn_end_at = 0.0           # when the server heard you stop
+        self._first_audio_at = None
         self._loop = None                 # set once we're running
         self._announce_q = None           # finished background jobs, to announce
         self._response_active = False     # a reply is being generated right now
@@ -1932,11 +2115,34 @@ class RealtimeSession:
             "create_response": True,
             "interrupt_response": True,   # server auto-cancels a reply on barge-in
         }
+        if BASIC["on"]:
+            return {
+                "type": "session.update",
+                "session": {
+                    "type": "realtime",
+                    "instructions": BASIC_INSTRUCTIONS + _now_line(),
+                    "tools": [t for t in TOOLS if t.get("name") == "look_at_the_room"],
+                    "tool_choice": "auto",
+                    "output_modalities": ["audio"],
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": RT_SR},
+                            "turn_detection": turn,
+                            "transcription": {"model": "gpt-4o-mini-transcribe"},
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": RT_SR},
+                            "voice": VOICE,
+                        },
+                    },
+                },
+            }
         instructions = (os.environ.get("OPENAI_RT_INSTRUCTIONS")
                         or DEFAULT_INSTRUCTIONS)
         # Lessons taught in earlier conversations ride along in the prompt, so
         # a `remember` from last night is in force on tonight's first word.
         instructions += memory_block()
+        instructions += _now_line()
         # What was said lately on either side, texts included, so a voice
         # session that starts after a text already knows about it. Texts that
         # arrive mid-session come in through note(). See reachy_brain.
@@ -2038,6 +2244,8 @@ class RealtimeSession:
         self._cancelled = True
         self._resp_pcm = bytearray()
         self._speaking_until = 0.0
+        if self._stream is not None and self._stream.ok:
+            self._stream.clear()
         # The clip stops here, so the freeze on the noise estimate has to stop
         # here too — otherwise the room stays un-learnable for the rest of a
         # sentence that isn't being spoken any more.
@@ -2106,7 +2314,10 @@ class RealtimeSession:
                     "output": str(result),
                 },
             }))
-            await ws.send(json.dumps({"type": "response.create"}))
+            # The reply is requested at response.done, once every call in
+            # this turn has its output. Asking after the first of two calls
+            # is rejected (function_call_outputs_required) and the turn dies.
+            self._tool_reply_due = True
         except Exception as e:  # noqa: BLE001
             self.log(f"failed to return tool result: {e}")
 
@@ -2141,6 +2352,30 @@ class RealtimeSession:
             loop.call_soon_threadsafe(q.put_nowait, {"nudge": text})
         except RuntimeError:
             pass
+
+    def text_turn(self, text: str, who: str = "Jack", timeout: float = 25.0):
+        """A text from the phone, answered OUT LOUD in the room. Blocks until
+        Vibey has said its reply and returns the words (so they can go back as
+        the text reply), or None if nothing came in time. Called from other
+        threads — the HTTP handler — never from the event loop."""
+        loop, q = self._loop, self._announce_q
+        if loop is None or q is None:
+            return None
+        waiter = {"event": threading.Event(), "text": None}
+        framed = (f"[{who} just texted you from his phone: \"{text[:600]}\". "
+                  f"Write your reply to him as text — it goes back to his phone and "
+                  f"nobody in the room hears it. Only if something should ALSO be "
+                  f"heard in the room (he asks you to say something out loud, or it "
+                  f"is plainly meant for whoever is there) call say_aloud with the "
+                  f"exact words. If he says not to talk, or it's private, don't. If "
+                  f"he asks anything about the room, look_at_the_room first.]")
+        self._context_event(f"{who} texted: {text[:200]}", f"{who} texted", True)
+        try:
+            loop.call_soon_threadsafe(q.put_nowait, {"nudge": framed, "waiter": waiter})
+        except RuntimeError:
+            return None
+        waiter["event"].wait(timeout)
+        return waiter   # {"text": reply or None, "spoke": bool}
 
     def note(self, text: str, label: str = "") -> None:
         """Quiet context: goes into the conversation with NO response asked
@@ -2196,6 +2431,8 @@ class RealtimeSession:
                 if not self._response_active and time.time() >= self._speaking_until:
                     break
                 await asyncio.sleep(0.1)
+            if BASIC["on"] and not job.get("waiter"):
+                continue    # basic: texts get through, nothing else does
             if job.get("session_refresh"):
                 # A mode changed under us (incognito, so far). Rebuild the
                 # session: instructions and the tool list are both computed
@@ -2219,6 +2456,24 @@ class RealtimeSession:
                     }))
                 except Exception as e:  # noqa: BLE001
                     self.log(f"note failed: {e}")
+                continue
+            if job.get("waiter"):
+                try:
+                    await ws.send(json.dumps({
+                        "type": "conversation.item.create",
+                        "item": {"type": "message", "role": "user",
+                                 "content": [{"type": "input_text", "text": job["nudge"]}]},
+                    }))
+                    self._text_turn = {"waiter": job["waiter"], "text": "", "said": None,
+                                       "started": False}
+                    await ws.send(json.dumps({"type": "response.create", "response": {
+                        "output_modalities": ["text"],
+                        "tools": _text_turn_tools(),
+                        "tool_choice": "auto",
+                    }}))
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"text turn failed: {e}")
+                    job["waiter"]["event"].set()
                 continue
             if job.get("nudge"):
                 nudge = job["nudge"]
@@ -2275,27 +2530,95 @@ class RealtimeSession:
             # --- user started talking → barge-in ---
             if t == "input_audio_buffer.speech_started":
                 self._on_barge_in()
+            elif t == "input_audio_buffer.speech_stopped":
+                self._turn_end_at = time.time()
 
             # --- a new reply begins ---
             elif t == "response.created":
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None and not tt["started"]:
+                    tt["started"] = True
+                    self._text_turn_resp = (msg.get("response") or {}).get("id")
+                self._first_audio_at = None
                 self._cancelled = False
                 self._response_active = True
                 self._resp_pcm = bytearray()
 
             # --- the model wants to use a tool ---
+            elif t in ("response.output_text.done", "response.text.done"):
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None and msg.get("response_id") == getattr(self, "_text_turn_resp", None):
+                    tt["text"] = (msg.get("text") or "").strip()
+            elif t == "response.function_call_arguments.done" and msg.get("name") == "say_aloud":
+                try:
+                    words = (json.loads(msg.get("arguments") or "{}").get("words") or "").strip()
+                except (json.JSONDecodeError, TypeError):
+                    words = ""
+                self.log(f"tool → say_aloud({words[:120]!r})")
+                tt = getattr(self, "_text_turn", None)
+                if tt is not None:
+                    tt["said"] = words
+                await ws.send(json.dumps({"type": "conversation.item.create", "item": {
+                    "type": "function_call_output", "call_id": msg.get("call_id") or "",
+                    "output": "said it" if words else "nothing to say"}}))
+                self._say_pending = words or None
             elif t == "response.function_call_arguments.done":
                 await self._handle_function_call(ws, loop, msg)
 
             # --- streamed reply audio (accept classic + GA event names) ---
             elif t in ("response.audio.delta", "response.output_audio.delta"):
                 if not self._cancelled:
-                    self._resp_pcm.extend(base64.b64decode(msg.get("delta", "")))
+                    chunk = base64.b64decode(msg.get("delta", ""))
+                    if self._first_audio_at is None:
+                        self._first_audio_at = time.time()
+                        self.log(f"[latency] first audio {1000*(self._first_audio_at - self._turn_end_at):.0f}ms after you stopped talking"
+                                 if self._turn_end_at else "[latency] first audio")
+                    if self._stream is not None and self._stream.ok:
+                        # Straight to the speaker. The mic gate and the noise
+                        # estimate follow the audio queued so far.
+                        dur = self._stream.push(chunk)
+                        self._speaking_until = max(self._speaking_until, time.time()) + dur
+                        reachy_denoise.set_speaking(self._speaking_until - time.time() + 0.3)
+                    else:
+                        self._resp_pcm.extend(chunk)
 
             # --- reply audio finished → play it ---
             elif t in ("response.audio.done", "response.output_audio.done",
                        "response.done"):
                 if t == "response.done":
                     self._response_active = False
+                    tt = getattr(self, "_text_turn", None)
+                    rid = (msg.get("response") or {}).get("id")
+                    if (tt is not None and rid == getattr(self, "_text_turn_resp", None)
+                            and getattr(self, "_tool_reply_due", False)):
+                        # It looked (or used another tool) before answering the
+                        # text: the answer is the NEXT response, still text-only.
+                        self._tool_reply_due = False
+                        tt["started"] = False
+                        await ws.send(json.dumps({"type": "response.create", "response": {
+                            "output_modalities": ["text"],
+                            "tools": _text_turn_tools(),
+                            "tool_choice": "auto",
+                        }}))
+                    elif tt is not None and rid == getattr(self, "_text_turn_resp", None):
+                        self._text_turn = None
+                        tt["waiter"]["text"] = tt["text"] or (
+                            f"(said out loud) {tt['said']}" if tt["said"] else None)
+                        tt["waiter"]["spoke"] = bool(tt["said"])
+                        tt["waiter"]["event"].set()
+                    words = getattr(self, "_say_pending", None)
+                    if words:
+                        self._say_pending = None
+                        self._tool_reply_due = False
+                        await ws.send(json.dumps({"type": "response.create", "response": {
+                            "output_modalities": ["audio"],
+                            "instructions": ("Say exactly this, out loud, in your own "
+                                             "voice, and nothing else: " + words),
+                            "tools": [],
+                        }}))
+                    if getattr(self, "_tool_reply_due", False):
+                        self._tool_reply_due = False
+                        await ws.send(json.dumps({"type": "response.create"}))
                     # Read the meter off the conversation itself. The account's
                     # usage API needs an admin key the robot does not have, but
                     # every completed turn reports what it cost.
@@ -2385,6 +2708,8 @@ class RealtimeSession:
                         max_size=16 * 1024 * 1024) as ws:
                     await ws.send(json.dumps(self._session_update()))
                     self.log("connected — full-duplex, just talk")
+                    if self._stream is None:
+                        self._stream = _Streamer(self.log)
                     # A connection that worked clears whatever the last one failed
                     # with, so a topped-up account is noticed immediately.
                     FATAL_REASON["why"] = None
@@ -2476,6 +2801,8 @@ def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         # stop once the loop it feeds is gone.
         stop.set()
         _reap_pumps(log or print)
+        if session._stream is not None:
+            session._stream.close()
         LIVE_SESSION["session"] = None
         if SLEEP_REQUESTED.is_set():
             (log or print)("[openai-rt] asked to sleep — session closed")
