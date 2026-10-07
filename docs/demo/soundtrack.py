@@ -1,4 +1,4 @@
-"""soundtrack.py: the demo reel's 42 second lo-fi bed, synthesized from scratch.
+"""soundtrack.py: the demo reel's lo-fi bed, synthesized from scratch.
 
 No samples, no licenses: pads, bass, drums, an arp and little robot chirps on
 every scene cut, all numpy. 120 bpm so every cut in demo.html lands on a beat.
@@ -13,8 +13,8 @@ import numpy as np
 SR = 44100
 BPM = 120
 BEAT = 60 / BPM
-DUR = 42.0
-CUTS = [5, 10, 16, 21, 27, 32.5, 37.5]          # scene starts in demo.html
+DUR = 46.5
+CUTS = [4.5, 9, 14, 18.5, 23.5, 28, 33.5, 38.5, 42.5]   # scene starts in demo.html
 N = int(SR * DUR)
 out = np.zeros((N, 2))
 
@@ -57,7 +57,7 @@ for bar2 in range(int(DUR // 4) + 1):
         p = (tone(hz(n), d, (1, .3, .1)) + tone(hz(n), d, (1, .3, .1), detune=0.004)) * e
         put(p, at, 0.045, pan=(n % 5 - 2) * 0.15)
     # bass on beats 1 and 3 of each bar
-    if 2 <= at < 40:
+    if 2 <= at < DUR - 2:
         for b in range(4):
             s = tone(hz(ROOTS[bar2 % 4]), 0.9, (1, .4, .1)) * env(int(0.9 * SR), 0.005, 0.35)
             put(s, at + b * 2 * BEAT, 0.22)
@@ -88,7 +88,7 @@ def hat(seed):
 K, S = kick(), snare()
 beat = 0
 t = 2.0
-while t < 40.0:
+while t < DUR - 2.0:
     put(K, t, 0.55)
     if beat % 2 == 1:
         put(S, t, 0.18, pan=0.05)
@@ -99,9 +99,9 @@ while t < 40.0:
     beat += 1
 
 # arp through the busy middle (feature blitz, apps), 16ths
-t = 16.0
+t = 18.5
 step = 0
-while t < 37.5:
+while t < 42.5:
     ch = CHORDS[int(t // 4) % 4]
     n = ch[[0, 1, 2, 3, 2, 1][step % 6]] + 12
     s = tone(hz(n), 0.3, (1, .2)) * env(int(0.3 * SR), 0.003, 0.09)
@@ -110,7 +110,7 @@ while t < 37.5:
     step += 1
 
 # robot chirps on every cut, and a little hello at the start and the end
-for c in [0.4] + CUTS + [39.5]:
+for c in [0.4] + CUTS + [DUR - 2.5]:
     n = int(0.18 * SR)
     tt = np.arange(n) / SR
     f = 900 + 1400 * tt / tt[-1]

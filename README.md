@@ -4,12 +4,24 @@ Vibey is a physical [Reachy Mini](https://www.pollen-robotics.com/) robot with a
 personality: camera eyes, mic ears, antenna eyebrows, a British-robot voice, face
 memory, games, and — unusually — write access to its own source code.
 
-[![Watch the 42 second Vibey demo](docs/demo/poster.jpg)](docs/demo/vibey-demo.mp4)
+[![Watch the Vibey demo](docs/demo/poster.jpg)](docs/demo/vibey-demo.mp4)
 
-▶️ **[Watch the demo (42s)](docs/demo/vibey-demo.mp4)**: the robot, the services,
-the three brains, the iPhone app and the Mac app. The reel itself is code: an
-animated page (`docs/demo/demo.html`), a synthesized soundtrack
-(`docs/demo/soundtrack.py`), and `node docs/demo/render.mjs` to re-render it.
+▶️ **[Watch the demo (47s)](docs/demo/vibey-demo.mp4)**: the whole thing in one reel.
+
+Four ways in:
+
+- 💬 **Text it on Telegram.** It's a bot too: ask what it can see, get a photo
+  back, tell it something to remember (`reachy_telegram.py`).
+- 📱 **An iPhone app.** Wake it, drive it, make it talk, DJ, browse its memory
+  (`ios/Vibey`, SwiftUI).
+- 💻 **A Mac app.** Menu bar status item plus the full live dashboard
+  (`mac/`), or just type `./vibey`.
+- 🛠 **Program it to do anything.** Every service is a small readable Python
+  file. Clone the repo, add a skill, and the robot does it.
+
+The reel itself is code: an animated page (`docs/demo/demo.html`), a
+synthesized soundtrack (`docs/demo/soundtrack.py`), and
+`node docs/demo/render.mjs` to re-render it.
 
 This repo is the whole robot: its eyes, voice, memory, body language, dashboard,
 and the three "brains" it can think with. It was split out of the

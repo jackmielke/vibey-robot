@@ -90,7 +90,9 @@
   #s6-tabs-legend { margin-top: 40px; display: flex; gap: 12px; flex-wrap: wrap; }
   #s6-tabs-legend .pill { background: rgba(255,255,255,.08); color: #cfd3ef; border: 1px solid rgba(255,255,255,.14); }
   #s6-tabs-legend .pill.on { background: var(--duck); color: var(--ink); border-color: var(--duck); }
-  #phone { left: 1150px; top: 60px; width: 470px; height: 960px; border-radius: 74px; background: #0b0c14; border: 12px solid #1c1d2a; box-shadow: 0 0 0 2px #3a3c52, 0 40px 140px rgba(91,227,255,.25); overflow: hidden; }
+  .phoneframe { position: absolute; border-radius: 74px; background: #0b0c14; border: 12px solid #1c1d2a; box-shadow: 0 0 0 2px #3a3c52, 0 40px 140px rgba(91,227,255,.25); overflow: hidden; }
+  .phoneframe .notch { position: absolute; left: 50%; top: 14px; width: 130px; height: 36px; margin-left: -65px; background: #000; border-radius: 20px; z-index: 5; }
+  #phone { left: 1150px; top: 60px; width: 470px; height: 960px; }
   #phone .notch { position: absolute; left: 50%; top: 14px; width: 130px; height: 36px; margin-left: -65px; background: #000; border-radius: 20px; z-index: 5; }
   #phone .scr { position: absolute; inset: 0; padding: 74px 22px 110px; }
   #phone .stars { position: absolute; inset: 0; }
@@ -154,6 +156,47 @@
   #s8-icon { left: 150px; top: 880px; display: flex; align-items: center; gap: 22px; font-size: 30px; font-weight: 700; color: #cfd3ef; }
   #s8-icon img { width: 100px; height: 100px; border-radius: 24px; box-shadow: 0 0 40px rgba(91,227,255,.35); }
 
+  /* S9 Telegram */
+  #s9-copy { left: 150px; top: 250px; width: 820px; }
+  #s9-copy h1 { font-size: 112px; line-height: .98; }
+  #s9-copy p { font-size: 34px; color: #c9cce6; line-height: 1.45; margin-top: 30px; }
+  #s9-copy .pill { background: rgba(91,227,255,.14); border: 1px solid rgba(91,227,255,.35); color: var(--live); margin-top: 36px; font-size: 24px; }
+  #tgphone { left: 1180px; top: 70px; width: 440px; height: 940px; }
+  #tg { position: absolute; inset: 0; background: #0e1621; }
+  #tg .bar { height: 104px; background: #17212b; display: flex; align-items: center; gap: 14px; padding: 36px 20px 0; }
+  #tg .bar .av { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(#fff, #e2e4f4); display: flex; align-items: center; justify-content: center; font-size: 26px; }
+  #tg .bar .nm { font-size: 22px; font-weight: 700; }
+  #tg .bar .nm small { display: block; font-size: 15px; color: #6ab3f3; font-weight: 600; }
+  #tg .bar .bot { margin-left: auto; font-size: 13px; font-weight: 800; background: #6ab3f3; color: #0e1621; padding: 3px 8px; border-radius: 6px; }
+  #tg .msgs { position: absolute; left: 0; right: 0; top: 104px; bottom: 74px; padding: 16px 14px; }
+  #tg .m { max-width: 84%; padding: 11px 14px; border-radius: 16px; font-size: 19px; line-height: 1.32; margin-bottom: 10px; }
+  #tg .m.me { margin-left: auto; background: #2b5278; border-bottom-right-radius: 5px; }
+  #tg .m.bot { background: #182533; border-bottom-left-radius: 5px; }
+  #tg .m.photo { padding: 6px; width: 76%; }
+  #tg .m.photo img { width: 100%; height: 190px; object-fit: cover; border-radius: 12px; display: block; }
+  #tg .m small { display: block; text-align: right; font-size: 13px; color: #6d8098; margin-top: 2px; }
+  #tg .input { position: absolute; left: 0; right: 0; bottom: 0; height: 74px; background: #17212b; display: flex; align-items: center; padding: 0 18px; font-size: 18px; color: #5d7185; gap: 10px; }
+
+  /* S10 apps preview */
+  #s10-title { left: 0; width: 1920px; top: 56px; text-align: center; font-size: 86px; }
+  #s10-sub { left: 0; width: 1920px; top: 164px; text-align: center; font-size: 28px; color: #b9bdd9; }
+  #s10-icon { left: 600px; top: 330px; width: 230px; text-align: center; z-index: 3; }
+  #s10-icon img { width: 230px; height: 230px; border-radius: 54px; box-shadow: 0 0 90px rgba(91,227,255,.45), 0 24px 60px rgba(0,0,0,.6); }
+  #s10-icon .nm { font-size: 40px; font-weight: 800; margin-top: 18px; }
+  #s10-icon .ds { font-size: 22px; color: #b9bdd9; font-weight: 600; margin-top: 4px; }
+  #s10-phone { left: 150px; top: 250px; width: 360px; height: 740px; }
+  #s10-phone .scrn { position: absolute; inset: 0; padding: 62px 18px 18px; }
+  #s10-mac { left: 880px; top: 320px; width: 940px; height: 580px; border-radius: 20px; overflow: hidden; background: #0d0e18; box-shadow: 0 0 0 2px #2a2c40, 0 30px 90px rgba(123,92,255,.3); }
+  #s10-mac .tb { height: 40px; background: #1c1d2a; display: flex; align-items: center; padding: 0 16px; gap: 8px; font-size: 15px; color: #9fa3c0; }
+  #s10-mac .tb i { width: 12px; height: 12px; border-radius: 50%; background: #3a3c52; display: inline-block; }
+  #s10-mac .body { position: absolute; left: 0; right: 0; top: 40px; bottom: 0; display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; padding: 16px; }
+  #s10-mac .ph { border-radius: 14px; overflow: hidden; background: #151627; position: relative; }
+  #s10-mac .ph img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 32%; }
+  #s10-mac .col { display: flex; flex-direction: column; gap: 10px; }
+  #s10-mac .col div { flex: 1; border-radius: 12px; background: #151627; border: 1px solid rgba(255,255,255,.07); padding: 12px 14px; font-size: 17px; color: #b9bdd9; }
+  #s10-mac .col b { color: #fff; }
+  .s10-cap { position: absolute; font-size: 22px; font-weight: 800; color: var(--duck); }
+
   #wm { position: absolute; right: 40px; bottom: 30px; font-size: 20px; font-weight: 700; color: rgba(255,255,255,.45); letter-spacing: .02em; }
   #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 </style>
@@ -180,6 +223,7 @@
       <div class="repo">📦 jackmielke / <b>vibey-robot</b></div>
       <div class="desc">Its eyes, voice, memory, body language, dashboard, apps, and the brains it thinks with. And it has write access to its own source code.</div>
       <div class="row"><span class="pill">Python</span><span class="pill">Swift</span><span class="pill">Reachy Mini SDK</span><span class="pill">Supabase</span></div>
+      <div class="row"><span class="pill" style="background:#14141c;color:#FFD23F">🛠 clone it and teach it anything</span></div>
     </div>
     <div class="abs" id="s2-stats">
       <div class="stat"><div class="n display grad" data-to="49">0</div><div class="l">Python modules</div></div>
@@ -259,12 +303,63 @@
     <div class="abs" id="s8-icon"><img src="vibey-icon.jpg" alt=""><span>Vibey · made with love and a rubber duck</span></div>
   </section>
 
+  <!-- 9. Telegram (lead feature) -->
+  <section class="scene" id="s9">
+    <div class="abs" id="s9-copy">
+      <div class="kicker">reachy_telegram.py</div>
+      <h1 class="display" style="margin-top:18px">Text it from<br><span class="grad">anywhere.</span></h1>
+      <p>Vibey is a Telegram bot too. Ask what it can see, get a photo back, or just tell it something to remember for later.</p>
+      <span class="pill" id="s9-pill">💬 no app required</span>
+    </div>
+    <div class="phoneframe" id="tgphone">
+      <div class="notch"></div>
+      <div id="tg">
+        <div class="bar"><div class="av">🦆</div><div class="nm">Vibey<small>online</small></div><div class="bot">BOT</div></div>
+        <div class="msgs">
+          <div class="m me" id="t0">vibey, how's the apartment?<small>9:12</small></div>
+          <div class="m bot" id="t1">Quiet. The duck and I are holding the fort. 🦆</div>
+          <div class="m me" id="t2">send me a photo<small>9:13</small></div>
+          <div class="m bot photo" id="t3"><img src="vibey-desk.jpg" alt=""></div>
+          <div class="m bot" id="t4">Someone left a La Croix out again.</div>
+        </div>
+        <div class="input"><span>📎</span><span>Message</span><span style="margin-left:auto">🎤</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10. The apps, officially -->
+  <section class="scene" id="s10">
+    <div class="abs display" id="s10-title">One robot. <span class="grad">Every screen.</span></div>
+    <div class="abs" id="s10-sub">Native apps for iPhone and Mac, both talking to the same services.</div>
+    <div class="abs" id="s10-icon"><img src="vibey-icon.jpg" alt=""><div class="nm">Vibey</div><div class="ds">iPhone · Mac</div></div>
+    <div class="phoneframe" id="s10-phone">
+      <div class="notch"></div>
+      <div class="scrn">
+        <div style="text-align:center" id="s10-face"></div>
+        <div style="text-align:center;font-size:26px;font-weight:800;margin-top:4px">Vibey</div>
+        <div style="text-align:center;font-size:15px;color:#3ddc84;font-weight:700;margin-bottom:14px">● awake</div>
+        <div class="pcard shell" style="padding:14px"><h4 style="font-size:18px">☀️ Wake · 🌙 Sleep</h4></div>
+        <div class="pcard shell" style="padding:14px"><h4 style="font-size:18px">🙈 Privacy</h4></div>
+        <div class="pcard shell" style="padding:14px"><h4 style="font-size:18px">🔊 Volume</h4><div class="slider" style="margin-bottom:0"><i style="width:68%"></i><b style="left:68%"></b></div></div>
+      </div>
+    </div>
+    <div class="abs" id="s10-mac">
+      <div class="tb"><i></i><i></i><i></i><span style="margin-left:10px">Vibey</span><span style="margin-left:auto">🦆 awake · Realtime</span></div>
+      <div class="body">
+        <div class="ph"><img src="vibey-desk.jpg" alt=""></div>
+        <div class="col"><div><b>Chat</b><br>"what time is it?"</div><div><b>Faces</b><br>Jack, and two guests</div><div><b>Live</b><br>👁 face seen · 🎧 dj.play</div></div>
+      </div>
+    </div>
+    <div class="s10-cap" id="s10-c1" style="left:175px;top:1010px">📱 ios/Vibey</div>
+    <div class="s10-cap" id="s10-c2" style="left:1240px;top:920px">💻 Vibey.app</div>
+  </section>
+
   <div id="wm">🦆 vibey-robot</div>
   <div id="flash"></div>
 </div>
 
 <script>
-const DURATION = 42;
+const DURATION = 46.5;
 const $ = (s) => document.querySelector(s);
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const lerp = (a, b, k) => a + (b - a) * k;
@@ -275,7 +370,12 @@ const back = (k) => { const c = 1.9; return 1 + (c + 1) * Math.pow(k - 1, 3) + c
 function rnd(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
 // Scene windows [start, end]; each fades in and out over FADE seconds.
-const SCENES = { s1: [0, 5], s2: [5, 10], s3: [10, 16], s4: [16, 21], s5: [21, 27], s6: [27, 32.5], s7: [32.5, 37.5], s8: [37.5, 42] };
+// Order on screen: meet, repo, telegram, the apps, services, brains, features,
+// iPhone, Mac, outro. Each window is [start, end] in seconds.
+const SCENES = {
+  s1: [0, 4.5], s2: [4.5, 9], s9: [9, 14], s10: [14, 18.5], s3: [18.5, 23.5],
+  s4: [23.5, 28], s5: [28, 33.5], s6: [33.5, 38.5], s7: [38.5, 42.5], s8: [42.5, 46.5],
+};
 const FADE = 0.45;
 
 // ---------- Vector Vibey (after ios RobotFace.swift) ----------
@@ -548,10 +648,13 @@ function s6(t) {
   $('#phone').style.transform = `perspective(1600px) translateY(${(1 - p) * 700}px) rotateY(${-14 + Math.sin(t * .8) * 4}deg) rotateX(${4}deg)`;
   ps.c.fillStyle = '#05060c'; ps.c.fillRect(0, 0, 446, 936);
   for (const [x, y, z] of ps.s) { ps.c.fillStyle = `rgba(255,255,255,${.3 + .6 * z * (.6 + .4 * Math.sin(t * 3 + x))})`; ps.c.fillRect(x, (y + t * 10 * z) % 936, 2, 2); }
-  const tab = Math.min(4, Math.floor(Math.max(0, t - .6) / .95));
+  // Uneven dwell: Chat gets the longest beat because its conversation plays out.
+  const TAB_AT = [0.35, 1.25, 2.2, 3.45, 4.3];
+  let tab = 0;
+  TAB_AT.forEach((at, i) => { if (t >= at) tab = i; });
   for (let i = 0; i < 5; i++) {
     const el = $('#ps' + i);
-    const k = clamp((t - .6 - i * .95) / .25);
+    const k = clamp((t - TAB_AT[i]) / .22);
     const vis = i === tab;
     el.style.opacity = vis ? k : 0;
     el.style.transform = `translateX(${(1 - eo(k)) * 40}px)`;
@@ -562,8 +665,8 @@ function s6(t) {
   const say = 'Good morning, Jack!';
   $('#saytxt').textContent = say.slice(0, Math.floor(clamp((t - 1.7) / .5) * say.length)) || ' ';
   $('#dpU').classList.toggle('hot', Math.sin(t * 10) > 0 && tab === 1);
-  for (let i = 0; i < 6; i++) $('#c' + i).style.opacity = clamp((t - 2.6 - i * .12) / .1);
-  const s = .5 + .35 * Math.sin(t * 2.4), q = .3 + .4 * Math.abs(Math.sin(t * 1.7)), tm = clamp((t - 4.4) / .6);
+  for (let i = 0; i < 6; i++) $('#c' + i).style.opacity = clamp((t - 2.3 - i * .12) / .1);
+  const s = .5 + .35 * Math.sin(t * 2.4), q = .3 + .4 * Math.abs(Math.sin(t * 1.7)), tm = clamp((t - 4.45) / .5);
   $('#hs').style.width = $('#hb').style.left = (s * 100) + '%';
   $('#as').style.width = $('#ab').style.left = (q * 100) + '%';
   $('#ts').style.width = $('#tb').style.left = lerp(40, 70, tm) + '%';
@@ -582,13 +685,13 @@ function s7(t) {
   $('#mac').style.transform = `translateY(${(1 - m) * 400}px) scale(${lerp(.92, 1, m)})`;
   $('#mac').style.opacity = m;
   // menu drops at 0.9, highlight walks, closes at 2.6
-  const mo = seg(t, .9, 1.15), mc = seg(t, 2.6, 2.8);
+  const mo = seg(t, .7, .95), mc = seg(t, 2.2, 2.4);
   $('#macmenu').style.opacity = mo * (1 - mc);
   $('#macmenu').style.transform = `scale(${lerp(.9, 1, eo(mo))})`;
-  ['#mm-sleep', '#mm-priv', '#mm-dash'].forEach((s, i) => $(s).classList.toggle('hi', t > 1.3 + i * .4 && t < 1.7 + i * .4 + (i === 2 ? 1 : 0)));
-  for (let i = 0; i < MCHAT.length; i++) $('#mc' + i).style.opacity = clamp((t - 1.0 - i * .55) / .2);
-  for (let i = 0; i < LIVE.length; i++) { const k = clamp((t - .9 - i * .4) / .2); $('#lv' + i).style.opacity = k; $('#lv' + i).style.transform = `translateX(${(1 - k) * 30}px)`; }
-  const fb = $('#facebox'); const bx = eo(seg(t, 1.2, 1.8));
+  ['#mm-sleep', '#mm-priv', '#mm-dash'].forEach((s, i) => $(s).classList.toggle('hi', t > 1.05 + i * .35 && t < 1.4 + i * .35 + (i === 2 ? .8 : 0)));
+  for (let i = 0; i < MCHAT.length; i++) $('#mc' + i).style.opacity = clamp((t - .9 - i * .5) / .18);
+  for (let i = 0; i < LIVE.length; i++) { const k = clamp((t - 2.35 - i * .22) / .18); $('#lv' + i).style.opacity = k; $('#lv' + i).style.transform = `translateX(${(1 - k) * 30}px)`; }
+  const fb = $('#facebox'); const bx = eo(seg(t, 1.0, 1.6));
   fb.style.left = lerp(10, 17, bx) + '%'; fb.style.top = lerp(20, 34, bx) + '%'; fb.style.width = '33%'; fb.style.height = '52%'; fb.style.opacity = bx;
   $('#cam img').style.transform = `scale(${1.1 + t * .02})`;
 }
@@ -608,7 +711,42 @@ function s8(t) {
   $('#s8-icon img').style.transform = `rotate(${Math.sin(t * 3) * 4}deg)`;
 }
 
-const FNS = { s1, s2, s3, s4, s5, s6, s7, s8 };
+// ---------- Scene 9: Telegram (reachy_telegram.py) ----------
+function s9(t) {
+  const a = eo(seg(t, 0, .7));
+  $('#s9-copy').style.opacity = a; $('#s9-copy').style.transform = `translateX(${(1 - a) * -80}px)`;
+  const p = back(seg(t, .1, 1.1));
+  $('#tgphone').style.transform = `perspective(1600px) translateY(${(1 - p) * 600}px) rotateY(${12 - Math.sin(t * .8) * 4}deg) rotateX(3deg)`;
+  const AT = [1.0, 1.7, 2.5, 3.1, 3.9];
+  AT.forEach((at, i) => {
+    const k = back(seg(t, at, at + .3));
+    const el = $('#t' + i);
+    el.style.opacity = clamp(k * 2);
+    el.style.transform = `translateY(${(1 - clamp(k, 0, 1.1)) * 26}px) scale(${clamp(k, 0, 1.08)})`;
+  });
+  $('#s9-pill').style.opacity = eo(seg(t, 1.4, 1.9));
+}
+
+// ---------- Scene 10: the apps, side by side ----------
+$('#s10-face').innerHTML = vibeySVG('v10', 150);
+function s10(t) {
+  const a = eo(seg(t, 0, .6));
+  $('#s10-title').style.opacity = a; $('#s10-title').style.transform = `translateY(${(1 - a) * -30}px)`;
+  $('#s10-sub').style.opacity = eo(seg(t, .3, .9));
+  const ic = back(seg(t, .25, 1.0));
+  $('#s10-icon').style.opacity = clamp(ic * 2);
+  $('#s10-icon').style.transform = `scale(${clamp(ic, 0, 1.15)}) translateY(${Math.sin(t * 1.6) * 8}px)`;
+  const ph = back(seg(t, .7, 1.5)), mc = back(seg(t, .9, 1.7));
+  $('#s10-phone').style.opacity = clamp(ph * 2);
+  $('#s10-phone').style.transform = `perspective(1800px) translateX(${(1 - clamp(ph)) * -260}px) rotateY(${14 - Math.sin(t) * 3}deg) translateY(${Math.sin(t * 1.3 + 1) * 10}px)`;
+  $('#s10-mac').style.opacity = clamp(mc * 2);
+  $('#s10-mac').style.transform = `perspective(2000px) translateX(${(1 - clamp(mc)) * 260}px) rotateY(${-10 + Math.sin(t) * 3}deg) translateY(${Math.sin(t * 1.1) * 8}px)`;
+  $('#s10-c1').style.opacity = eo(seg(t, 1.6, 2.1));
+  $('#s10-c2').style.opacity = eo(seg(t, 1.8, 2.3));
+  poseVibey('v10', -12 + Math.sin(t * 3) * 7, 12 - Math.sin(t * 3) * 7, Math.sin(t * 2) * 2, 0);
+}
+
+const FNS = { s1, s2, s3, s4, s5, s6, s7, s8, s9, s10 };
 function render(t) {
   drawBG(t);
   for (const [id, [a, b]] of Object.entries(SCENES)) {
@@ -626,7 +764,7 @@ function render(t) {
   let fl = 0;
   for (const [a] of Object.values(SCENES)) if (a > 0) fl = Math.max(fl, .12 * Math.exp(-Math.pow((t - a) * 9, 2)));
   $('#flash').style.opacity = fl;
-  $('#wm').style.opacity = t > 37.5 ? 0 : 1;
+  $('#wm').style.opacity = t > SCENES.s8[0] ? 0 : 1;
 }
 window.render = render;
 window.DURATION = DURATION;
