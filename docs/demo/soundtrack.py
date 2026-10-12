@@ -1,20 +1,27 @@
 """soundtrack.py: the demo reel's lo-fi bed, synthesized from scratch.
 
-No samples, no licenses: pads, bass, drums, an arp and little robot chirps on
-every scene cut, all numpy. 120 bpm so every cut in demo.html lands on a beat.
+No samples, no licenses: pads, bass, drums and an arp, all numpy, at 120 bpm
+so every cut in demo.html lands on a beat. The robot voice is Vibey's own: the
+chirps come straight from reachy_emotes._chirp, the same R2-style sounds the
+robot plays through its speaker, used sparingly at a few key moments.
 
     python3 soundtrack.py out.wav
 """
 import sys
 import wave
 
+import os
+import io
+
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+import reachy_emotes  # noqa: E402  (repo root: Vibey's real chirps)
 
 SR = 44100
 BPM = 120
 BEAT = 60 / BPM
-DUR = 46.5
-CUTS = [4.5, 9, 14, 18.5, 23.5, 28, 33.5, 38.5, 42.5]   # scene starts in demo.html
+DUR = 47.5
 N = int(SR * DUR)
 out = np.zeros((N, 2))
 
@@ -109,14 +116,23 @@ while t < 42.5:
     t += BEAT / 4
     step += 1
 
-# robot chirps on every cut, and a little hello at the start and the end
-for c in [0.4] + CUTS + [DUR - 2.5]:
-    n = int(0.18 * SR)
-    tt = np.arange(n) / SR
-    f = 900 + 1400 * tt / tt[-1]
-    s = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(n, 0.005, 0.06)
-    put(s, c - 0.02, 0.12, pan=-0.2)
-    put(s[::-1].copy() * 0.6, c + 0.14, 0.08, pan=0.2)
+
+
+def vibey(emotion):
+    """One of Vibey's real chirps (reachy_emotes), resampled to SR."""
+    with wave.open(io.BytesIO(reachy_emotes._chirp(emotion))) as w:
+        rate = w.getframerate()
+        x = np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(float) / 32767
+    t = np.arange(int(len(x) * SR / rate)) / SR
+    return np.interp(t, np.arange(len(x)) / rate, x)
+
+
+# A handful of moments, not every cut: hello, a Telegram reply landing,
+# a question for the brains, the feature blitz, and the send-off.
+for at, emotion, gain in [(0.5, "wave", .30), (10.7, "happy", .26),
+                          (24.0, "curious", .26), (28.6, "excited", .24),
+                          (43.6, "victory", .30)]:
+    put(vibey(emotion), at, gain, pan=-0.1)
 
 # fade out over the last 2.5s
 fade = np.ones(N)

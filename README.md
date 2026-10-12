@@ -6,7 +6,7 @@ memory, games, and — unusually — write access to its own source code.
 
 [![Watch the Vibey demo](docs/demo/poster.jpg)](https://jack-clips.vercel.app/0164fc63)
 
-▶️ **[Watch the demo (47s)](https://jack-clips.vercel.app/0164fc63)**: the whole thing in one reel.
+▶️ **[Watch the demo (48s)](https://jack-clips.vercel.app/0164fc63)**: the whole thing in one reel.
 
 Four ways in:
 
