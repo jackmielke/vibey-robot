@@ -5,6 +5,10 @@ struct HomeView: View {
     @State private var volume: Double = 50
     @State private var volumeKnown = false
     @State private var cost: Cost?
+    @State private var showSpend = false
+    @State private var showBrain = false
+    @State private var music: MacMusic?
+    @State private var musicVol: Double = 50
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -13,6 +17,8 @@ struct HomeView: View {
         switch s?.voice_brain {
         case "live": return "GPT-Live"
         case "realtime": return "Realtime"
+        case "basic": return "Basic"
+        case "local": return "Local"
         case let b?: return b.capitalized
         default: return "—"
         }
@@ -45,6 +51,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     hero
+                    if cost?.budget?.level == "over" { budgetBanner }
                     primaryButton
                     CameraCard()
                     privacyCard
@@ -57,12 +64,37 @@ struct HomeView: View {
             .refreshable { await store.refresh(); await loadVolume() }
         }
         .task { await loadVolume() }
+        .sheet(isPresented: $showBrain) {
+            BrainSheet().environmentObject(store).presentationDetents([.large])
+        }
+        .sheet(isPresented: $showSpend) {
+            SpendSheet().environmentObject(store).presentationDetents([.medium, .large])
+        }
         .task {
             while !Task.isCancelled {
                 if let c = try? await store.api.cost() { cost = c }
                 try? await Task.sleep(for: .seconds(60))
             }
         }
+    }
+
+    /// Past the daily line: loud, but nothing stops. /sleep or the button does.
+    private var budgetBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 22, weight: .bold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(String(format: "$%.2f today", cost?.today ?? 0))
+                    .font(.system(.headline, design: .rounded).monospacedDigit())
+                Text(String(format: "Past your $%.0f line. Still running — sleep it to stop.",
+                            cost?.budget?.daily_cap ?? 3))
+                    .font(.system(.caption, design: .rounded))
+            }
+            Spacer()
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.bad))
     }
 
     private var hero: some View {
@@ -87,12 +119,18 @@ struct HomeView: View {
                 .lineLimit(2)
 
             HStack(spacing: 8) {
-                chip(icon: "waveform", text: brainLabel, on: store.status == .awake)
+                Button { Haptics.tap(); showBrain = true } label: {
+                    chip(icon: "waveform", text: brainLabel, on: store.status == .awake)
+                }
+                .buttonStyle(.plain)
                 chip(icon: privacy ? "eye.slash.fill" : "eye.fill",
                      text: privacy ? "Eyes closed" : "Eyes open", on: !privacy)
                 if s?.muted == true { chip(icon: "mic.slash.fill", text: "Muted", on: false) }
                 if let today = cost?.today {
-                    chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
+                    Button { Haptics.tap(); showSpend = true } label: {
+                        chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.top, 6)
@@ -182,9 +220,54 @@ struct HomeView: View {
                 .tint(Palette.ink)
                 Image(systemName: "speaker.wave.3.fill").foregroundStyle(Palette.inkDim)
             }
+            Text("Robot speaker — Vibey's voice and sounds")
+                .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+            if let m = music, m.state == "playing" || m.state == "paused" {
+                Divider().padding(.vertical, 4)
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Music on Mac").font(.system(.headline, design: .rounded))
+                        Text([m.track, m.artist].compactMap { $0 }.joined(separator: " · "))
+                            .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button {
+                        Haptics.tap()
+                        Task { music = try? await store.api.macMusic(["action": m.state == "playing" ? "pause" : "play"]) }
+                    } label: {
+                        Image(systemName: m.state == "playing" ? "pause.fill" : "play.fill")
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Palette.ink.opacity(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    Text("\(Int(musicVol))")
+                        .font(.system(.headline, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Palette.inkDim)
+                }
+                HStack(spacing: 12) {
+                    Image(systemName: "music.note").foregroundStyle(Palette.inkDim)
+                    Slider(value: $musicVol, in: 0...100, step: 1) { editing in
+                        if !editing {
+                            let v = Int(musicVol)
+                            Task { music = try? await store.api.macMusic(["volume": v]) }
+                        }
+                    }
+                    .tint(Palette.ink)
+                }
+            }
         }
         .shell()
         .disabled(isDown)
+        .task {
+            while !Task.isCancelled {
+                if let m = try? await store.api.macMusic() {
+                    music = m
+                    if let v = m.volume { musicVol = Double(v) }
+                }
+                try? await Task.sleep(for: .seconds(10))
+            }
+        }
     }
 
     private var isDown: Bool {

@@ -49,8 +49,10 @@ STEP_S = 2.2
 SWAY_ROLL = 0.05
 SWAY_YAW = 0.07
 BREATH_Z = 0.006
-ANTENNA_DRIFT = 0.12
-ANTENNA_BIAS = 0.2          # the SDK's resting antenna position
+ANTENNA_DRIFT = 0.08
+# Rest well off vertical: at 0° the antenna servos hunt in their gearbox play
+# (the tremor). 0.32 ± 0.08 keeps the whole drift between ~14° and ~23°.
+ANTENNA_BIAS = 0.32
 
 _state = {"on": False, "paused": 0, "thread": None}
 _lock = threading.Lock()

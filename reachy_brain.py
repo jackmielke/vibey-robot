@@ -61,7 +61,7 @@ TEXT_TOOLS_ALWAYS = {
 # The body, the speaker and the camera. Only while awake: a text must never
 # wake the robot or make a sound in a dark room.
 TEXT_TOOLS_AWAKE = {
-    "move", "dance", "drive", "dj_play", "dj_tempo", "dj_stop", "set_volume",
+    "move", "dance", "drive", "dj_play", "dj_tempo", "dj_stop", "set_volume", "spotify",
     "who_is_here", "look_at_the_room",
 }
 

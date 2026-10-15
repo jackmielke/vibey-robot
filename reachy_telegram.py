@@ -508,6 +508,9 @@ def _asleep() -> bool:
 
 
 def _photo(chat_id: int, caption: str = "what I'm seeing right now 👁️") -> None:
+    if not reachy_privacy.camera_on():
+        _send(chat_id, reachy_privacy.CAMERA_OFF + ". /camera on to turn it back on")
+        return
     if reachy_privacy.is_on():
         _send(chat_id, reachy_privacy.CLOSED + ". /privacy off to open them")
         return
@@ -578,7 +581,7 @@ def _now_line() -> str:
     d = _get_json(f"{CHAT_URL}/dials") or {}
     if not st:
         return "chat service is down, try /status"
-    brain = "GPT-Live" if d.get("voice_brain") == "live" else "Realtime 2.1"
+    brain = {"live": "GPT-Live", "basic": "Basic"}.get(d.get("voice_brain"), "Realtime 2.1")
     sc = st.get("scribe") or {}
     if st.get("off"):
         head = "⚫ off"
@@ -589,7 +592,11 @@ def _now_line() -> str:
     else:
         head = f"🟢 voice on · {brain}"
     yn = lambda k: "on" if d.get(k) else "off"
+    cam = "📷 camera on" if d.get("camera", True) else "🚫 camera off"
+    if d.get("camera", True) and d.get("privacy"):
+        cam += " (privacy: no photos)"
     return (f"{head}\n\n"
+            f"{cam}\n"
             f"mic {'muted' if d.get('muted') else 'live'} · volume {d.get('volume', '?')}\n"
             f"listening {yn('listening')} · tracking {yn('face_tracking')}\n"
             f"incognito {yn('incognito')} · think aloud {yn('think_aloud')}\n"
@@ -606,8 +613,26 @@ def _power(chat_id: int, wake: bool) -> None:
     opens the realtime session.
     """
     try:
+        if wake and (_get_json(f"{CHAT_URL}/state") or {}).get("off"):
+            # Switched OFF: "turn on" from the phone means the switch, and
+            # switching on brings the body up by itself.
+            _post_json(f"{CHAT_URL}/off", {"off": False}, timeout=30)
+            time.sleep(3)
+            st = _get_json(f"{CHAT_URL}/state") or {}
+            _send(chat_id, "🌅 switched on — coming up." if not st.get("asleep") else
+                  "🔌 switched on, but I can't reach my body — battery dead or "
+                  "off the wifi? Not starting voice.")
+            return
         _post_json(f"{CHAT_URL}/wake" if wake else f"{CHAT_URL}/sleep",
                    {}, timeout=30)
+    except urllib.error.HTTPError as e:
+        try:
+            why = json.loads(e.read() or b"{}").get("error") or str(e)
+        except Exception:  # noqa: BLE001
+            why = str(e)
+        _send(chat_id, f"🔌 {why}" if e.code == 503 else
+              f"couldn't {'wake' if wake else 'sleep'} ({why})")
+        return
     except Exception as e:  # noqa: BLE001
         _send(chat_id, f"couldn't {'wake' if wake else 'sleep'} ({e})")
         return
@@ -659,7 +684,7 @@ def _handle(chat_id: int, text: str) -> None:
               "/now — what I'm doing + every switch\n"
               "/talk, /talk off — voice on/off · /mute, /unmute\n"
               "/volume 0-100|up|down (/volume start N = the level I wake at)\n"
-              "/brain live|realtime\n"
+              "/brain live|realtime|basic\n"
               "/listening, /tracking, /incognito, /thinkaloud on|off\n"
               "/frontdesk on|off|status — scan Luma tickets at the door (load <csv>, export)\n"
               "/photo — see through my eyes right now\n"
@@ -677,6 +702,15 @@ def _handle(chat_id: int, text: str) -> None:
               "/cost — what I've cost you, by source, vs budget\n"
               "/budget raise [n] | off | on — override the spend cap\n"
               "/verse — what's happening in my VibeVerse lobby")
+        return
+    if low.startswith("/camera"):
+        arg = low.replace("/camera", "").strip()
+        if arg in ("on", "off"):
+            _dials(chat_id, {"camera": arg == "on"},
+                   "📷 camera on" if arg == "on" else "🚫 camera off — no video at all")
+        else:
+            on = (_get_json(f"{CHAT_URL}/dials") or {}).get("camera", True)
+            _send(chat_id, f"camera is {'on' if on else 'off'}. /camera on|off")
         return
     if low.startswith("/privacy"):
         arg = low.replace("/privacy", "").strip()
@@ -820,10 +854,11 @@ def _handle(chat_id: int, text: str) -> None:
         _dials(chat_id, {"volume": v}, f"🔊 volume {v}")
         return
     if cmd == "/brain":
-        pick = {"live": "live", "gpt-live": "live", "realtime": "realtime", "rt": "realtime"}.get(arg)
+        pick = {"live": "live", "gpt-live": "live", "realtime": "realtime", "rt": "realtime",
+                "basic": "basic", "simple": "basic"}.get(arg)
         if not pick:
             cur = (_get_json(f"{CHAT_URL}/brain") or {}).get("brain")
-            _send(chat_id, f"🧠 on {cur}. /brain live or /brain realtime")
+            _send(chat_id, f"🧠 on {cur}. /brain live · realtime · basic")
             return
         try:
             out = _post_json(f"{CHAT_URL}/brain", {"brain": pick}, timeout=20)
@@ -843,6 +878,17 @@ def _handle(chat_id: int, text: str) -> None:
             _send(chat_id, f"{label}: {'on' if cur else 'off'}. {cmd} on|off")
             return
         _dials(chat_id, {key: onoff[arg]}, f"{label}: {arg}")
+        return
+    if cmd in ("/battery", "/power"):
+        _send(chat_id, _power_report()[1])
+        return
+    if cmd == "/droid":
+        # A different one every time, from the whole droid shelf.
+        import random
+        import reachy_sfx
+        pick = random.choice([e["name"] for e in reachy_sfx.SFX
+                              if e.get("group") in ("droid", "astromech")])
+        _sfx(chat_id, pick)
         return
     if cmd in ("/wave", "/whistle"):
         _act(chat_id, cmd[1:])
@@ -1129,6 +1175,20 @@ def _handle(chat_id: int, text: str) -> None:
             _tg("sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=5)
         except Exception:  # noqa: BLE001 — cosmetic
             pass
+        # Awake with a live voice session: the text goes INTO that conversation,
+        # so there is one Vibey and one thread rather than a texting brain and a
+        # talking brain that don't hear each other. It answers by text and
+        # decides for itself whether anything should also be said in the room.
+        try:
+            spoken = _post_json(f"{CHAT_URL}/textturn",
+                                {"text": text, "who": _state().get("owner_name") or "Jack"},
+                                timeout=35)
+        except Exception:  # noqa: BLE001 — fall through to the text brain
+            spoken = None
+        if (spoken or {}).get("delivered") == "voice" and spoken.get("reply"):
+            # 🔊 only when it actually chose to say something in the room.
+            _send(chat_id, ("🔊 " if spoken.get("spoke") else "") + spoken["reply"])
+            return
         out = _post_json(f"{CHAT_URL}/ask", {"text": text, "channel": "telegram",
                                              "name": _state().get("owner_name") or "Jack"})
         reply = (out or {}).get("reply") or "(no reply)"
@@ -1157,10 +1217,15 @@ def _note_voice_session(text: str, reply: str, who: str = "Jack") -> None:
 
 # The "/" menu in Telegram. Owner only: guests get no commands at all.
 OWNER_COMMANDS = [
-    ("now", "what i'm doing + all switches"),
+    ("wake", "get me up"),
+    ("sleep", "put me to bed"),
+    ("photo", "see through my eyes right now"),
+    ("now", "what i'm doing + all switches, camera included"),
+    ("droid", "a random droid / R2-style sound in the room"),
     ("tell", "message someone who texted me: /tell sam lol"),
     ("drive", "wheels: /drive forward 1 · /drive stop"),
     ("guests", "who's texted me"),
+    ("camera", "switch the camera off entirely: on|off"),
     ("privacy", "eyes closed, still chats: on|off (default on)"),
     ("stage", "1 robot alone · 2 + mac · 3 + cloud"),
     ("mic", "listen with the robot or macbook mic"),
@@ -1169,7 +1234,7 @@ OWNER_COMMANDS = [
     ("mute", "mute my mic"),
     ("unmute", "unmute my mic"),
     ("volume", "0-100, up or down · start N = the level I wake at"),
-    ("brain", "live or realtime"),
+    ("brain", "live, realtime or basic"),
     ("listening", "hear the room: on|off"),
     ("tracking", "follow faces: on|off"),
     ("incognito", "remember nothing: on|off"),
@@ -1177,13 +1242,11 @@ OWNER_COMMANDS = [
     ("wave", "wave in the room"),
     ("whistle", "whistle a little tune"),
     ("sfx", "sound effects: /sfx lists, /sfx <name> plays"),
-    ("photo", "see through my eyes right now"),
     ("clip", "an 8-second video through my eyes"),
     ("timelapse", "today so far, one frame a minute"),
     ("status", "stack health"),
+    ("battery", "is my body powered and reachable"),
     ("alarm", "wake-up show: /alarm 07:30 [daily], /alarm off"),
-    ("sleep", "put me to bed"),
-    ("wake", "get me up"),
     ("scribe", "just listen and take notes: /scribe, /scribe off"),
     ("code", "set Claude Code on a task in my repo"),
     ("jobs", "what Claude Code is doing"),
@@ -1338,6 +1401,59 @@ def _handle_group(chat_id: int, msg: dict) -> None:
     _note_voice_session(raw[:400], reply, who=f"{name} (in the {title} group chat)")
 
 
+# --------------------------------------------------------------------------- #
+# Power. The Reachy Mini reports no battery percentage — not in its API, not in
+# /sys/class/power_supply on the Pi. What there is: whether the body answers
+# at all, and the Pi's own under-voltage flag, which trips as the battery sags.
+# --------------------------------------------------------------------------- #
+def _robot_host() -> str:
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000")
+    return urllib.parse.urlparse(url).hostname or ""
+
+
+def _power_report() -> tuple[str, str]:
+    """(level, line): level is ok | low | sagged | unreachable."""
+    import subprocess
+    host = _robot_host()
+    if not (_get_json(f"http://{host}:8000/api/daemon/status", timeout=4)):
+        return "unreachable", ("🔌 can't reach my body — battery's probably flat, "
+                               "or it's off the wifi. Plug me in?")
+    try:
+        out = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
+             # The robot's name and IP move between networks; a read-only
+             # voltage check on the LAN isn't worth a host-key prompt.
+             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+             "-o", "LogLevel=ERROR",
+             f"pollen@{host}", "vcgencmd get_throttled; cut -d. -f1 /proc/uptime"],
+            capture_output=True, text=True, timeout=10).stdout.split()
+        flags = int(out[0].split("=")[1], 16)
+        up_h = int(out[1]) / 3600
+    except Exception:  # noqa: BLE001
+        return "ok", "🔋 body's up and answering (couldn't read the voltage flags)."
+    if flags & 0x1:
+        return "low", ("🪫 battery's low — the voltage is sagging right now. "
+                       "Plug me in soon.")
+    if flags & 0x10000:
+        return "sagged", (f"🔋 up and answering, but the voltage dipped at some point "
+                          f"in the last {up_h:.0f}h — battery's getting low.")
+    return "ok", f"🔋 body's up, voltage is fine (on for {up_h:.0f}h)."
+
+
+def _power_watcher() -> None:
+    """Text the owner when the battery sags or the body drops off. Once per
+    change, not every check."""
+    last = None
+    while True:
+        time.sleep(120)
+        if not _state().get("owner"):
+            continue
+        level, line = _power_report()
+        if level != last and level in ("low", "unreachable") and last is not None:
+            notify_owner(line, urgent=level == "low")
+        last = level
+
+
 def run() -> None:
     global BOT_HANDLE
     if not TOKEN:
@@ -1358,6 +1474,7 @@ def run() -> None:
     print(f"[tg] up as @{BOT_HANDLE}", flush=True)
     _set_command_menu(_state().get("owner"))
     threading.Thread(target=_sleep_watcher, daemon=True).start()
+    threading.Thread(target=_power_watcher, daemon=True).start()
 
     if MODE == "poll":
         print("[tg] TELEGRAM_MODE=poll: long-polling getUpdates (the webhook "

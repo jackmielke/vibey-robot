@@ -75,9 +75,29 @@ def _get(path: str, timeout: float = 5.0):
         return None
 
 
+# Never come to rest near vertical. Pollen's own troubleshooting guide: at 0°
+# the gearbox backlash leaves the antenna servo balanced on a point with
+# almost no friction, and it hunts back and forth around it — the "nervous"
+# tremor. ~10° off vertical lets gravity take up the play. Several emotes
+# ended at exactly [0, 0] and the idle drift dipped to ~5°, so every resting
+# pose went through the shaky zone. Big gestures pass through it in a blink;
+# only where an antenna STOPS matters, and that is what this floors.
+ANTENNA_MIN = float(os.environ.get("ANTENNA_MIN_RAD", "0.2"))   # ~11.5°
+
+
+def steady_antennas(antennas: list[float]) -> list[float]:
+    out = []
+    for i, a in enumerate(antennas):
+        if abs(a) < ANTENNA_MIN:
+            side = (1 if a > 0 else -1) if a else (1 if i == 0 else -1)
+            a = side * ANTENNA_MIN
+        out.append(a)
+    return out
+
+
 def _goto(head: dict, antennas: list[float], duration: float):
     _post("/api/move/goto",
-          {"head_pose": head, "antennas": _compensate(antennas),
+          {"head_pose": head, "antennas": _compensate(steady_antennas(antennas)),
            "duration": duration})
 
 

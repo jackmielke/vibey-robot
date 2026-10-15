@@ -72,6 +72,7 @@ struct FriendsView: View {
     @State private var error: String?
     @State private var naming: Friend?
     @State private var newName = ""
+    @State private var opened: Friend?
 
     private let cols = [GridItem(.adaptive(minimum: 100), spacing: 12)]
 
@@ -87,8 +88,13 @@ struct FriendsView: View {
                 if loading && friends.isEmpty { ProgressView().tint(.white).padding(.top, 40) }
                 LazyVGrid(columns: cols, spacing: 12) {
                     ForEach(friends) { f in
-                        Button { Haptics.soft(); newName = f.name ?? ""; naming = f } label: { card(f) }
+                        Button { Haptics.soft(); opened = f } label: { card(f) }
                             .buttonStyle(PressScale())
+                            .contextMenu {
+                                Button(f.name == nil ? "Name them" : "Rename", systemImage: "pencil") {
+                                    newName = f.name ?? ""; naming = f
+                                }
+                            }
                     }
                 }
             }
@@ -98,6 +104,13 @@ struct FriendsView: View {
         .scrollIndicators(.hidden)
         .refreshable { await load() }
         .task { await load() }
+        .sheet(item: $opened) { f in
+            FriendProfileView(friendID: f.id, seed: f, others: friends.filter { $0.id != f.id }) {
+                Task { await load() }
+            }
+            .presentationDetents([.large])
+            .presentationBackground(Palette.space)
+        }
         .alert(naming?.name == nil ? "Who is this?" : "Rename", isPresented: Binding(
             get: { naming != nil }, set: { if !$0 { naming = nil } })) {
             TextField("Name", text: $newName)

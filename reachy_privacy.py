@@ -23,3 +23,25 @@ def is_on() -> bool:
 def set_on(on: bool) -> bool:
     PATH.write_text("on\n" if on else "off\n")
     return on
+
+
+# The camera switch: harder than privacy. Privacy keeps frames on the Mac;
+# camera off means the camera service holds no session at all, so the robot
+# stops capturing and encoding video. Default ON: a missing file means on.
+CAMERA_PATH = Path(__file__).resolve().parent / ".camera_off"
+CAMERA_OFF = "camera's switched off 📷🚫"
+
+
+def camera_on() -> bool:
+    return not CAMERA_PATH.exists()
+
+
+def set_camera(on: bool) -> bool:
+    if on:
+        try:
+            CAMERA_PATH.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        CAMERA_PATH.write_text("off\n")
+    return on

@@ -416,6 +416,64 @@ LABELS = {"live_voice": "live voice", "live_backend": "live brain",
           "guest_brain": "guests", "vision": "vision", "other": "other"}
 
 
+def detail(days: int = 7, recent: int = 40) -> dict:
+    """Everything behind the "$ today" pill: per-day and per-hour spend, per
+    model (calls, dollars, voice minutes where the meter knows them) and the
+    latest individual charges."""
+    now = time.time()
+    mid = _midnight()
+    start = mid - (days - 1) * 86400
+    with _LOCK, _db() as c:
+        rows = c.execute("SELECT at, source, model, usd, detail FROM calls WHERE at >= ? "
+                         "ORDER BY at", (start,)).fetchall()
+    daily = {}
+    for i in range(days):
+        d = datetime.fromtimestamp(start + i * 86400 + 3600)
+        daily[d.strftime("%Y-%m-%d")] = {"day": d.strftime("%a"), "date": d.strftime("%Y-%m-%d"),
+                                         "usd": 0.0, "calls": 0, "minutes": 0.0}
+    hourly = [{"hour": h, "usd": 0.0} for h in range(24)]
+    models: dict = {}
+    for at, src, model, usd, det in rows:
+        try:
+            mins = float((json.loads(det or "{}") or {}).get("minutes") or 0)
+        except Exception:  # noqa: BLE001
+            mins = 0.0
+        key = datetime.fromtimestamp(at).strftime("%Y-%m-%d")
+        if key in daily:
+            daily[key]["usd"] += usd
+            daily[key]["calls"] += 1
+            daily[key]["minutes"] += mins
+        today = at >= mid
+        if today:
+            hourly[datetime.fromtimestamp(at).hour]["usd"] += usd
+        name = (model or "?").split("(")[0]
+        m = models.setdefault((name, src), {"model": name, "source": LABELS.get(src, src),
+                                     "usd_today": 0.0, "usd_week": 0.0, "calls_today": 0,
+                                     "calls_week": 0, "minutes_today": 0.0, "minutes_week": 0.0})
+        m["usd_week"] += usd
+        m["calls_week"] += 1
+        m["minutes_week"] += mins
+        if today:
+            m["usd_today"] += usd
+            m["calls_today"] += 1
+            m["minutes_today"] += mins
+    rnd = lambda d: {k: (round(v, 4) if isinstance(v, float) else v) for k, v in d.items()}
+    recent_rows = [r for r in rows if r[0] >= now - 86400 * days][-recent:][::-1]
+    return {
+        "today": round(today_total := total(mid), 2),
+        "days": [rnd(v) for v in daily.values()],
+        "hours_today": [rnd(h) for h in hourly],
+        "models": sorted((rnd(m) for m in models.values()),
+                         key=lambda m: -m["usd_week"]),
+        "voice_minutes_today": round(sum(m["minutes_today"] for m in models.values()), 1),
+        "voice_replies_today": sum(m["calls_today"] for m in models.values()
+                                   if m["source"] in ("realtime", "live voice")),
+        "recent": [{"at": at, "source": LABELS.get(src, src), "model": (model or "?").split("(")[0],
+                    "usd": round(usd, 4)} for at, src, model, usd, _ in recent_rows],
+        "budget": budget_state(),
+    }
+
+
 def text_report() -> str:
     s = summary()
     b = s["budget"]

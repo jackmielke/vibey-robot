@@ -69,6 +69,49 @@ SFX = [
     {"name": "fail", "label": "Sad Trombone Bot", "icon": "Womp", "group": "mood"},
     {"name": "mischief", "label": "Mischief", "icon": "Hmm", "group": "mood"},
     {"name": "robot_boop", "label": "Robot Boop", "icon": "Boop", "group": "droid"},
+    {"name": "droid_excited", "label": "Droid Excited", "icon": "Woo", "group": "droid"},
+    {"name": "droid_sad", "label": "Droid Sad", "icon": "Aww", "group": "droid"},
+    {"name": "droid_scream", "label": "Droid Scream", "icon": "Eek", "group": "droid"},
+    {"name": "droid_whistle", "label": "Droid Whistle", "icon": "Wheet", "group": "droid"},
+    {"name": "droid_curious", "label": "Droid Curious", "icon": "Hm?", "group": "droid"},
+    {"name": "droid_giggle", "label": "Droid Giggle", "icon": "Hehe", "group": "droid"},
+    {"name": "droid_alarm", "label": "Droid Alarm", "icon": "Alert", "group": "droid"},
+    {"name": "mouse_droid", "label": "Mouse Droid", "icon": "Squeak", "group": "droid"},
+    {"name": "probe_droid", "label": "Probe Droid", "icon": "Probe", "group": "droid"},
+    {"name": "thermal_detonator", "label": "Thermal Detonator", "icon": "Boom", "group": "space"},
+    {"name": "seismic_charge", "label": "Seismic Charge", "icon": "Wham", "group": "space"},
+    {"name": "carbon_freeze", "label": "Carbon Freeze", "icon": "Frost", "group": "space"},
+    {"name": "force_push", "label": "Force Push", "icon": "Push", "group": "space"},
+    {"name": "hologram", "label": "Hologram Message", "icon": "Holo", "group": "space"},
+    {"name": "hyperdrive_fail", "label": "Hyperdrive Fail", "icon": "Fizzle", "group": "space"},
+    {"name": "imperial_alarm", "label": "Imperial Alarm", "icon": "Klaxon", "group": "dark"},
+    {"name": "astro_hello", "label": "Astromech Hello", "icon": "Hi", "group": "astromech"},
+    {"name": "astro_happy", "label": "Happy Burble", "icon": "Yay", "group": "astromech"},
+    {"name": "astro_worried", "label": "Worried Warble", "icon": "Uh oh", "group": "astromech"},
+    {"name": "astro_scream", "label": "The Big Scream", "icon": "AAA", "group": "astromech"},
+    {"name": "astro_raspberry", "label": "Rude Raspberry", "icon": "Pfft", "group": "astromech"},
+    {"name": "astro_sad", "label": "Sad Wooo", "icon": "Ooo", "group": "astromech"},
+    {"name": "astro_chatter", "label": "Long Chatter", "icon": "Blah", "group": "astromech"},
+    {"name": "astro_trill", "label": "Excited Trill", "icon": "Brrr", "group": "astromech"},
+    {"name": "astro_whistle", "label": "Wolf Whistle", "icon": "Wheet", "group": "astromech"},
+    {"name": "astro_zapped", "label": "Got Zapped", "icon": "Zzt", "group": "astromech"},
+    {"name": "rolly_droid", "label": "Rolling Ball Droid", "icon": "Roll", "group": "robots"},
+    {"name": "trash_bot", "label": "Lonely Trash Robot", "icon": "Whirr", "group": "robots"},
+    {"name": "fifties_robot", "label": "1950s Robot Brain", "icon": "Bleep", "group": "robots"},
+    {"name": "power_up", "label": "Robot Power Up", "icon": "On", "group": "robots"},
+    {"name": "power_down", "label": "Robot Power Down", "icon": "Off", "group": "robots"},
+    {"name": "transform", "label": "Transform!", "icon": "Mech", "group": "robots"},
+    {"name": "servo_walk", "label": "Servo Steps", "icon": "Step", "group": "robots"},
+    {"name": "computing", "label": "Computer Thinking", "icon": "Calc", "group": "robots"},
+    {"name": "theremin_ufo", "label": "Flying Saucer", "icon": "UFO", "group": "scifi"},
+    {"name": "comm_chirp", "label": "Communicator Chirp", "icon": "Chirp", "group": "scifi"},
+    {"name": "transporter", "label": "Beam Me Up", "icon": "Beam", "group": "scifi"},
+    {"name": "red_alert", "label": "Red Alert", "icon": "Alert", "group": "scifi"},
+    {"name": "phaser", "label": "Phaser", "icon": "Zap", "group": "scifi"},
+    {"name": "light_cycle", "label": "Light Cycle", "icon": "Vroom", "group": "scifi"},
+    {"name": "repulsor", "label": "Repulsor Blast", "icon": "Blast", "group": "scifi"},
+    {"name": "warp_core", "label": "Warp Engine Hum", "icon": "Hum", "group": "scifi"},
+    {"name": "red_blade", "label": "Crackling Red Blade", "icon": "Crack", "group": "dark"},
     {"name": "cartoon_boing", "label": "Cartoon Boing", "icon": "Boing", "group": "mood"},
     {"name": "sparkle_up", "label": "Sparkle Up", "icon": "Ping", "group": "mood"},
 ]
@@ -115,6 +158,22 @@ _ALIASES = {
     "no": "droid_no", "negative": "droid_no",
     "chatter": "droid_gossip", "gossip": "droid_gossip", "beeping": "droid_gossip",
     "boop": "robot_boop", "beep": "robot_boop", "robot beep": "robot_boop",
+    "excited": "droid_excited", "happy droid": "droid_excited", "sad": "droid_sad",
+    "scream": "droid_scream", "whistle": "droid_whistle", "curious": "droid_curious",
+    "giggle": "droid_giggle", "laugh": "droid_giggle", "alarm": "droid_alarm",
+    "mouse": "mouse_droid", "probe": "probe_droid", "detonator": "thermal_detonator",
+    "grenade": "thermal_detonator", "seismic": "seismic_charge", "freeze": "carbon_freeze",
+    "carbonite": "carbon_freeze", "force": "force_push", "hologram": "hologram",
+    "holo": "hologram", "fizzle": "hyperdrive_fail", "klaxon": "imperial_alarm",
+    "red saber": "red_blade", "crackle": "red_blade",
+    "r2": "astro_chatter", "r2d2": "astro_chatter", "r2-d2": "astro_chatter",
+    "artoo": "astro_chatter", "astromech": "astro_chatter", "r2 scream": "astro_scream",
+    "raspberry": "astro_raspberry", "bb8": "rolly_droid", "bb-8": "rolly_droid",
+    "wall-e": "trash_bot", "walle": "trash_bot", "robby": "fifties_robot",
+    "transformer": "transform", "transformers": "transform", "ufo": "theremin_ufo",
+    "theremin": "theremin_ufo", "communicator": "comm_chirp", "beam me up": "transporter",
+    "red alert": "red_alert", "phaser": "phaser", "tron": "light_cycle",
+    "iron man": "repulsor", "repulsor": "repulsor", "warp": "warp_core",
     "boing": "cartoon_boing", "sproing": "cartoon_boing", "bounce": "cartoon_boing",
     "sparkle": "sparkle_up", "twinkle": "sparkle_up", "magic": "sparkle_up",
     "win": "success", "ta da": "success", "tada": "success", "fanfare": "success",
@@ -288,6 +347,59 @@ def _to_wav(samples: list[float]) -> bytes:
     return buf.getvalue()
 
 
+def _chirp(f0: float, f1: float, dur: float, vol: float = .3, trill: float = 0.0,
+           trill_hz: float = 28.0, ring: float = 0.0) -> list[float]:
+    """An astromech syllable: an exponential pitch glide (that whoop is most
+    of the character), an optional fast trill, and a touch of ring modulation
+    for the metallic edge."""
+    n = int(SR * dur)
+    out, phase, rphase = [], 0.0, 0.0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        f = f0 * (f1 / f0) ** frac
+        if trill:
+            f *= 1 + trill * math.sin(2 * math.pi * trill_hz * i / SR)
+        phase += 2 * math.pi * f / SR
+        v = math.sin(phase)
+        if ring:
+            rphase += 2 * math.pi * f * 1.5 / SR
+            v = v * (1 - ring) + v * math.sin(rphase) * ring
+        env = min(1.0, i / (SR * .006), (n - i) / (SR * .015))
+        out.append(vol * env * v)
+    return out
+
+
+def _phrase(seed: int, count: int, gap: float = .035, lo: float = 700,
+            hi: float = 3200, ring: float = .25) -> list[float]:
+    """A run of random astromech syllables: whoops, blips and trills."""
+    rnd = random.Random(seed)
+    s: list[float] = []
+    at = 0.0
+    for _ in range(count):
+        a = rnd.uniform(lo, hi)
+        kind = rnd.random()
+        if kind < .45:      # whoop
+            b, d, tr = a * rnd.choice([.5, .6, 1.7, 2.1]), rnd.uniform(.06, .14), 0.0
+        elif kind < .75:    # blip
+            b, d, tr = a * rnd.uniform(.9, 1.1), rnd.uniform(.03, .06), 0.0
+        else:               # trill
+            b, d, tr = a * rnd.uniform(.8, 1.3), rnd.uniform(.1, .2), .12
+        _overlay(s, _chirp(a, b, d, .28, trill=tr, ring=ring), at)
+        at += d + gap * rnd.uniform(.4, 1.4)
+    return s
+
+
+def _saw(freq: float, dur: float, vol: float = .2, bend: float = 0.0) -> list[float]:
+    n = int(SR * dur)
+    out, ph = [], 0.0
+    for i in range(n):
+        f = freq + bend * i / max(1, n - 1)
+        ph = (ph + f / SR) % 1.0
+        env = min(1.0, i / (SR * .01), (n - i) / (SR * .03))
+        out.append(vol * env * (2 * ph - 1))
+    return out
+
+
 def _effect(name: str) -> list[float]:
     if name == "laser_pew":
         s = _mix(_sine(1550, .16, .45, bend=-1150), _noise(.12, .06, 11))
@@ -361,6 +473,194 @@ def _effect(name: str) -> list[float]:
         s = _mix(_sine(420, .9, .18, bend=760, vibrato=10), _sine(1180, .9, .08, bend=-500))
         for at in (.12, .28, .44, .60, .76):
             _overlay(s, _sine(1800, .035, .18, bend=-250), at)
+    # --- more droids: every one an original pattern of whistles and blips ---
+    elif name == "droid_excited":
+        s = []
+        for i, (f, b) in enumerate([(700, 500), (1100, -300), (900, 700), (1300, 400)]):
+            _overlay(s, _sine(f, .09, .28, bend=b, vibrato=40), i * .08)
+        _overlay(s, _sine(1500, .22, .26, bend=900, vibrato=60), .34)
+    elif name == "droid_sad":
+        s = _sine(900, .35, .28, bend=-450, vibrato=8) + _silence(.06) + \
+            _sine(520, .55, .26, bend=-260, vibrato=5)
+    elif name == "droid_scream":
+        s = []
+        for i in range(6):
+            _overlay(s, _sine(1700 + 260 * (i % 2), .14, .30, bend=-700, vibrato=110), i * .1)
+        _overlay(s, _sine(2300, .35, .26, bend=-1600), .62)
+    elif name == "droid_whistle":
+        s = _sine(900, .16, .30, bend=1100) + _silence(.05) + _sine(1100, .3, .30, bend=-700)
+    elif name == "droid_curious":
+        s = _sine(600, .08, .26) + _silence(.03) + _sine(640, .08, .26) + _silence(.04) + \
+            _sine(700, .28, .28, bend=700, vibrato=20)
+    elif name == "droid_giggle":
+        s = []
+        for i, f in enumerate((1200, 1050, 1250, 1000, 1300, 950, 1350)):
+            _overlay(s, _sine(f, .045, .26, bend=-150), i * .06)
+    elif name == "droid_alarm":
+        s = []
+        for i in range(8):
+            _overlay(s, _sine(1400 if i % 2 else 950, .09, .28, vibrato=30), i * .1)
+    elif name == "mouse_droid":
+        s = []
+        rnd = random.Random(81)
+        for i in range(12):
+            _overlay(s, _sine(rnd.choice([2200, 2600, 3000, 2400]), .03, .20,
+                              bend=rnd.choice([-600, 500])), i * .045)
+    elif name == "probe_droid":
+        s = _mix(_noise(1.4, .05, 82), _sine(140, 1.4, .10, vibrato=6))
+        for at, f in ((.1, 880), (.35, 660), (.5, 990), (.85, 520), (1.05, 740)):
+            _overlay(s, _sine(f, .12, .18, vibrato=90), at)
+    # --- more space ---
+    elif name == "thermal_detonator":
+        s = []
+        for i in range(6):
+            _overlay(s, _sine(1650, .05, .26), i * (.32 - i * .04))
+        at = sum(.32 - i * .04 for i in range(6)) + .05
+        _overlay(s, _mix(_noise(.9, .45, 83), _sine(60, .9, .4, bend=-30)), at)
+        n = len(s)
+        start = int(SR * at)
+        s = [v if i < start else v * (1 - (i - start) / max(1, n - start)) ** 1.5
+             for i, v in enumerate(s)]
+    elif name == "seismic_charge":
+        s = _silence(.45)
+        boom = _mix(_sine(48, 2.2, .5, bend=-14), _sine(96, 2.2, .18, bend=-30),
+                    _noise(2.2, .06, 84))
+        boom = [v * (1 - i / len(boom)) ** 1.2 for i, v in enumerate(boom)]
+        s = _overlay(s, boom, .45)
+        s = _overlay(s, _sine(3100, 1.9, .05, bend=-900), .5)      # the ringing
+    elif name == "carbon_freeze":
+        s = _mix(_noise(1.6, .14, 85), _sine(400, 1.6, .16, bend=-330, vibrato=4))
+        n = len(s)
+        s = [v * (1 - i / n) ** .7 for i, v in enumerate(s)]
+        s = _overlay(s, _sine(120, .4, .3, bend=-50), 1.4)          # clunk
+    elif name == "force_push":
+        s = _mix(_sine(80, .7, .4, bend=-35), _noise(.7, .22, 86))
+        n = len(s)
+        s = [v * math.sin(math.pi * min(1.0, i / (n * .35))) ** .5 * (1 - i / n)
+             for i, v in enumerate(s)]
+    elif name == "hologram":
+        s = _mix(_sine(660, 1.3, .12, vibrato=25), _sine(990, 1.3, .07, vibrato=40),
+                 _noise(1.3, .05, 87))
+        rnd = random.Random(88)
+        s = [v * (0.4 if rnd.random() < .08 else 1.0) for v in s]     # flicker
+    elif name == "hyperdrive_fail":
+        s = _mix(_sine(200, .6, .22, bend=900), _noise(.6, .05, 89))
+        s = s + _mix(_sine(1100, 1.0, .22, bend=-1000, vibrato=20), _noise(1.0, .1, 90))
+        s = _overlay(s, _sine(90, .25, .3, bend=-40), 1.55)
+    elif name == "imperial_alarm":
+        s = []
+        for i in range(4):
+            _overlay(s, _mix(_sine(620, .32, .22), _sine(930, .32, .10)), i * .7)
+            _overlay(s, _mix(_sine(465, .32, .22), _sine(698, .32, .10)), i * .7 + .35)
+    elif name == "red_blade":
+        rnd = random.Random(91)
+        hum = _mix(_sine(78, 1.4, .30, bend=25, vibrato=3), _sine(156, 1.4, .14, bend=40))
+        crack = [rnd.uniform(-1, 1) * .22 if rnd.random() < .12 else 0.0 for _ in hum]
+        s = _mix(hum, crack)
+        s = _overlay(s, _sine(700, .2, .2, bend=250), .02)
+    # --- astromech: an R2-style droid, all original phrases ---
+    elif name == "astro_hello":
+        s = _chirp(900, 2100, .12, ring=.3) + _silence(.03) + _chirp(1400, 1300, .05, ring=.3) \
+            + _silence(.03) + _chirp(1100, 2600, .18, trill=.08, ring=.3)
+    elif name == "astro_happy":
+        s = _phrase(201, 9, lo=1200, hi=3200)
+        s = _overlay(s, _chirp(1500, 3400, .22, trill=.1, ring=.25), len(s) / SR)
+    elif name == "astro_worried":
+        s = _phrase(202, 6, lo=600, hi=1500, gap=.06)
+        s = _overlay(s, _chirp(1300, 520, .45, trill=.06, trill_hz=9, ring=.3), len(s) / SR)
+    elif name == "astro_scream":
+        s = _chirp(3600, 3300, .25, trill=.05, trill_hz=40, ring=.2) + \
+            _chirp(3400, 900, .6, trill=.07, trill_hz=34, ring=.35)
+    elif name == "astro_raspberry":
+        s = _mix(_saw(95, .7, .25, bend=-25), _chirp(190, 150, .7, .15, trill=.2, trill_hz=31))
+    elif name == "astro_sad":
+        s = _chirp(1100, 900, .2, ring=.2) + _silence(.05) + \
+            _chirp(1000, 380, .9, trill=.05, trill_hz=6, ring=.25)
+    elif name == "astro_chatter":
+        s = _phrase(203, 22, lo=650, hi=3300)
+    elif name == "astro_trill":
+        s = _chirp(1700, 2400, .6, trill=.18, trill_hz=26, ring=.2) + _chirp(2400, 3200, .12, ring=.2)
+    elif name == "astro_whistle":
+        s = _chirp(700, 2600, .18, ring=.1) + _silence(.07) + _chirp(1700, 650, .42, ring=.1)
+    elif name == "astro_zapped":
+        s = _mix(_noise(.25, .3, 204), _chirp(2800, 2000, .25, trill=.3, trill_hz=55, ring=.5))
+        s = s + _silence(.08) + _chirp(900, 300, .7, trill=.1, trill_hz=7, ring=.3)
+    # --- famous-robot flavours, original sounds ---
+    elif name == "rolly_droid":
+        s = _mix(_noise(1.2, .06, 205), _sine(70, 1.2, .12, vibrato=4))
+        for at, (a, b) in zip((.1, .35, .55, .9), ((900, 1600), (1500, 1300), (800, 1900), (1700, 2300))):
+            _overlay(s, _chirp(a, b, .12, .25, trill=.05), at)
+    elif name == "trash_bot":
+        s = _mix(_sine(180, .5, .16, bend=220, vibrato=6), _noise(.5, .05, 206))   # servo whir
+        s = s + _silence(.1) + _chirp(500, 900, .18, .26, trill=.04) + _chirp(900, 650, .22, .24)
+    elif name == "fifties_robot":
+        s = []
+        rnd = random.Random(207)
+        for i in range(14):
+            _overlay(s, _sine(rnd.choice([440, 523, 659, 784, 880, 1047]), .07, .2), i * .09)
+            if i % 3 == 0:
+                _overlay(s, _noise(.015, .3, 300 + i), i * .09)         # relay click
+    elif name == "power_up":
+        s = _mix(_sine(80, 1.4, .25, bend=900), _sine(160, 1.4, .1, bend=1800), _noise(1.4, .04, 208))
+        for at in (.4, .8, 1.15):
+            _overlay(s, _noise(.02, .35, int(at * 100)), at)
+        s = _overlay(s, _chirp(1200, 1800, .15, .25), 1.35)
+    elif name == "power_down":
+        s = _mix(_sine(900, 1.4, .22, bend=-850), _sine(1800, 1.4, .08, bend=-1700),
+                 _noise(1.4, .04, 209))
+        s = [v * (1 - i / len(s)) ** .6 for i, v in enumerate(s)]
+        s = _overlay(s, _noise(.03, .3, 210), 1.4)
+    elif name == "transform":
+        s = []
+        rnd = random.Random(211)
+        at = 0.0
+        for i in range(10):
+            _overlay(s, _mix(_noise(.04, .4, 400 + i), _sine(rnd.uniform(200, 900), .08, .2,
+                                                               bend=rnd.uniform(-300, 300))), at)
+            at += rnd.uniform(.06, .12)
+        _overlay(s, _mix(_saw(110, .5, .18, bend=330), _sine(220, .5, .15, bend=660)), at)
+        _overlay(s, _noise(.08, .5, 212), at + .5)
+    elif name == "servo_walk":
+        s = []
+        for i in range(4):
+            _overlay(s, _mix(_sine(300, .18, .18, bend=250), _noise(.18, .05, 500 + i)), i * .3)
+            _overlay(s, _noise(.03, .4, 600 + i), i * .3 + .2)
+    elif name == "computing":
+        s = []
+        rnd = random.Random(213)
+        for i in range(30):
+            _overlay(s, _sine(rnd.choice([1200, 1600, 2000, 2400, 900]), .025, .16), i * .04)
+        s = _overlay(s, _sine(880, .25, .25), 1.25)
+    # --- classic sci-fi ---
+    elif name == "theremin_ufo":
+        s = _sine(500, 2.2, .26, bend=500, vibrato=40)
+        s = [v * (.6 + .4 * math.sin(2 * math.pi * .8 * i / SR)) for i, v in enumerate(s)]
+    elif name == "comm_chirp":
+        s = _chirp(1800, 2600, .07, .25) + _chirp(2600, 2200, .05, .22) + _chirp(2200, 3000, .09, .25)
+    elif name == "transporter":
+        s = _mix(_noise(2.0, .08, 214), *[_sine(f, 2.0, .05, vibrato=f / 60)
+                                         for f in (880, 1320, 1760, 2640)])
+        n = len(s)
+        s = [v * math.sin(math.pi * i / n) for i, v in enumerate(s)]
+    elif name == "red_alert":
+        s = []
+        for i in range(3):
+            _overlay(s, _mix(_saw(300, .7, .26, bend=600), _sine(300, .7, .22, bend=600)), i * .85)
+    elif name == "phaser":
+        s = _mix(_saw(1300, .7, .12, bend=-200), _sine(1310, .7, .15, vibrato=30), _noise(.7, .04, 215))
+    elif name == "light_cycle":
+        s = _mix(_saw(140, 1.6, .2, bend=220), _saw(141.5, 1.6, .15, bend=226))
+        n = len(s)
+        s = [v * math.sin(math.pi * i / n) ** 2 for i, v in enumerate(s)]        # doppler-ish pass
+    elif name == "repulsor":
+        s = _mix(_sine(300, .35, .2, bend=1400), _noise(.35, .08, 216))
+        s = s + _mix(_noise(.45, .35, 217), _sine(120, .45, .3, bend=-60))
+        s = [v * (1 - max(0, i - SR * .35) / (SR * .45)) if i > SR * .35 else v
+             for i, v in enumerate(s)]
+    elif name == "warp_core":
+        s = _mix(_sine(55, 2.5, .3, vibrato=1.5), _sine(110, 2.5, .12), _sine(165, 2.5, .06, vibrato=2),
+                 _noise(2.5, .03, 218))
+        s = [v * (.75 + .25 * math.sin(2 * math.pi * 1.2 * i / SR)) for i, v in enumerate(s)]
     elif name == "cantina":
         s = []
         melody = [(440, .12), (554, .12), (659, .12), (554, .12),

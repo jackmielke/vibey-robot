@@ -69,6 +69,17 @@ struct ChatView: View {
                     }
                     .scrollIndicators(.hidden)
                     .scrollDismissesKeyboard(.interactively)
+                    // Pinned to the newest line, like Messages: when the
+                    // keyboard comes up the conversation rides up with it
+                    // instead of the keyboard covering the last few lines.
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: focused) { _, isUp in
+                        guard isUp else { return }
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(320))   // keyboard's own animation
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                        }
+                    }
                     .onChange(of: lines.count) { _, _ in
                         withAnimation(.easeOut) { proxy.scrollTo("bottom", anchor: .bottom) }
                     }

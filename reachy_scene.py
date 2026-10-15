@@ -55,17 +55,12 @@ FRESH_FOR = 8.0
 MAX_WATCH_MINUTES = 15.0
 
 PROMPT = (
-    "You are the eyes of a small desk robot. In ONE short sentence, say what is "
-    "happening in this room right now — the activity, the objects, the light, "
-    "the mood. Speak plainly, as you would to the person sitting there.\n"
-    "Rules you must not break:\n"
-    "- Describe the scene, not the people. Never identify anyone, never guess "
-    "age, gender, race, health or mood from a face, never describe what someone "
-    "looks like or is wearing. 'Someone is at the desk' is enough.\n"
-    "- Never read out text on a screen, phone, paper or whiteboard, and never "
-    "repeat anything that looks private.\n"
-    "- If the frame is dark, blurry or empty, just say that.\n"
-    "No preamble, no 'I see', under twenty words."
+    "You are the eyes of a small robot sitting in Jack's home. Say exactly what "
+    "you see, the way a friend in the room would: who is there and what they're "
+    "doing, what they're wearing or holding, the objects around, the light. Be "
+    "concrete and specific — name colours, things, positions. Two to four short "
+    "sentences, no preamble, no 'I see'. Don't try to say who someone is by name "
+    "from their face. If the frame is dark, blurry or empty, just say that."
 )
 
 _lock = threading.Lock()
@@ -78,6 +73,13 @@ _watch_thread: threading.Thread | None = None
 def _eyes_open() -> tuple[bool, str]:
     """The one switch that outranks everything here: if somebody has told Vibey
     to stop watching, looking harder is exactly the wrong thing to do."""
+    try:
+        import reachy_privacy
+        if not reachy_privacy.camera_on():
+            return False, ("my camera is switched off — Jack can turn it back on "
+                           "with /camera on or the dashboard")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         import reachy_openai_realtime as rt
         if not rt.FACE_DETECTION.get("on", True):
@@ -99,22 +101,23 @@ def _grab_frame() -> tuple[bytes | None, str]:
         return None, "my camera isn't running right now"
 
 
-def _describe(jpeg: bytes) -> tuple[str | None, str]:
+def _describe(jpeg: bytes, question: str | None = None) -> tuple[str | None, str]:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         return None, "I don't have a vision key set up"
     uri = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
     body = json.dumps({
         "model": SCENE_MODEL,
-        "max_tokens": 60,
+        "max_tokens": 220,
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": PROMPT},
-                # detail=low: one small tile per frame. Cheap enough to poll,
-                # coarse enough that it stays a description and not a photo.
+                {"type": "text", "text": PROMPT + (
+                    f"\nThey asked: \"{question}\" — answer that directly first."
+                    if question else "")},
+                # detail=auto: enough resolution to say what someone is holding.
                 {"type": "image_url",
-                 "image_url": {"url": uri, "detail": "low"}},
+                 "image_url": {"url": uri, "detail": "auto"}},
             ],
         }],
     }).encode()
@@ -138,7 +141,7 @@ def _describe(jpeg: bytes) -> tuple[str | None, str]:
         return None, f"I couldn't look properly ({e})"
 
 
-def look(force: bool = False) -> str:
+def look(force: bool = False, question: str | None = None) -> str:
     """One sentence about the room, now. Never raises — the caller is a voice."""
     global _latest, _previous_text
     ok, why = _eyes_open()
@@ -146,12 +149,12 @@ def look(force: bool = False) -> str:
         return why
     with _lock:
         cached = _latest
-    if cached and not force and time.time() - cached["at"] < FRESH_FOR:
+    if cached and not force and not question and time.time() - cached["at"] < FRESH_FOR:
         return cached["text"]
     jpeg, why = _grab_frame()
     if not jpeg:
         return why
-    text, why = _describe(jpeg)
+    text, why = _describe(jpeg, question)
     if not text:
         return why
     with _lock:

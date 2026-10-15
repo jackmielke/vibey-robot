@@ -396,6 +396,7 @@ enum Sounds {
     static func emoji(_ n: String) -> String { emojis[n] ?? "🔊" }
     static func groupTitle(_ g: String) -> String {
         ["droid": "DROID", "mood": "MOOD", "space": "SPACE", "dark": "DARK SIDE",
-         "music": "MUSIC", "bed": "MUSIC BEDS · LOOPS"][g] ?? g.uppercased()
+         "music": "MUSIC", "bed": "MUSIC BEDS · LOOPS",
+         "astromech": "ASTROMECH · R2 STYLE", "robots": "FAMOUS ROBOTS", "scifi": "SCI-FI"][g] ?? g.uppercased()
     }
 }
