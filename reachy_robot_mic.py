@@ -222,7 +222,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
-        pos = 0
+        # Start at the live edge. Starting at 0 replayed up to 10s of old room
+        # audio to every new reader at once: GPT-Live rejected it as "arriving
+        # too quickly" and dropped what came after, so Vibey heard nothing.
+        with _lock:
+            pos = len(_buf)
         try:
             while True:
                 with _lock:

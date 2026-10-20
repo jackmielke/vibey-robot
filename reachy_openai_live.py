@@ -183,6 +183,8 @@ class LiveSession(RealtimeSession):
                     self._last_rx = time.time()
                     self._conn_at, self._billed_min, self._minutes = time.time(), 0.0, 0.0
                     await ws.send(json.dumps(self._session_start()))
+                    if self._stream is None:
+                        self._stream = rt._Streamer(self.log)
                     FATAL_REASON["why"] = None
                     sender = asyncio.ensure_future(self._sender(ws, queue, should_run, stop))
                     announcer = asyncio.ensure_future(self._announcer(ws, should_run, stop))
@@ -240,6 +242,15 @@ class LiveSession(RealtimeSession):
         response.done; the gap between sentences is the only boundary there is."""
         while should_run() and not stop.is_set():
             await asyncio.sleep(0.05)
+            streamed = self._stream is not None and self._stream.ok and self._response_active
+            if streamed and time.time() - self._last_delta_at > FLUSH_GAP_S:
+                # Already played as it arrived; only the sentence boundary is left.
+                said = "".join(self._said).strip()
+                self._said = []
+                self._response_active = False
+                if said:
+                    self.on_agent_text(said)
+                continue
             if self._resp_pcm and time.time() - self._last_delta_at > FLUSH_GAP_S:
                 tail = int((time.time() - self._last_delta_at) * RT_SR) * 2
                 if 0 < tail < len(self._resp_pcm):
@@ -278,7 +289,21 @@ class LiveSession(RealtimeSession):
                 # Audio arriving while our last clip is still playing is a new
                 # sentence, not a barge-in — Live decides turns itself.
                 pcm = base64.b64decode(msg.get("delta", ""))
-                if _rms(pcm) >= SILENCE_RMS:
+                loud = _rms(pcm) >= SILENCE_RMS
+                if self._stream is not None and self._stream.ok:
+                    # Straight to the speaker, as it arrives. Collecting the
+                    # whole sentence first meant Vibey started talking only
+                    # after it had finished generating it: a five-second
+                    # sentence was a five-second wait.
+                    if loud:
+                        self._cancelled = False
+                        self._response_active = True
+                        self._last_delta_at = time.time()
+                    if self._response_active and not self._cancelled:
+                        dur = self._stream.push(pcm)
+                        self._speaking_until = max(self._speaking_until, time.time()) + dur
+                        rt.reachy_denoise.set_speaking(self._speaking_until - time.time() + 0.3)
+                elif loud:
                     self._cancelled = False
                     self._response_active = True
                     self._resp_pcm.extend(pcm)
