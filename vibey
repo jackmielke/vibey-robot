@@ -186,6 +186,11 @@ PYEOF
     curl -s -m 25 -X POST localhost:8772/off -H "Content-Type: application/json" \
       -d '{"off": false}' >/dev/null && wake
     ;;
+  rover)
+    # The Wave Rover (reachy_rover.py): vibey rover find --save | status | forward 1 | stop
+    shift
+    python3 reachy_rover.py "$@"
+    ;;
   antenna)
     # Antennas only — never commands the head, so it is safe with the shell off.
     shift

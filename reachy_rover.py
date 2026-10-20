@@ -9,8 +9,19 @@ rover stops by itself if it hears nothing for 3 seconds, so a move here is
 Set ROVER_URL in .env (e.g. http://192.168.1.50) once the rover is on Wi-Fi.
 Until then every call says the rover isn't connected and nothing else breaks.
 
+ROVER_RIDING=1 in .env means Vibey is mounted on the rover: speeds stay very
+gentle and Vibey talks about the rover as its own wheels. Unset (the default),
+Vibey sits on the table and drives the rover for you as a separate little car.
+
+First-time setup (the rover ships as its own "UGV" hotspot, which is how a
+phone drives it; Vibey needs it on the same Wi-Fi as the Mac instead):
+    1. Join the Mac to the "UGV" network (password 12345678)
+    2. python3 reachy_rover.py wifi "YourHomeWifi"
+    3. Rejoin the home Wi-Fi, then: python3 reachy_rover.py find --save
+
 CLI, for testing from the Mac:
     python3 reachy_rover.py find            # sweep this network for the rover
+    python3 reachy_rover.py find --save     # ...and write ROVER_URL into .env
     python3 reachy_rover.py status          # battery voltage and raw feedback
     python3 reachy_rover.py forward 1       # action, seconds
     python3 reachy_rover.py spin_left 0.5 slow
@@ -27,11 +38,33 @@ import time
 import urllib.parse
 import urllib.request
 
-ROVER_URL = os.environ.get("ROVER_URL", "").rstrip("/")
+ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+
+def _env(key: str, default: str = "") -> str:
+    """os.environ first (start_wonder.sh exports .env), else read .env directly
+    so the CLI works from a bare shell."""
+    if key in os.environ:
+        return os.environ[key]
+    try:
+        with open(ENV_PATH) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k == key:
+                    return v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return default
+
+
+ROVER_URL = _env("ROVER_URL").rstrip("/")
+RIDING = _env("ROVER_RIDING", "0") == "1"
 AP_URL = "http://192.168.4.1"   # the rover's own hotspot "UGV" (password 12345678)
 
-# Fractions of full power. Kept gentle on purpose: Vibey is tall and heavy.
-SPEEDS = {"slow": 0.12, "medium": 0.2, "fast": 0.3}
+# Fractions of full power. With Vibey on top they stay very gentle: it is tall
+# and top-heavy. On its own the rover can go a bit quicker.
+SPEEDS = ({"slow": 0.12, "medium": 0.2, "fast": 0.3} if RIDING
+          else {"slow": 0.15, "medium": 0.25, "fast": 0.4})
 MAX_SECONDS = 4.0
 RESEND_EVERY = 0.4
 
@@ -139,14 +172,36 @@ def find(prefix: str | None = None) -> list[str]:
         return [u for u in ex.map(probe, range(1, 255)) if u]
 
 
+def save_url(url: str) -> None:
+    """Write ROVER_URL into .env, replacing an existing line."""
+    try:
+        with open(ENV_PATH) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    lines = [ln for ln in lines if not ln.startswith("ROVER_URL=")]
+    lines.append(f"ROVER_URL={url}")
+    with open(ENV_PATH, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+_RIDING_DESC = (
+    "Drive your wheels (you ride on a small rover). Use it when someone asks "
+    "you to come here, go over there, back up, turn around, or do a little "
+    "spin. Moves are short and gentle; chain a few if you need to. You can't "
+    "see obstacles while driving, so keep moves short and say what you're doing.")
+_REMOTE_DESC = (
+    "Drive the little rover car (a Waveshare Wave Rover) that sits near you. "
+    "You stay put on the table; the rover is a separate toy you remote-control. "
+    "Use it when someone asks you to drive the car, send it somewhere, bring it "
+    "back, turn it, or spin it. Moves are short and timed; chain a few for a "
+    "longer trip, and use stop the moment anyone says stop. You can use look "
+    "between moves to see where the rover ended up if it's in front of you.")
+
 TOOL = {
     "type": "function",
     "name": "drive",
-    "description": (
-        "Drive your wheels (you ride on a small rover). Use it when someone asks "
-        "you to come here, go over there, back up, turn around, or do a little "
-        "spin. Moves are short and gentle; chain a few if you need to. You can't "
-        "see obstacles while driving, so keep moves short and say what you're doing."),
+    "description": _RIDING_DESC if RIDING else _REMOTE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
@@ -165,8 +220,15 @@ def _main(argv: list[str]) -> None:
         return
     cmd = argv[0]
     if cmd == "find":
-        hits = find(argv[1] if len(argv) > 1 else None)
+        rest = [a for a in argv[1:] if a != "--save"]
+        hits = find(rest[0] if rest else None)
         print("\n".join(hits) if hits else "no rover found on this network")
+        if "--save" in argv:
+            if len(hits) == 1:
+                save_url(hits[0])
+                print(f"saved ROVER_URL={hits[0]} to .env; restart Vibey to pick it up")
+            elif hits:
+                print("found more than one; set ROVER_URL in .env by hand")
     elif cmd == "status":
         print(json.dumps(status(), indent=2))
     elif cmd == "say":
