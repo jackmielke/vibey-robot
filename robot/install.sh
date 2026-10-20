@@ -133,6 +133,20 @@ else
   warn "linger off: services stop when ssh logs out. Run once: sudo loginctl enable-linger $USER"
 fi
 
+# --- Wi-Fi power save off ------------------------------------------------------
+# On by default on the CM4. It made the link 200 to 1000 ms on a strong signal,
+# which stalled the camera's WebRTC stream every few seconds. Off: about 30 ms.
+WIFI_CONF=/etc/NetworkManager/conf.d/99-vibey-no-powersave.conf
+if [[ -f "$WIFI_CONF" ]]; then
+  say "wifi power save off"
+elif sudo -n true 2>/dev/null; then
+  printf '[connection]\nwifi.powersave = 2\n' | sudo -n tee "$WIFI_CONF" >/dev/null
+  sudo -n /sbin/iw dev wlan0 set power_save off 2>/dev/null || true
+  say "wifi power save turned off"
+else
+  warn "wifi power save on (laggy camera). Run once: printf '[connection]\\nwifi.powersave = 2\\n' | sudo tee $WIFI_CONF && sudo iw dev wlan0 set power_save off"
+fi
+
 # --- units -------------------------------------------------------------------
 changed=0
 for src in "$APP"/robot/systemd/*; do
