@@ -77,6 +77,14 @@ SILENCE_RMS = 60      # a Live silence frame is exactly 0; speech runs 200-1700
 RX_DEAD_S = 12.0
 
 
+def _talk_stop() -> None:
+    try:
+        import reachy_talk
+        reachy_talk.stop()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _rms(pcm: bytes) -> float:
     a = array.array("h", pcm[: len(pcm) // 2 * 2])
     return (sum(v * v for v in a) / len(a)) ** 0.5 if a else 0.0
@@ -248,6 +256,8 @@ class LiveSession(RealtimeSession):
                 said = "".join(self._said).strip()
                 self._said = []
                 self._response_active = False
+                loop.call_later(max(0.0, self._speaking_until - time.time()),
+                                lambda: None if self._response_active else _talk_stop())
                 if said:
                     self.on_agent_text(said)
                 continue
@@ -296,6 +306,14 @@ class LiveSession(RealtimeSession):
                     # after it had finished generating it: a five-second
                     # sentence was a five-second wait.
                     if loud:
+                        if not self._response_active:
+                            # The length is unknown while streaming, so the head
+                            # talks until the flusher sees the sentence end.
+                            try:
+                                import reachy_talk
+                                reachy_talk.start(None, duration=60.0)
+                            except Exception as e:  # noqa: BLE001
+                                self.log(f"talk motion failed: {e}")
                         self._cancelled = False
                         self._response_active = True
                         self._last_delta_at = time.time()

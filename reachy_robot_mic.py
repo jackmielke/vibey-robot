@@ -83,6 +83,9 @@ TARGET_SR = 16000  # matches reachy_chat.py's SR — robot mic already 16kHz
 
 _lock = threading.Condition()
 _buf = bytearray()
+# Bytes ever dropped off the front of _buf. Readers keep absolute positions, so
+# a trim never moves them: index-based positions skipped a chunk on every trim.
+_trimmed = [0]
 _connected = False
 _actual_sr = TARGET_SR
 _mini = None          # the live ReachyMini, for the speaker side
@@ -153,7 +156,9 @@ def _capture_loop():
                     _buf.extend(pcm16)
                     # cap buffer so a slow/absent reader can't grow it forever
                     if len(_buf) > TARGET_SR * 2 * 10:  # 10s
-                        del _buf[:len(_buf) - TARGET_SR * 2 * 2]
+                        cut = len(_buf) - TARGET_SR * 2 * 2
+                        del _buf[:cut]
+                        _trimmed[0] += cut
                     _lock.notify_all()
         except Exception as e:  # noqa: BLE001 - keep retrying forever
             _connected = False
@@ -226,15 +231,15 @@ class Handler(BaseHTTPRequestHandler):
         # audio to every new reader at once: GPT-Live rejected it as "arriving
         # too quickly" and dropped what came after, so Vibey heard nothing.
         with _lock:
-            pos = len(_buf)
+            pos = _trimmed[0] + len(_buf)          # absolute byte offset
         try:
             while True:
                 with _lock:
-                    while len(_buf) <= pos:
+                    while _trimmed[0] + len(_buf) <= pos:
                         _lock.wait(timeout=5)
-                        pos = min(pos, len(_buf))  # buffer may have trimmed
-                    chunk = bytes(_buf[pos:])
-                    pos = len(_buf)
+                    start = max(0, pos - _trimmed[0])  # behind the trim: skip ahead
+                    chunk = bytes(_buf[start:])
+                    pos = _trimmed[0] + len(_buf)
                 self.wfile.write(chunk)
         except (BrokenPipeError, ConnectionResetError):
             pass

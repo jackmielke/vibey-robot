@@ -85,7 +85,12 @@ def _get(path: str, timeout: float = 5.0):
 ANTENNA_MIN = float(os.environ.get("ANTENNA_MIN_RAD", "0.2"))   # ~11.5°
 
 
-def steady_antennas(antennas: list[float]) -> list[float]:
+def steady_antennas(antennas: list[float] | None) -> list[float] | None:
+    # None means "leave the antennas where they are" (head-only moves, like the
+    # talking motion). Iterating it raised TypeError, which reachy_talk swallowed,
+    # so Vibey's head stopped moving while it spoke.
+    if antennas is None:
+        return None
     out = []
     for i, a in enumerate(antennas):
         if abs(a) < ANTENNA_MIN:
