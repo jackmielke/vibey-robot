@@ -1283,7 +1283,7 @@ async function tick(){
     $('status').innerHTML =
         '<span class=dot style="--c:var('+st[0]+')"></span>'
       + '<span class=st-label>'+st[1]+'</span>'
-      + '<span class=st-url>'+REACHY.replace(/^https?:\/\//,'')+'</span>';
+      + '<span class=st-url>'+REACHY.replace(/^https?:\\/\\//,'')+'</span>';
     const people=d.people||[];
     $('facedet').textContent=people.length?'yes ✅':'no';
     $('personcount').textContent=people.length
@@ -2657,8 +2657,8 @@ class Handler(BaseHTTPRequestHandler):
                     assert isinstance(a.get("time"), str) and ":" in a["time"]
                 path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                     "alarms.json")
-                with open(path, "w") as f:
-                    json.dump(alarms, f, indent=2)
+                from vibey_files import atomic_write_json
+                atomic_write_json(path, alarms, indent=2)
                 self._send(json.dumps({"ok": True, "count": len(alarms)}).encode(),
                            "application/json")
             except Exception as e:

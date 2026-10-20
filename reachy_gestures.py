@@ -337,6 +337,8 @@ class _Handler(BaseHTTPRequestHandler):
 def main() -> None:
     if not os.path.exists(MODEL):
         raise SystemExit(f"[gesture] model missing: {MODEL}")
+    import vibey_auth
+    vibey_auth.protect(_Handler)   # no cross-site browser requests
     srv = ThreadingHTTPServer((os.environ.get("VIBEY_BIND", "127.0.0.1"), PORT), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"[gesture] control API on http://localhost:{PORT}", flush=True)

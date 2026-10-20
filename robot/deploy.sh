@@ -75,7 +75,7 @@ if (( STATUS )); then
 fi
 
 # --- 1. compile locally before shipping anything -----------------------------
-python3 -m py_compile reachy_*.py
+python3 -m py_compile reachy_*.py vibey_*.py
 
 # --- 2. code (secrets and runtime state excluded; --delete only touches code) --
 rsh 'mkdir -p ~/vibey/app ~/vibey/memories'
@@ -89,6 +89,9 @@ rsync -az --delete -e "${SSH[*]}" \
   --exclude '.audio_prefs.json' --exclude '.voice_brain.json' --exclude '.mic_source.json' \
   --exclude '.speaker_source.json' --exclude '.cost.json' --exclude '.off' \
   --exclude '.robot_services' --exclude 'alarms.json' \
+  --exclude 'data' --exclude '.privacy_mode' --exclude '.camera_off' \
+  --exclude '.volume_state.json' --exclude '.telegram_groups' --exclude 'clock.json' \
+  --exclude '.cost.json.migrated' --exclude '.*.tmp' \
   ./ "$ROBOT:vibey/app/"
 echo "code synced"
 

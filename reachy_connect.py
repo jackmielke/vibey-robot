@@ -323,7 +323,9 @@ def set_env_url(url: str) -> str:
     already-running services.
     """
     url = url.rstrip("/")
-    if not re.match(r"^https?://[^\s/]+$", url):
+    # Strictly scheme://host[:port]. start_wonder.sh `source`s .env, so any
+    # shell character here (; $ ` quotes) would run as a command.
+    if not re.fullmatch(r"https?://[A-Za-z0-9](?:[A-Za-z0-9.-]{0,252})(?::\d{1,5})?", url):
         raise ValueError(f"not a bare robot URL: {url!r}")
     try:
         lines = open(ENV_PATH).read().splitlines()

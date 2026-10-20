@@ -542,6 +542,8 @@ class _Handler(BaseHTTPRequestHandler):
 def serve() -> None:
     global DESK
     DESK = FrontDesk()
+    import vibey_auth
+    vibey_auth.protect(_Handler)   # no cross-site browser requests
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), _Handler)
     print(f"[frontdesk] on http://127.0.0.1:{PORT} · {len(DESK.guests)} guests "
           f"from {DESK.csv_path or 'nothing yet'}", flush=True)

@@ -40,6 +40,7 @@ import urllib.request
 import uuid
 
 import reachy_events
+from vibey_files import atomic_write_json
 import reachy_privacy
 from pathlib import Path
 
@@ -78,15 +79,31 @@ SERVICES = {  # name → health URL, for /status
 }
 
 
+def _pinned_owner() -> int | None:
+    """TELEGRAM_OWNER_ID in .env pins who Jack is. Without it the first private
+    chat to message the bot pairs as owner, which is only safe as long as
+    .telegram_state.json is never lost."""
+    raw = os.environ.get("TELEGRAM_OWNER_ID", "").strip()
+    try:
+        return int(raw) if raw else None
+    except ValueError:
+        print(f"[tg] TELEGRAM_OWNER_ID isn't a chat id: {raw!r}", flush=True)
+        return None
+
+
 def _state() -> dict:
     try:
-        return json.loads(STATE_PATH.read_text())
+        st = json.loads(STATE_PATH.read_text())
     except Exception:
-        return {}
+        st = {}
+    pinned = _pinned_owner()
+    if pinned is not None:
+        st["owner"] = pinned
+    return st
 
 
 def _save_state(d: dict) -> None:
-    STATE_PATH.write_text(json.dumps(d))
+    atomic_write_json(STATE_PATH, d)
 
 
 def _tg(method: str, params: dict, timeout: float = 65.0):
@@ -244,7 +261,7 @@ def _contacts() -> dict:
 
 
 def _save_contacts(d: dict) -> None:
-    CONTACTS_PATH.write_text(json.dumps(d, indent=2))
+    atomic_write_json(CONTACTS_PATH, d, indent=2)
 
 
 def contact_names() -> list:
@@ -1015,7 +1032,7 @@ def _handle(chat_id: int, text: str) -> None:
         import re as _re
         parts = text.split()
         if len(parts) >= 2 and parts[1].lower() == "off":
-            Path(__file__).parent.joinpath("alarms.json").write_text("[]")
+            atomic_write_json(Path(__file__).parent / "alarms.json", [])
             _send(chat_id, "alarms cleared")
             return
         m = _re.search(r"([01]?\d|2[0-3]):([0-5]\d)", text)
@@ -1027,11 +1044,15 @@ def _handle(chat_id: int, text: str) -> None:
         p = Path(__file__).parent / "alarms.json"
         try:
             alarms = json.loads(p.read_text())
-        except Exception:
+        except FileNotFoundError:
             alarms = []
+        except Exception:  # noqa: BLE001
+            # Unreadable: saving now would replace every alarm with just this one.
+            _send(chat_id, "couldn't read the alarm list, so I left it alone")
+            return
         alarms.append({"time": hhmm, "repeat": repeat,
                        "label": f"telegram alarm {hhmm}", "song": True})
-        p.write_text(json.dumps(alarms, indent=2))
+        atomic_write_json(p, alarms, indent=2)
         _send(chat_id, f"wake-up show set for {hhmm} ({repeat})")
         return
     if low in ("/sleep", "/wake"):
@@ -1528,7 +1549,9 @@ def _route(u: dict, offline: bool = False) -> None:
         return
     chat_id = msg["chat"]["id"]
     st = _state()
-    if not st.get("owner"):
+    # Only a private chat can pair: never a group, where "first to speak" is
+    # whoever happens to be in it.
+    if not st.get("owner") and msg["chat"].get("type") == "private":
         st["owner"] = chat_id
         st["owner_name"] = (msg["chat"].get("first_name") or
                             msg["chat"].get("username") or "?")

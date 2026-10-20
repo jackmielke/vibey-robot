@@ -41,3 +41,7 @@ supabase/.temp/
 .cost.json.migrated
 .camera_off
 memory/
+
+# Temp files from vibey_files.atomic_write_* (renamed into place on success)
+.*.tmp
+clock.json

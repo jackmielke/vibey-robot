@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -138,6 +139,10 @@ def _attribute(who: str) -> tuple[str | None, str | None, list[str]]:
 # Writing                                                                     #
 # --------------------------------------------------------------------------- #
 def _path_for(day: str) -> str:
+    # `day` arrives from HTTP (/transcript?day=), so it must be a plain date:
+    # anything else could walk out of transcripts/ ("../agent_runs/x").
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day or ""):
+        raise ValueError(f"not a YYYY-MM-DD day: {day!r}")
     return os.path.join(DIR, f"{day}.jsonl")
 
 

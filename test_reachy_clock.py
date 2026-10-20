@@ -125,10 +125,10 @@ class TestSpokenTime(ClockTestCase):
                                         zone="America/New_York", cycle="12"))
 
     def test_aware_input_is_converted_not_relabelled(self):
-        # 22:00 UTC is 3pm in Denver on a summer day (UTC-7).
+        # 22:00 UTC is 4pm in Denver on a summer day (MDT, UTC-6).
         utc = datetime(2026, 6, 1, 22, 0, tzinfo=timezone.utc)
         said = clock.spoken_time(utc, zone="America/Denver", cycle="12")
-        self.assertIn("three o'clock", said)
+        self.assertIn("four o'clock", said)
         self.assertIn("in the afternoon", said)
 
     def test_naive_input_is_read_as_local_to_the_zone(self):

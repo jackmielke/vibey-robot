@@ -21,7 +21,7 @@ in .env:  MIC_SOURCE=robot
 Env overrides:
     REACHY_HOST   derived from REACHY_URL in .env if unset
     ROBOT_MIC_PORT default 8775
-    ROBOT_MIC_BIND default 0.0.0.0 (the robot sets 127.0.0.1: only local
+    ROBOT_MIC_BIND default 127.0.0.1 (only local
                    services read it, and it is a live room mic)
     VIBEY_ON_ROBOT=1  running ON the robot: read the mic from the daemon's
                    local audio (SDK LOCAL backend), no WebRTC. See ROBOT_NATIVE.md.
@@ -249,6 +249,8 @@ def main():
     threading.Thread(target=_capture_loop, daemon=True).start()
     print(f"[robotmic] PCM stream  http://localhost:{MIC_PORT}/pcm "
           f"({'local audio, on the robot' if ON_ROBOT else 'WebRTC'})", flush=True)
+    import vibey_auth
+    vibey_auth.protect(Handler)   # LAN needs the app token; no cross-site requests
     ThreadingHTTPServer((MIC_BIND, MIC_PORT), Handler).serve_forever()
 
 

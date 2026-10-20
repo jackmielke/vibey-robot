@@ -327,6 +327,8 @@ def main():
     MUSIC_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[dj] music folder: {MUSIC_DIR} ({len(list_tracks())} tracks)", flush=True)
     print(f"[dj] listening on :{PORT}", flush=True)
+    import vibey_auth
+    vibey_auth.protect(Handler)   # no cross-site browser requests
     ThreadingHTTPServer((os.environ.get("VIBEY_BIND", "127.0.0.1"), PORT), Handler).serve_forever()
 
 

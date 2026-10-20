@@ -300,7 +300,13 @@ def main() -> None:
                     _telegram(msg)
                 continue
             _restarts[name].append(time.time())
-            _restart(name)
+            try:
+                _restart(name)
+            except Exception as e:  # noqa: BLE001
+                # A bad interpreter path or an unwritable log must cost this one
+                # restart, not the watchdog itself: nothing restarts the watchdog.
+                print(f"[watchdog] restarting {name} failed: {e}", flush=True)
+                continue
             # Routine restarts are logged, not sent. Jack, 23 Sep 2026: "I just get
             # spammed every single day by Vibey Claw." A restart that worked is not
             # news; only the give-up below reaches Telegram, once per service per day.

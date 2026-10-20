@@ -100,7 +100,8 @@ def _load_alarms() -> list[dict]:
 
 
 def _save_alarms(alarms: list[dict]) -> None:
-    ALARMS_PATH.write_text(json.dumps(alarms, indent=2))
+    from vibey_files import atomic_write_json
+    atomic_write_json(ALARMS_PATH, alarms, indent=2)
 
 
 def _morning_song() -> None:

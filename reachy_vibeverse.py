@@ -183,6 +183,8 @@ class _StatusHandler(BaseHTTPRequestHandler):
 
 
 def run():
+    import vibey_auth
+    vibey_auth.protect(_StatusHandler)   # no cross-site browser requests
     threading.Thread(
         target=lambda: ThreadingHTTPServer((os.environ.get("VIBEY_BIND", "127.0.0.1"), STATUS_PORT),
                                            _StatusHandler).serve_forever(),
