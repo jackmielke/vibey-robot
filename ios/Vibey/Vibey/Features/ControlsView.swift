@@ -31,14 +31,20 @@ struct ControlsView: View {
 
                         SectionLabel(text: "Brain")
                         VStack(alignment: .leading, spacing: 10) {
-                            ChoicePills(options: [("live", "GPT-Live"), ("realtime", "Realtime")],
+                            ChoicePills(options: [("basic", "Basic"), ("realtime", "Realtime"), ("live", "GPT-Live"), ("local", "Local")],
                                         selected: d?.voice_brain ?? s?.voice_brain) { b in
-                                store.run(b == "live" ? "GPT-Live brain" : "Realtime brain") { try await $0.setBrain(b) }
+                                let label = ["basic": "Basic", "realtime": "Realtime", "live": "GPT-Live", "local": "Local"][b] ?? b
+                                store.run("\(label) brain") { try await $0.setBrain(b) }
                                 d?.voice_brain = b
                             }
-                            Text((d?.voice_brain ?? s?.voice_brain) == "realtime"
-                                 ? "One model hears, thinks and speaks."
-                                 : "Voice layer plus a smarter backend brain. Snappier.")
+                            Text({
+                                switch d?.voice_brain ?? s?.voice_brain {
+                                case "basic": return "Realtime with no tools, memory or extras. Just talks — and can look."
+                                case "realtime": return "One model hears, thinks and speaks. All the tools."
+                                case "local": return "Everything on the Mac — free, private, offline. Slower."
+                                default: return "Voice layer plus a smarter backend brain."
+                                }
+                            }())
                                 .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
                             RowDivider().padding(.leading, -46)
                             SwitchRow(icon: "text.bubble.fill", title: "Think aloud",
@@ -123,6 +129,10 @@ struct ControlsView: View {
 
                         SectionLabel(text: "Seeing & waking")
                         VStack(spacing: 6) {
+                            SwitchRow(icon: "video.fill", title: "Camera",
+                                      hint: "Off = no video at all, on the robot or the Mac",
+                                      isOn: d?.camera ?? store.cameraOn) { dial("camera", $0) }
+                            RowDivider()
                             SwitchRow(icon: "face.smiling.inverse", title: "Face tracking",
                                       hint: "Turns to follow you",
                                       isOn: d?.face_tracking ?? false) { dial("face_tracking", $0) }
@@ -210,7 +220,7 @@ struct ControlsView: View {
                     Text(money(cost?.today))
                         .font(.system(size: 34, weight: .heavy, design: .rounded).monospacedDigit())
                         .foregroundStyle(level == "over" ? Palette.bad : Palette.ink)
-                    Text(level == "over" ? (cost?.blocked_why ?? "out of budget")
+                    Text(level == "over" ? "past your \(money(b?.daily_cap)) line — still running"
                          : "today of \(money(b?.daily_cap))")
                         .font(.system(.caption, design: .rounded)).foregroundStyle(Palette.inkDim)
                 }

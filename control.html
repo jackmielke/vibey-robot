@@ -18,6 +18,10 @@
   .pill.offline { background:var(--bad); color:#fff }
   .big { margin-left:auto; padding:12px 22px; border-radius:12px; border:0; font-size:16px; font-weight:700; cursor:pointer; color:#052; background:var(--on) }
   .big.off { background:var(--bad); color:#fff }
+  #powerprog { margin:0 0 14px; padding:10px 14px; border-radius:12px; border:1px solid var(--line); background:var(--panel); font-size:14px; line-height:1.7 }
+  #powerprog[hidden] { display:none }
+  #powerprog .st-doing { color:var(--warn) } #powerprog .st-ok { color:var(--on) } #powerprog .st-todo { color:var(--dim) }
+  #powerprog .st-fail { color:var(--bad); font-weight:700 } #powerprog .why { margin-top:4px; color:var(--bad); font-weight:600 }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px }
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px }
   .panel.wide { grid-column:1/-1 }
@@ -174,6 +178,7 @@
   <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
   <button class=big id=power>Turn on</button>
 </header>
+<div id=powerprog hidden></div>
 
 <div class=grid id=grid>
 
@@ -223,6 +228,7 @@
     <div class=row><div class=l>Starts at<small id=svolv></small></div><input type=range id=svol min=0 max=100 step=5></div>
 
     <div class=grp>Seeing</div>
+    <div class=row><div class=l>Camera<small>off = no video at all, on the robot or here</small></div><button class=sw data-dial=camera></button></div>
     <div class=row><div class=l>Face tracking<small>turns to follow you</small></div><button class=sw data-dial=face_tracking></button></div>
 
     <div class=grp>Privacy</div>
@@ -286,6 +292,10 @@ async function poll(){ if(polling) return; polling=true; try{ await pollOnce(); 
 async function pollOnce(){
   chat=await j('/chatstate'); dials=await j('/dials'); brainInfo=await j('/brain');
   if(chat&&want.power!==null){ const awakeNow=!chat.asleep&&!chat.off; if(awakeNow===want.power||stale()) want.power=null; }
+  // A power-on that stopped is finished: stop saying "waking up…" and show why.
+  const pp=chat&&chat.power_progress;
+  if(pp&&pp.error&&!chat.turning&&want.power===true&&pp.at*1000>=want.at-2000) want.power=null;
+  paintProgress(pp);
   if(brainInfo&&want.brain&&(brainInfo.brain===want.brain||stale())) want.brain=null;
   if(dials) for(const k of Object.keys(want.dials)){ if(dials[k]===want.dials[k]||stale()) delete want.dials[k]; }
   const st=$('status'), p=$('power');
@@ -349,6 +359,18 @@ document.querySelectorAll('#spk button').forEach(b=>b.onclick=async()=>{ want.di
 document.querySelectorAll('#mic button').forEach(b=>b.onclick=async()=>{ want.dials.mic_source=b.dataset.mic; want.at=Date.now(); poll(); const r=await j('/dials',{mic_source:b.dataset.mic}); if(!r||r.error) delete want.dials.mic_source; poll(); });
 $('scribe2').onclick=()=>$('scribe').onclick();
 $('scribe').onclick=async()=>{ const on=!(chat&&chat.scribe&&chat.scribe.on); $('scribe').disabled=true; const r=await j('/scribe',{on}); if(r&&r.error) alert(r.error); poll(); };
+// Steps of the last power-on, from the chat service: live while running, the
+// reason kept up for two minutes when a step failed.
+const STEP_ICON={todo:'○',doing:'…',ok:'✓',fail:'✕'};
+function paintProgress(pp){
+  const box=$('powerprog'); const age=pp?Date.now()/1000-pp.at:1e9;
+  if(!pp||(pp.done&&!pp.error&&age>8)||(pp.error&&age>120)){ box.hidden=true; return; }
+  const esc=t=>String(t).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));
+  box.hidden=false;
+  box.innerHTML='<b>'+(pp.error?'Turning on stopped':pp.done?'Vibey is on':'Turning on…')+'</b><br>'
+    +pp.steps.map(s=>`<span class=st-${s.state}>${STEP_ICON[s.state]||'○'} ${esc(s.label)}</span>`).join(' &nbsp; ')
+    +(pp.error?`<div class=why>${esc(pp.error)}</div>`:'');
+}
 // Power: disabled the moment it is pressed, and the target comes from a FRESH
 // read of the chat service, not the last poll. Toggling a stale copy is what
 // turned one press into ON, then OFF a few seconds later, then ON again.

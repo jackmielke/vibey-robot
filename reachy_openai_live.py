@@ -318,6 +318,11 @@ class LiveSession(RealtimeSession):
                 if (ev.get("type") == "response.output_item.done"
                         and (ev.get("item") or {}).get("type") == "function_call"):
                     await self._handle_function_call(ws, loop, ev["item"])
+                elif (ev.get("type") in ("response.completed", "response.done",
+                                         "response.incomplete")
+                      and getattr(self, "_tool_reply_due", False)):
+                    self._tool_reply_due = False
+                    await ws.send(json.dumps({"type": "response.create"}))
 
             elif t == "session.usage.updated":
                 u = msg.get("usage") or {}
@@ -426,7 +431,11 @@ class LiveSession(RealtimeSession):
         try:
             await ws.send(json.dumps({"type": "response.item.create", "item": {
                 "type": "function_call_output", "call_id": call_id, "output": str(result)}}))
-            await ws.send(json.dumps({"type": "response.create"}))
+            # Not response.create yet: the model can call several tools in one
+            # turn, and asking for a reply after the first output is rejected
+            # with function_call_outputs_required — the turn dies and Vibey
+            # just goes quiet. The reply is requested once the turn is done.
+            self._tool_reply_due = True
         except Exception as e:  # noqa: BLE001
             self.log(f"failed to return tool result: {e}")
 

@@ -24,7 +24,7 @@ synthesized soundtrack (`docs/demo/soundtrack.py`), and
 `node docs/demo/render.mjs` to re-render it.
 
 This repo is the whole robot: its eyes, voice, memory, body language, dashboard,
-and the three "brains" it can think with. It was split out of the
+and the voice "brains" it can think with. It was split out of the
 [`handsfree`](https://github.com/jackmielke/handsfree) gesture-OS repo, where it
 started life; the only remaining tie is an optional gesture bridge that reads
 handsfree's motion stream over HTTP (see `reachy_bridge.py`).
@@ -39,10 +39,12 @@ a real terminal's mic permission).
 |------|---------|--------------|
 | 8770 | `reachy_viewer.py`   | **Dashboard** — camera, chat, face gallery, controls |
 | 8771 | `reachy_camera.py`   | Robot camera → MJPEG bridge (SDK venv) |
-| 8772 | `reachy_chat.py`     | **The mind** — hears, thinks, speaks; 3 brains |
+| 8772 | `reachy_chat.py`     | **The mind** — hears, thinks, speaks; picks the voice brain |
 | 8773 | `reachy_memory.py`   | Face recognition + greetings + journal (SDK venv) |
 | 8774 | `reachy_vibeverse.py`| Vibey's avatar in the VibeVerse 3D world |
-| 8775 | `reachy_robot_mic.py`| Robot's own mic → PCM stream (SDK venv) |
+| 8775 | `reachy_robot_mic.py`| Robot's mic → PCM stream, and replies streamed to its speaker (SDK venv) |
+| 8776 | `reachy_gestures.py` | Hand gestures from the camera → body (`.venv-gestures`) |
+| 8778 | `reachy_dj.py`       | DJ mode: local tracks, live tempo, bobs to the beat |
 | —    | `reachy_telegram.py` | Text Vibey from anywhere |
 | —    | `reachy_alarm.py`    | Wake-up shows (7am song + dance) |
 | —    | `reachy_watchdog.py` | Restarts any dead service, pings Telegram |
@@ -55,14 +57,40 @@ with an uncertainty band; sensitive-topic and health inference are filtered in
 code, and saving to Supabase needs both `VIBE_LOG=1` and a spoken yes. Its
 docstring has the schema and the privacy notes).
 
-## The three brains
+## The voice brains
 
-Switch on the dashboard or by voice; the antennas change posture to show which:
+Pick one from the iOS app's Brain pop-up (tap the brain pill on Home), the
+dashboard, or `/brain` on Telegram:
 
-- **Claude CLI** (default) — thoughtful, `claude-sonnet-5` via the `claude` CLI.
-- **⚡ Fast** — ElevenLabs Conversational AI (STT+LLM+TTS in one realtime call).
-- **🎮 Vibe** — an OpenClaw agent whose workspace is *this repo*, so it can
-  improve the robot's own code mid-conversation.
+- **Basic** — Realtime 2.1 with nothing extra: no tools, memory or nudges. Just
+  talks, and can look through the camera.
+- **Realtime 2.1** — one OpenAI model hears, thinks and speaks, with every tool
+  (body, camera, DJ, Spotify, memory, coding jobs).
+- **GPT-Live 1** — OpenAI's voice layer in front of a gpt-5.5 backend.
+- **Local** — everything on the Mac, nothing in the cloud: faster-whisper →
+  Ollama (`qwen3:4b-instruct`) → Piper voice. Free, private, works offline
+  (`reachy_local.py`; needs `ollama pull qwen3:4b-instruct` and the Piper voice
+  in `models/piper/`).
+
+Replies stream to the speaker as they arrive. Every session is told the time of
+day. Texts sent while Vibey is awake join the same conversation: answered by
+text, and said out loud only if Vibey decides the room should hear it
+(`say_aloud`).
+
+## Day-to-day
+
+- **Stages** — 1 robot alone · 2 + Mac (no cloud, no spend) · 3 + cloud.
+- **Camera switch** — `/camera off` (or the app) closes the video session, which
+  also frees the robot's CPU and smooths its motion.
+- **Budget** — crossing `VIBEY_DAILY_BUDGET` sends a loud Telegram warning and
+  keeps running (`VIBEY_BUDGET_HARD=1` restores sleep-and-refuse). Tap the
+  "$ today" pill in the app for the breakdown.
+- **Asleep is idle** — face memory and gestures pause while Vibey sleeps, and the
+  wake listener throttles itself when a TV is talking.
+- **Spotify** — Vibey drives the Mac's Spotify app; searching by name needs
+  `SPOTIFY_CLIENT_ID`/`SPOTIFY_CLIENT_SECRET`.
+- **iOS app** — `ios/Vibey` (`./build.sh` installs on a paired iPhone): live
+  camera, chat, soundboard, friend profiles, controls, spend.
 
 ## Setup
 

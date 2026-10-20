@@ -36,6 +36,8 @@ final class Store: ObservableObject {
 
     /// Privacy is assumed ON until the Mac says otherwise: no frames on a guess.
     var privacy: Bool { state?.privacy ?? true }
+    /// The hard switch: off means no video session at all.
+    var cameraOn: Bool { state?.camera ?? true }
 
     var api: VibeyAPI { VibeyAPI(host: host.trimmingCharacters(in: .whitespaces),
                                  token: token.trimmingCharacters(in: .whitespacesAndNewlines)) }

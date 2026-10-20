@@ -204,10 +204,42 @@ def _small_loop():
                 _frame_lock.notify_all()
 
 
+def _cam_off() -> bool:
+    try:
+        import reachy_privacy
+        return not reachy_privacy.camera_on()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _hang_up(mini) -> None:
+    """Close the WebRTC session so the robot stops sending video."""
+    global _connected, _latest_jpeg
+    _connected = False
+    _mini[0] = None
+    _sinks.clear()
+    with _frame_lock:
+        _latest_jpeg = None
+    try:
+        mini.__exit__(None, None, None)
+    except Exception as e:  # noqa: BLE001
+        print(f"[camera] hang-up: {e}", flush=True)
+    print("[camera] camera switched off — session closed", flush=True)
+
+
 def _capture_loop():
     """Connect (with retry) and continuously publish the newest JPEG frame."""
     global _latest_jpeg, _frame_seq, _connected, _frame_at, _small_jpeg, _small_seq
     while True:
+        # Camera off: don't hold a session at all. Privacy blocking frames
+        # while still streaming keeps the robot recording and encoding video
+        # the whole time — eyes "closed" in software only, and over a core of
+        # the robot's CPU spent on it.
+        if _cam_off():
+            _connected = False
+            print("[camera] switched off — not connected", flush=True)
+            while _cam_off():
+                time.sleep(1)
         try:
             print(f"[camera] connecting to {REACHY_HOST} …", flush=True)
             _sinks.clear()
@@ -216,7 +248,13 @@ def _capture_loop():
             _connected = True
             print("[camera] connected — streaming", flush=True)
             last_frame = time.time()
+            checked = time.time()
             while True:
+                if time.time() - checked > 1.0:
+                    checked = time.time()
+                    if _cam_off():
+                        _hang_up(mini)
+                        break
                 jpg = _pull("full")
                 if not jpg:
                     # Wait STALL_AFTER_S of real silence before tearing the
