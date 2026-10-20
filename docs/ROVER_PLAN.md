@@ -20,6 +20,11 @@ driven by `reachy_rover.py`. Vibey's voice brain gets a `drive` tool whenever
 ## Phase 3: Vibey rides on top
 - Build a flat, low mount with a wide base; strap Vibey down. Check it stays
   upright at "fast" on a gentle stop before trusting it.
+- Heads up: Vibey (about 1.5 kg) is nearly double the rover's rated 0.8 kg
+  payload, and the wheels sit only about 11 cm apart front to back. Add
+  anti-tip ball casters front and back, a few mm off the floor.
+- `drive` ramps speed up and down over 0.5 s when riding, so stops don't
+  pitch Vibey forward. Keep head pitch small while moving.
 - Power: Vibey's own battery (Reachy Mini wireless) or a USB-C pack.
 - Set `ROVER_RIDING=1` (slower speeds, "my wheels" wording).
 

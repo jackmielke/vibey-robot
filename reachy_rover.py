@@ -67,6 +67,11 @@ SPEEDS = ({"slow": 0.12, "medium": 0.2, "fast": 0.3} if RIDING
           else {"slow": 0.15, "medium": 0.25, "fast": 0.4})
 MAX_SECONDS = 4.0
 RESEND_EVERY = 0.4
+# Soft start and stop. Jumping straight to full speed (or to zero) is what
+# tips a top-heavy load; ramping over half a second keeps braking around
+# 1 m/s^2 instead of several (tipping starts around 4 with Vibey on top).
+RAMP_SECONDS = 0.5 if RIDING else 0.2
+RAMP_TICK = 0.1
 
 # (left, right) multipliers for each action.
 ACTIONS = {
@@ -91,6 +96,10 @@ def _send(cmd: dict, url: str | None = None, timeout: float = 2.0) -> str:
 
 def stop() -> str:
     _cancel.set()
+    # Let a running move ease down to zero first (it holds the lock while it
+    # ramps), then send zeros anyway in case nothing was moving.
+    if _lock.acquire(timeout=RAMP_SECONDS + 1.0):
+        _lock.release()
     try:
         _send({"T": 1, "L": 0, "R": 0})
         return "stopped"
@@ -109,20 +118,37 @@ def drive(action: str, seconds: float = 1.0, speed: str = "medium") -> str:
         return "my wheels aren't connected yet"
     p = SPEEDS.get(speed, SPEEDS["medium"])
     lm, rm = ACTIONS[action]
-    cmd = {"T": 1, "L": round(lm * p, 3), "R": round(rm * p, 3)}
+    cmd = {"T": 1, "L": lm * p, "R": rm * p}
     seconds = max(0.2, min(float(seconds or 1.0), MAX_SECONDS))
     _cancel.set()                      # interrupt any move in flight
+    def at(level: float) -> dict:
+        return {"T": 1, "L": round(cmd["L"] * level, 3), "R": round(cmd["R"] * level, 3)}
+
     with _lock:
         _cancel.clear()
-        end = time.time() + seconds
+        start = time.time()
+        end = start + seconds
+        level = 0.0
         try:
             while time.time() < end and not _cancel.is_set():
-                _send(cmd)
-                _cancel.wait(min(RESEND_EVERY, max(0.0, end - time.time())))
+                now = time.time()
+                # Trapezoid: ramp up, cruise, ramp down so the move ends gently.
+                level = max(0.0, min(1.0, (now - start + RAMP_TICK) / RAMP_SECONDS,
+                                     (end - now) / RAMP_SECONDS))
+                _send(at(level))
+                tick = RAMP_TICK
+                if level >= 1.0:   # cruising: resend slowly, but wake for the ramp down
+                    tick = max(RAMP_TICK, min(RESEND_EVERY, end - RAMP_SECONDS - now))
+                _cancel.wait(min(tick, max(0.0, end - time.time())))
         except Exception as e:  # noqa: BLE001
             return f"my wheels didn't answer: {e}"
         finally:
             try:
+                # Cut short by stop or a new move: ease down from where we are.
+                while level > 0.05:
+                    level = max(0.0, level - RAMP_TICK / RAMP_SECONDS)
+                    _send(at(level))
+                    time.sleep(RAMP_TICK)
                 _send({"T": 1, "L": 0, "R": 0})
             except Exception:  # noqa: BLE001
                 pass
