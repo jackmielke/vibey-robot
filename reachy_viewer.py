@@ -268,6 +268,7 @@ def memory_layers() -> dict:
 def _turn(on: bool) -> None:
     try:
         if on:
+            was_off = bool((_get(f"{CHAT_URL}/state", timeout=4.0) or {}).get("off"))
             _post(f"{CHAT_URL}/off", {"off": False}, timeout=10.0)
             # Un-mute and un-pause only. The body is the chat service's job:
             # /wake there does motors, volume, the wake pose and tracking, in the
@@ -276,10 +277,20 @@ def _turn(on: bool) -> None:
             ASLEEP["on"] = False
             _post(f"{CHAT_URL}/mute", {"muted": False})
             _post(f"{MEM_URL}/pause", {"paused": False})
-            time.sleep(1.0)
-            st = _get(f"{CHAT_URL}/state", timeout=4.0) or {}
-            if st.get("asleep", True):
-                _post(f"{CHAT_URL}/wake", {}, timeout=40.0)
+            # Switching on from OFF runs the chat service's power-on steps by
+            # itself, so a /wake on top would start a second run. Either way the
+            # page shows power_progress from /chatstate, and the button stays
+            # busy until the steps finish or one fails.
+            if not was_off:
+                st = _get(f"{CHAT_URL}/state", timeout=4.0) or {}
+                if st.get("asleep", True):
+                    _post(f"{CHAT_URL}/wake", {}, timeout=40.0)
+            time.sleep(0.6)
+            for _ in range(90):
+                pp = (_get(f"{CHAT_URL}/state", timeout=4.0) or {}).get("power_progress") or {}
+                if pp.get("done") or not pp:
+                    break
+                time.sleep(0.5)
         else:
             _post(f"{CHAT_URL}/sleep", {}, timeout=30.0)
             _set_power(True)
@@ -546,6 +557,14 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   #offbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   #offbar.is-off #offbtn{border-color:var(--good);background:var(--good)}
   #offbar.is-off .offbar-txt strong{color:var(--bad)}
+  /* Turning on, step by step, so a slow wake and a robot that is not there
+     stop looking the same. */
+  #powerprog{max-width:900px;margin:0 auto 6px;padding:10px 18px;border-radius:12px;
+    border:1px solid var(--line,#8884);font-size:.9rem;line-height:1.6}
+  #powerprog[hidden]{display:none}
+  #powerprog .st-doing{color:var(--accent)} #powerprog .st-ok{color:var(--good)}
+  #powerprog .st-fail{color:var(--bad);font-weight:700} #powerprog .st-todo{color:var(--dim)}
+  #powerprog .why{margin-top:6px;color:var(--bad);font-weight:600}
   /* Mimic, embedded. */
   .panel-hd{display:flex;align-items:center;justify-content:space-between;gap:12px}
   .ghostbtn{cursor:pointer;border-radius:8px;padding:6px 14px;font-size:.85rem;
@@ -856,6 +875,7 @@ PAGE = """<!doctype html><html><head><meta charset=utf-8>
   </div>
   <button id=offbtn type=button>Turn OFF</button>
 </div>
+<div id=powerprog hidden></div>
 <!-- One row per thing that can be on or off, each named in plain words.
      These were previously five unlabelled emoji buttons, which meant knowing
      what the robot was currently doing required remembering what 🅾️ meant. -->
@@ -1396,6 +1416,20 @@ function paintOff(off){
   // Waking is refused while off, so don't offer a button that will just fail.
   ['powerbtn','alarmbtn'].forEach(id=>{const b=$(id); if(b) b.disabled=vcOff;});
 }
+// Steps of the last power-on, from the chat service. Shown while running, kept
+// up for two minutes when one failed (the reason is the whole point), and for
+// a few seconds after it worked.
+const STEP_ICON={todo:'○',doing:'…',ok:'✓',fail:'✕'};
+function paintProgress(pp){
+  const box=$('powerprog'); if(!box) return;
+  const age=pp?Date.now()/1000-pp.at:1e9;
+  if(!pp||(pp.done&&!pp.error&&age>8)||(pp.error&&age>120)){ box.hidden=true; return; }
+  const esc=t=>String(t).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));
+  box.hidden=false;
+  box.innerHTML='<strong>'+(pp.error?'Turning on stopped':pp.done?'Vibey is on':'Turning on…')+'</strong><br>'
+    +pp.steps.map(s=>`<span class=st-${s.state}>${STEP_ICON[s.state]||'○'} ${esc(s.label)}</span>`).join(' &nbsp; ')
+    +(pp.error?`<div class=why>${esc(pp.error)}</div>`:'');
+}
 $('offbtn').onclick=async()=>{
   if($('offbtn').disabled) return;
   $('offbtn').disabled=true;
@@ -1514,6 +1548,7 @@ async function chatTick(){
     // The off state survives restarts and can be set from `vibey off`, so the
     // bar follows the service rather than only this tab's last click.
     if(d.off!==undefined&&d.off!==vcOff) paintOff(d.off);
+    paintProgress(d.power_progress);
     paintSwitches(d);
     $('openaibtn').disabled = d.openai_available===false;
     $('openaibtn').title = d.openai_available===false

@@ -829,6 +829,121 @@ def _robot_reachable(timeout: float = 3.0) -> bool:
         return False
 
 
+# Turning on, step by step. Every power-on route (the phone, both dashboards,
+# `vibey on`) ends up in _power_up or a manual wake, and each of them used to
+# show a spinner that ended with nothing: the robot off the network looked
+# exactly like a slow wake. Now each step is reported in /state as
+# `power_progress`, and the first one that fails says why in plain words.
+POWER_STEPS = ["Reach the robot", "Start the motors", "Wake up", "Connect the voice"]
+POWER = {"id": 0, "steps": [], "error": None, "done": False, "at": 0.0}
+
+
+def _power_begin() -> None:
+    POWER.update(id=POWER["id"] + 1, error=None, done=False, at=time.time(),
+                 steps=[{"label": l, "state": "todo"} for l in POWER_STEPS])
+
+
+def _power_step(i: int, state: str) -> None:
+    if POWER["steps"] and 0 <= i < len(POWER["steps"]):
+        POWER["steps"][i]["state"] = state
+    if state == "ok" and i == len(POWER_STEPS) - 1:
+        POWER["done"] = True
+
+
+def _power_fail(i: int, why: str) -> None:
+    _power_step(i, "fail")
+    POWER.update(error=why, done=True)
+    reachy_events.emit("system", why, icon="🔌")
+    print(f"[power] {why}", flush=True)
+
+
+def _unreachable_why() -> str:
+    """The same sentence `vibey status` gives, so the phone and the terminal
+    agree on what to do."""
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
+    host = url.split("//")[-1].split(":")[0]
+    why = f"Can't reach the robot at {host}. Is it powered on and on Wi-Fi?"
+    try:
+        heal = json.load(open("/tmp/vibey_heal.json"))
+        if heal.get("last_seen"):
+            s = time.time() - heal["last_seen"]
+            ago = f"{s / 60:.0f} min" if s < 5400 else f"{s / 3600:.0f} h" if s < 172800 \
+                else f"{s / 86400:.0f} days"
+            why += f" Last seen {ago} ago."
+        if heal.get("guard"):
+            why += " It browned out last time: reseat the charger cable, then power-cycle it."
+    except Exception:  # noqa: BLE001
+        pass
+    return why
+
+
+def _power_watch_voice(pid: int) -> None:
+    """The body is up; wait for the conversation to actually connect."""
+    for _ in range(50):
+        if POWER["id"] != pid:
+            return
+        if STATE["asleep"]:
+            _power_fail(3, "Went back to sleep before the voice connected.")
+            return
+        if STATE["mode"] == "openai":
+            _power_step(3, "ok")
+            return
+        time.sleep(0.5)
+    _power_fail(3, "Awake, but the voice didn't connect. Run `vibey logs` to see why.")
+
+
+def _power_on_sequence(after_motors=None) -> bool:
+    """Steps 1 to 3 run here, step 4 on a watcher. False means it stopped."""
+    _power_begin()
+    _power_step(0, "doing")
+    if not _robot_reachable():
+        _power_fail(0, _unreachable_why())
+        return False
+    _power_step(0, "ok")
+    _power_step(1, "doing")
+    # Checked, not assumed: right after the robot rejoins Wi-Fi the first call
+    # often gets "connection reset", and a wake on limp motors is the robot
+    # that is "on" but lies face-down.
+    for _ in range(4):
+        _robot_post("/api/motors/set_mode/enabled", 10)
+        if _robot_motors() == "enabled":
+            break
+        time.sleep(1.0)
+    else:
+        _power_fail(1, "The robot answered, but its motors won't turn on. Try `vibey fix`.")
+        return False
+    if after_motors:
+        after_motors()
+    _power_step(1, "ok")
+    if STAGE["n"] < 3:
+        # Stages 1 and 2 have no conversation by design; motors on is "on".
+        _power_step(2, "ok")
+        _power_step(3, "ok")
+        return True
+    _power_step(2, "doing")
+    WAKE_REFUSED["why"] = None
+    _wake_now("manual")
+    if STATE["asleep"]:
+        _power_fail(2, WAKE_REFUSED["why"] or "Didn't wake up. Run `vibey logs` to see why.")
+        return False
+    _power_step(2, "ok")
+    _power_step(3, "doing")
+    threading.Thread(target=_power_watch_voice, args=(POWER["id"],), daemon=True).start()
+    return True
+
+
+WAKE_REFUSED: dict = {"why": None}
+
+
+def _robot_motors() -> str | None:
+    url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{url}/api/motors/status", timeout=4) as r:
+            return json.loads(r.read()).get("mode")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _robot_post(path: str, timeout: float = 20.0) -> None:
     try:
         url = os.environ.get("REACHY_URL", "http://192.168.12.240:8000").rstrip("/")
@@ -1089,27 +1204,22 @@ def _power_up() -> None:
 
     Motors first, because everything downstream needs them to move.
     """
-    if not _robot_reachable():
-        print("[power] ON, but the robot body is unreachable — leaving it asleep",
-              flush=True)
-        reachy_events.emit("system", "switched on, but can't reach the body", icon="🔌")
-        return
-    _robot_post("/api/motors/set_mode/enabled", 10)
-    if SWITCHES["tracking"]:
-        _apply_tracking(True)
-    try:
-        import urllib.request as _u
-        _u.urlopen(_u.Request(f"{MEM_URL}/pause", data=b'{"paused": false}',
-                              method="POST",
-                              headers={"Content-Type": "application/json"}),
-                   timeout=5).read()
-    except Exception:  # noqa: BLE001
-        pass
+    def _rest_of_body():
+        if SWITCHES["tracking"]:
+            _apply_tracking(True)
+        try:
+            import urllib.request as _u
+            _u.urlopen(_u.Request(f"{MEM_URL}/pause", data=b'{"paused": false}',
+                                  method="POST",
+                                  headers={"Content-Type": "application/json"}),
+                       timeout=5).read()
+        except Exception:  # noqa: BLE001
+            pass
     # Switching on means the body comes up. It used to stay face-down unless
     # it had been awake when switched off, which from the phone looked like
     # "on" doing nothing.
     WAS_AWAKE["on"] = False
-    _wake_now("manual")
+    _power_on_sequence(after_motors=_rest_of_body)
 
 
 def _try_power_voice(text: str) -> bool:
@@ -1570,6 +1680,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             cap = reachy_denoise.capture_status()
             self._json({**STATE, "voice_brain": STATE.get("voice_brain") or voice_brain(),
                         "off": OFF["on"], "scribe": _scribe_status(),
+                        "power_progress": POWER if POWER["steps"] else None,
                         "stage": STAGE["n"],
                        "switches": dict(SWITCHES),
                        "ears_closed": EARS_CLOSED["on"],
@@ -1982,13 +2093,13 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     self._json({"error": "Vibey is OFF — switch it on first",
                                 "off": True}, 409)
                     return
-                if not _robot_reachable():
-                    self._json({"error": "can't reach the robot body — battery "
-                                "dead or off the network, so I'm not starting "
-                                "voice", "unreachable": True}, 503)
+                if not STATE["asleep"]:
+                    _wake_now("manual")       # already awake: re-arms a limp body
+                elif not _power_on_sequence():
+                    self._json({"error": POWER["error"], "unreachable": POWER["steps"][0]["state"] == "fail",
+                                "power_progress": POWER}, 503)
                     return
-                _wake_now("manual")
-                self._json({"ok": True, "asleep": STATE["asleep"]})
+                self._json({"ok": True, "asleep": STATE["asleep"], "power_progress": POWER})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/switch"):
@@ -2932,8 +3043,11 @@ def _wake_now(reason: str = "wake") -> None:
                 play_emote("wave", sound=True)
             except Exception:  # noqa: BLE001
                 pass
+        WAKE_REFUSED["why"] = (f"On stage {STAGE['n']} the voice is off by design. "
+                               "Pick stage 3 to talk to it.")
         return
     if not _robot_reachable():
+        WAKE_REFUSED["why"] = _unreachable_why()
         print(f"[chat] ignored {reason} wake — robot body unreachable", flush=True)
         reachy_events.emit("system", "can't reach the robot body — not waking", icon="🔌")
         return
@@ -2965,6 +3079,7 @@ def _wake_now(reason: str = "wake") -> None:
         return
     print(f"[chat] waking ({reason})", flush=True)
     if OFF["on"]:
+        WAKE_REFUSED["why"] = "Vibey is switched off."
         print(f"[chat] ignored {reason} wake — Vibey is OFF", flush=True)
         return
     if reason == "clap" and not SWITCHES["claps"]:
@@ -2975,6 +3090,7 @@ def _wake_now(reason: str = "wake") -> None:
         return
 
     if _budget_blocked():
+        WAKE_REFUSED["why"] = "Out of today's OpenAI budget. Send /budget raise on Telegram to override."
         print(f"[chat] ignored {reason} wake — out of OpenAI budget", flush=True)
         reachy_events.emit("system", "not waking: out of budget (/budget raise to override)",
                            icon="💸")

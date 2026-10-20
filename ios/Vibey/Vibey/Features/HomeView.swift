@@ -53,6 +53,7 @@ struct HomeView: View {
                     hero
                     if cost?.budget?.level == "over" { budgetBanner }
                     primaryButton
+                    if let pp = visibleProgress { powerProgress(pp) }
                     CameraCard()
                     privacyCard
                     volumeCard
@@ -174,6 +175,45 @@ struct HomeView: View {
             }
             .buttonStyle(PillButtonStyle(fill: .white.opacity(0.85)))
         }
+    }
+
+    /// Live while turning on; a failure stays up two minutes, a success a few seconds.
+    private var visibleProgress: PowerProgress? {
+        guard let pp = s?.power_progress else { return nil }
+        let age = Date().timeIntervalSince1970 - pp.at
+        if pp.error != nil { return age < 120 ? pp : nil }
+        return (!pp.done || age < 8) ? pp : nil
+    }
+
+    private func powerProgress(_ pp: PowerProgress) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(pp.error != nil ? "Turning on stopped" : pp.done ? "Vibey is on" : "Turning on…")
+                .font(.system(.headline, design: .rounded))
+            ForEach(Array(pp.steps.enumerated()), id: \.offset) { _, step in
+                HStack(spacing: 10) {
+                    Group {
+                        switch step.state {
+                        case "ok": Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        case "fail": Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                        case "doing": ProgressView().controlSize(.small)
+                        default: Image(systemName: "circle").foregroundStyle(Palette.inkDim)
+                        }
+                    }
+                    .frame(width: 20)
+                    Text(step.label)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(step.state == "todo" ? Palette.inkDim : Palette.ink)
+                }
+            }
+            if let why = pp.error {
+                Text(why)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .shell()
     }
 
     private var privacyCard: some View {

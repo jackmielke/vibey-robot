@@ -52,6 +52,18 @@ struct VibeyState: Decodable {
     var switches: [String: Bool]?
     var frontdesk: FrontDesk?
     var transcript: [Turn]?
+    var power_progress: PowerProgress?
+}
+
+/// The last power-on, step by step, so a robot that isn't there stops looking
+/// like a slow wake.
+struct PowerProgress: Decodable, Equatable {
+    struct Step: Decodable, Equatable { var label: String; var state: String }
+    var id: Int
+    var steps: [Step]
+    var error: String?
+    var done: Bool
+    var at: Double
 }
 
 struct FrontDesk: Decodable {
