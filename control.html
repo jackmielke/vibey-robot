@@ -95,6 +95,15 @@
   .pad button.held { background:var(--on); color:#052; border-color:var(--on) }
   .pad button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-size:13px; font-weight:700 }
   .pad:has(button:disabled) { opacity:.4 }
+  .stickwrap { display:flex; align-items:center; justify-content:center; gap:14px; margin:6px 0 10px }
+  .stick { position:relative; width:180px; height:180px; border-radius:50%; background:var(--field); border:1px solid var(--line); touch-action:none; cursor:grab; flex:none }
+  .stick::before,.stick::after { content:""; position:absolute; background:var(--line) }
+  .stick::before { left:50%; top:12px; bottom:12px; width:1px } .stick::after { top:50%; left:12px; right:12px; height:1px }
+  .stick .knob { position:absolute; left:50%; top:50%; width:64px; height:64px; margin:-32px 0 0 -32px; border-radius:50%; background:var(--off); border:2px solid var(--line); z-index:1; pointer-events:none }
+  .stick.held { cursor:grabbing } .stick.held .knob { background:var(--on); border-color:var(--on) }
+  .stick.dis { opacity:.4; cursor:default }
+  .stickwrap .stop { width:64px; height:56px; border-radius:12px; border:0; background:var(--bad); color:#fff; font-weight:700; cursor:pointer }
+  [hidden] { display:none !important }
   /* Group headings inside a panel: which sense a row belongs to, so "listening"
      and "take notes" can't read as two names for the same thing. */
   .grp { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim);
@@ -214,6 +223,11 @@
 
   <div class=panel id=p-wheels>
     <h2><span>Wheels</span><span class=sub id=wheelsub>checking…</span></h2>
+    <div class=row style="padding-top:0"><div class=l>Controls<small id=padhint>hold a button or WASD / arrow keys</small></div><div class=seg id=wmode style="width:160px"><button data-m=pad>Pad</button><button data-m=stick>Joystick</button></div></div>
+    <div class=stickwrap id=stickwrap hidden>
+      <div class=stick id=stick><div class=knob id=knob></div></div>
+      <button class=stop id=stickstop title="Stop (space)">STOP</button>
+    </div>
     <div class=pad id=pad>
       <button data-a=left title="Arc left (A + W)">↖</button>
       <button data-a=forward title="Forward (W or ↑)">▲</button>
@@ -225,7 +239,7 @@
       <button data-a=back title="Back (S or ↓)">▼</button>
       <span></span>
     </div>
-    <div class=row><div class=l>Speed<small>hold a button or arrow key to drive · let go to stop</small></div><div class=seg id=wspeed style="width:200px"><button data-s=slow>Slow</button><button data-s=medium>Med</button><button data-s=fast>Fast</button></div></div>
+    <div class=row><div class=l>Top speed<small>let go of anything to stop</small></div><div class=seg id=wspeed style="width:200px"><button data-s=slow>Slow</button><button data-s=medium>Med</button><button data-s=fast>Fast</button></div></div>
   </div>
 
   <div class=panel id=p-brain>
@@ -484,14 +498,53 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   const typing=()=>{ const a=document.activeElement; return a&&(/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable); };
   addEventListener('keydown',e=>{ if(typing()||e.metaKey||e.ctrlKey||e.altKey||$('pad').querySelector(':disabled')) return;
     const k=e.key.toLowerCase();
-    if(k===' '&&act){ e.preventDefault(); keys.clear(); return halt(); }
+    if(k===' '&&(act||vec)){ e.preventDefault(); keys.clear(); if(vec){ vec=null; clearInterval(vtimer); vtimer=null; } return halt(); }
     if(!K[k]) return; e.preventDefault(); keys.add(K[k]); const a=fromKeys(); if(a) go(a); });
   addEventListener('keyup',e=>{ const k=K[e.key.toLowerCase()]; if(!k) return; keys.delete(k);
     const a=fromKeys(); if(a) go(a); else letGo(); });
   async function wheels(){ const r=await j('/rover'); const off=!r||!r.connected;
-    pad.querySelectorAll('button').forEach(b=>b.disabled=off&&b.id!=='padstop');
+    pad.querySelectorAll('button').forEach(b=>b.disabled=off&&b.id!=='padstop'); stick.classList.toggle('dis',off);
     $('wheelsub').textContent=!r?'chat service offline':!r.connected?'no rover set (ROVER_URL)':r.online===false?'rover not answering':
       (r.riding?'riding · ':'')+(r.volts?r.volts+' V':'connected'); }
+  // Joystick: drag anywhere in the circle. Up is forward, sideways steers,
+  // and the two blend like a game: each wheel = forward ± turn.
+  let mode='pad'; try{ mode=localStorage.getItem('vibey.wmode')||mode; }catch(_){}
+  const paintMode=()=>{ document.querySelectorAll('#wmode button').forEach(b=>b.classList.toggle('on',b.dataset.m===mode));
+    $('pad').hidden=mode!=='pad'; $('stickwrap').hidden=mode!=='stick';
+    $('padhint').textContent=mode==='pad'?'hold a button or WASD / arrow keys':'drag the knob · or plug in a game controller'; };
+  paintMode();
+  $('wmode').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; letGo(); mode=b.dataset.m; paintMode();
+    try{ localStorage.setItem('vibey.wmode',mode); }catch(_){} repack(); };
+  let vec=null, vtimer=null;
+  const mix=(x,y)=>{ const m=Math.hypot(x,y); if(m<0.12) return null;              // dead zone
+    let l=y+x, r=y-x; const k=Math.max(1,Math.abs(l),Math.abs(r)); return [l/k,r/k]; };
+  const sendVec=()=>{ if(vec) j('/rover',{left:+vec[0].toFixed(2),right:+vec[1].toFixed(2),speed}); };
+  const steer=(x,y)=>{ const v=mix(x,y);
+    if(!v){ if(vec){ vec=null; clearInterval(vtimer); vtimer=null; j('/rover/release',{}); } return; }
+    const fresh=!vec; vec=v; if(fresh){ sendVec(); vtimer=setInterval(sendVec,150); } };
+  const stick=$('stick'), knob=$('knob'); let sp=null;
+  const place=(dx,dy)=>{ knob.style.transform=`translate(${dx}px,${dy}px)`; };
+  const fromPtr=e=>{ const r=stick.getBoundingClientRect(), R=r.width/2-32;
+    let dx=e.clientX-r.left-r.width/2, dy=e.clientY-r.top-r.height/2; const m=Math.hypot(dx,dy);
+    if(m>R){ dx*=R/m; dy*=R/m; } place(dx,dy); steer(dx/R,-dy/R); };
+  stick.addEventListener('pointerdown',e=>{ if(stick.classList.contains('dis')) return; e.preventDefault(); sp=e.pointerId;
+    try{ stick.setPointerCapture(sp); }catch(_){} stick.classList.add('held'); fromPtr(e); });
+  stick.addEventListener('pointermove',e=>{ if(e.pointerId===sp) fromPtr(e); });
+  const stickUp=()=>{ if(sp===null) return; sp=null; stick.classList.remove('held'); place(0,0); steer(0,0); };
+  ['pointerup','pointercancel','lostpointercapture'].forEach(t=>stick.addEventListener(t,stickUp));
+  $('stickstop').onclick=()=>{ stickUp(); vec=null; clearInterval(vtimer); vtimer=null; halt(); };
+  addEventListener('blur',stickUp);
+  // Game controller (Xbox, PlayStation, Switch Pro over Bluetooth): left stick
+  // drives, B / circle stops. Browsers only report it after a button press.
+  let pad0=null;
+  addEventListener('gamepadconnected',e=>{ pad0=e.gamepad.index; $('wheelsub').textContent='🎮 controller ready'; padLoop(); });
+  addEventListener('gamepaddisconnected',()=>{ pad0=null; steer(0,0); });
+  function padLoop(){ if(pad0===null) return; const g=(navigator.getGamepads()||[])[pad0];
+    if(g&&!stick.classList.contains('dis')&&sp===null){
+      if(g.buttons[1]&&g.buttons[1].pressed){ if(vec){ vec=null; clearInterval(vtimer); vtimer=null; halt(); } }
+      else steer(g.axes[0]||0,-(g.axes[1]||0));
+      if(mode==='stick'){ const R=58; place((g.axes[0]||0)*R,(g.axes[1]||0)*R); } }
+    requestAnimationFrame(padLoop); }
   wheels(); setInterval(wheels,10000);
 })();
 

@@ -172,8 +172,21 @@ def hold(action: str, speed: str = "medium") -> str:
         return stop()
     if not ROVER_URL:
         return "my wheels aren't connected yet"
-    p = SPEEDS.get(speed, SPEEDS["medium"])
     lm, rm = ACTIONS[action]
+    return _set_target(lm, rm, speed)
+
+
+def hold_lr(left: float, right: float, speed: str = "medium") -> str:
+    """Joystick or gamepad: each wheel from -1 to 1 of the chosen speed.
+    Same keep-alive as hold(): call again within HOLD_TTL or it eases to a stop."""
+    if not ROVER_URL:
+        return "my wheels aren't connected yet"
+    clamp = lambda v: max(-1.0, min(1.0, float(v or 0)))
+    return _set_target(clamp(left), clamp(right), speed)
+
+
+def _set_target(lm: float, rm: float, speed: str) -> str:
+    p = SPEEDS.get(speed, SPEEDS["medium"])
     with _hold_mu:
         _hold["target"] = (lm * p, rm * p)
         _hold["until"] = time.time() + HOLD_TTL

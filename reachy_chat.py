@@ -1902,7 +1902,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/rover"):
-            # The app's arrow pad: /rover {"action","speed"} while held (each
+            # The app's arrow pad: /rover {"action","speed"} or joystick
+            # {"left","right","speed"} (-1..1 per wheel) while held (each
             # call keeps it going ~0.6 s), /rover/release on let go,
             # /rover/stop for the big stop button.
             try:
@@ -1914,6 +1915,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     result = reachy_rover.stop()
                 elif p == "/rover/release":
                     result = reachy_rover.release()
+                elif "left" in body and "right" in body:      # joystick
+                    result = reachy_rover.hold_lr(body["left"], body["right"],
+                                                  str(body.get("speed", "medium")))
                 else:
                     result = reachy_rover.hold(str(body.get("action", "stop")),
                                                str(body.get("speed", "medium")))
