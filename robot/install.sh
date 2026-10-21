@@ -34,7 +34,7 @@ echo "vibey install on $(hostname) ($(uname -m))"
 
 # --- sanity -----------------------------------------------------------------
 [[ "$(uname -m)" == "aarch64" ]] || warn "expected aarch64, got $(uname -m)"
-[[ -f "$APP/reachy_chat.py" ]] || { warn "no code at $APP; run robot/deploy.sh from the Mac first"; exit 1; }
+[[ -f "$APP/services/reachy_chat.py" ]] || { warn "no code at $APP; run robot/deploy.sh from the Mac first"; exit 1; }
 PY_OK=$(python3 -c 'import sys; print(int(sys.version_info >= (3, 11)))')
 [[ "$PY_OK" == 1 ]] || { warn "python3 >= 3.11 required, have $(python3 -V)"; exit 1; }
 say "python $(python3 -V 2>&1 | cut -d' ' -f2)"

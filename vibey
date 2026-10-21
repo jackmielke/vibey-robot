@@ -189,20 +189,20 @@ PYEOF
   rover)
     # The Wave Rover (reachy_rover.py): vibey rover find --save | status | forward 1 | stop
     shift
-    python3 reachy_rover.py "$@"
+    python3 services/reachy_rover.py "$@"
     ;;
   antenna)
     # Antennas only — never commands the head, so it is safe with the shell off.
     shift
-    python3 antenna_test.py "$@"
+    python3 tools/antenna_test.py "$@"
     ;;
   transcript)
     # Read straight off disk rather than through the chat service, so the
     # conversation is still readable when nothing is running.
     if [ "$2" = "days" ]; then
-      python3 reachy_transcript.py --days
+      python3 services/reachy_transcript.py --days
     else
-      python3 reachy_transcript.py "$2"
+      python3 services/reachy_transcript.py "$2"
     fi
     ;;
   wifi)
@@ -236,7 +236,7 @@ PYEOF
   *)
     ./start_wonder.sh || exit 1
     # start_wonder.sh may have found the robot somewhere new; follow it.
-    _new=$(python3 reachy_connect.py find --quick 2>/dev/null) && URL="$_new"
+    _new=$(python3 services/reachy_connect.py find --quick 2>/dev/null) && URL="$_new"
     wake
     open http://localhost:8770
     ;;

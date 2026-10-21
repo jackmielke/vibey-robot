@@ -15,7 +15,7 @@ Type=simple
 WorkingDirectory=%h/vibey/app
 EnvironmentFile=%h/vibey/app/robot/robot.env
 Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
-ExecStart=%h/vibey/bin/sdk-python -u reachy_memory.py
+ExecStart=%h/vibey/bin/sdk-python -u services/reachy_memory.py
 Restart=always
 RestartSec=5
 Nice=10

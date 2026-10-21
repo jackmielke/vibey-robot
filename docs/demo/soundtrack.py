@@ -15,8 +15,8 @@ import io
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-import reachy_emotes  # noqa: E402  (repo root: Vibey's real chirps)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'services'))
+import reachy_emotes  # noqa: E402  (services/: Vibey's real chirps)
 
 SR = 44100
 BPM = 120

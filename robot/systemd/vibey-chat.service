@@ -15,7 +15,7 @@ Type=simple
 WorkingDirectory=%h/vibey/app
 EnvironmentFile=%h/vibey/app/robot/robot.env
 Environment=VIBEY_MEMORIES_DIR=%h/vibey/memories
-ExecStart=%h/vibey/.venv/bin/python -u reachy_chat.py
+ExecStart=%h/vibey/.venv/bin/python -u services/reachy_chat.py
 Restart=always
 RestartSec=5
 Nice=10

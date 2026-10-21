@@ -37,8 +37,9 @@ handsfree's motion stream over HTTP (see `reachy_bridge.py`).
 ## The services
 
 Each is a small standalone program that talks to the others over HTTP on a fixed
-port. Boot them all with `./start_wonder.sh` (shell-launched — the chat mic needs
-a real terminal's mic permission).
+port, and all of them live in `services/`. Boot them all with
+`./start_wonder.sh` (shell-launched — the chat mic needs a real terminal's mic
+permission).
 
 | Port | Service | What it does |
 |------|---------|--------------|
@@ -163,13 +164,15 @@ Supabase edge function in `supabase/functions/`.
 
 ## Finding your way around
 
-The repo grew one feature at a time, so most of it is flat at the top level:
-
-- `reachy_*.py`: the services and the modules they share. The ones to read
-  first: `reachy_chat.py` (the mind), `reachy_openai_realtime.py` (the default
-  brain and its tools), `reachy_viewer.py` (dashboard server), `reachy_rover.py`.
-- `vibey_*.py`: small shared helpers (auth, safe file writes, a doctor script).
-- `control.html`: the dashboard UI.
+- `services/`: every service and the modules they share, plus `control.html`
+  (the dashboard UI). They import each other by plain name, so they all live
+  in this one folder. The ones to read first: `reachy_chat.py` (the mind),
+  `reachy_openai_realtime.py` (the default brain and its tools),
+  `reachy_viewer.py` (dashboard server), `reachy_rover.py`. Run any of them
+  from the repo root, e.g. `python3 services/reachy_voice.py "hello"`.
+- `start_wonder.sh`, `vibey`: start everything, and the everyday remote.
+- `tools/`: one-off scripts (antenna diagnosis, a face-data migration).
+- `tests/`: `python3 -m unittest discover -s tests`.
 - `mac/`, `ios/`: the native apps. `mimic/`: a separate browser face-mimic toy.
 - `robot/`: deploy scripts and systemd units for running on the robot itself.
 - `supabase/`: the Telegram webhook function and its one migration.

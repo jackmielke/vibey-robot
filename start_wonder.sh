@@ -5,20 +5,20 @@
 #   ./start_wonder.sh stop     stop everything
 #
 # Services:
-#   :8771  reachy_camera.py  — robot camera → MJPEG   (SDK venv)
-#   :8770  reachy_viewer.py  — dashboard              (system python)
-#   :8772  reachy_chat.py    — voice-to-voice loop    (.venv, whisper)
-#   :8773  reachy_memory.py  — face recognition       (SDK venv)
+#   :8771  services/reachy_camera.py  — robot camera → MJPEG   (SDK venv)
+#   :8770  services/reachy_viewer.py  — dashboard              (system python)
+#   :8772  services/reachy_chat.py    — voice-to-voice loop    (.venv, whisper)
+#   :8773  services/reachy_memory.py  — face recognition       (SDK venv)
 
 cd "$(dirname "$0")"
 
 # Load .env and export everything in it (REACHY_URL, keys, …)
 set -a; source .env 2>/dev/null; set +a
-# reachy_camera.py takes a bare host, derive it from REACHY_URL
+# services/reachy_camera.py takes a bare host, derive it from REACHY_URL
 export REACHY_HOST=$(echo "${REACHY_URL:-http://reachy-mini.local:8000}" | sed -E 's|https?://([^:/]+).*|\1|')
 
 # Discovery: the robot's DHCP lease moves, mDNS has died on its own, and after
-# a brownout it can come back on its own hotspot. reachy_connect.py find tries,
+# a brownout it can come back on its own hotspot. services/reachy_connect.py find tries,
 # in order: what .env says (resolving a .local name), mDNS, the hotspot
 # 10.42.0.1, then a parallel sweep of this Mac's subnet. It rewrites .env only
 # when what .env says no longer leads to the robot. Every service inherits the
@@ -26,7 +26,7 @@ export REACHY_HOST=$(echo "${REACHY_URL:-http://reachy-mini.local:8000}" | sed -
 # with a .local name, and a per-request mDNS lookup makes everything sluggish.
 if [[ "$1" != "stop" ]]; then
   echo "looking for the robot…"
-  if _found=$(python3 reachy_connect.py find --write --current "$REACHY_URL"); then
+  if _found=$(python3 services/reachy_connect.py find --write --current "$REACHY_URL"); then
     export REACHY_URL="$_found"
     export REACHY_HOST=$(echo "$_found" | sed -E 's|https?://([^:/]+).*|\1|')
   fi
@@ -88,27 +88,27 @@ here chat   || export CHAT_URL="http://${REACHY_HOST}:8772"
 here camera || export CAM_URL="http://${REACHY_HOST}:8771"
 here memory || export MEM_URL="http://${REACHY_HOST}:8773"
 
-here camera    && reachy_env/bin/python3 reachy_camera.py  > /tmp/reachy_camera.log 2>&1 &
-here viewer    && python3                reachy_viewer.py  > /tmp/reachy_viewer.log 2>&1 &
+here camera    && reachy_env/bin/python3 services/reachy_camera.py  > /tmp/reachy_camera.log 2>&1 &
+here viewer    && python3                services/reachy_viewer.py  > /tmp/reachy_viewer.log 2>&1 &
 # arch -arm64: .venv's python is universal, and a Rosetta parent (the Intel
 # system python running the watchdog/healer) otherwise picks its x86 slice,
 # which can't import the arm64 numpy.
-here chat      && arch -arm64 .venv/bin/python3 reachy_chat.py >> /tmp/reachy_chat.log 2>&1 &
-here robot_mic && reachy_env/bin/python3 reachy_robot_mic.py > /tmp/reachy_robot_mic.log 2>&1 &
-here memory    && reachy_env/bin/python3 reachy_memory.py  > /tmp/reachy_memory.log 2>&1 &
-python3                reachy_vibeverse.py > /tmp/vibeverse.log     2>&1 &
-here telegram  && python3                reachy_telegram.py  > /tmp/telegram.log      2>&1 &
+here chat      && arch -arm64 .venv/bin/python3 services/reachy_chat.py >> /tmp/reachy_chat.log 2>&1 &
+here robot_mic && reachy_env/bin/python3 services/reachy_robot_mic.py > /tmp/reachy_robot_mic.log 2>&1 &
+here memory    && reachy_env/bin/python3 services/reachy_memory.py  > /tmp/reachy_memory.log 2>&1 &
+python3                services/reachy_vibeverse.py > /tmp/vibeverse.log     2>&1 &
+here telegram  && python3                services/reachy_telegram.py  > /tmp/telegram.log      2>&1 &
 # Gesture bridge mirrors your handsfree session onto the robot's body —
 # fun for parties, twitchy as an always-on behavior. Opt in with BRIDGE=1.
-[[ "$BRIDGE" == "1" ]] && NO_WAKE=1 python3 reachy_bridge.py > /tmp/reachy_bridge.log 2>&1 &
-here alarm     && python3                reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
-reachy_env/bin/python3 reachy_dj.py        > /tmp/reachy_dj.log     2>&1 &   # music + beat-synced dancing
+[[ "$BRIDGE" == "1" ]] && NO_WAKE=1 python3 services/reachy_bridge.py > /tmp/reachy_bridge.log 2>&1 &
+here alarm     && python3                services/reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
+reachy_env/bin/python3 services/reachy_dj.py        > /tmp/reachy_dj.log     2>&1 &   # music + beat-synced dancing
 # Gesture watcher: waves back at you. Its own venv on purpose — mediapipe pins
 # numpy<2 and the robot SDK needs numpy>=2.2.5, so they cannot share one.
 [[ -x .venv-gestures/bin/python3 ]] && \
-  .venv-gestures/bin/python3 reachy_gestures.py > /tmp/reachy_gestures.log 2>&1 &
-python3                reachy_watchdog.py  > /tmp/reachy_watchdog.log 2>&1 &   # restarts anything that dies
-python3                reachy_heal.py      >> /tmp/reachy_heal.log    2>&1 &   # robot drops, returns, moves
+  .venv-gestures/bin/python3 services/reachy_gestures.py > /tmp/reachy_gestures.log 2>&1 &
+python3                services/reachy_watchdog.py  > /tmp/reachy_watchdog.log 2>&1 &   # restarts anything that dies
+python3                services/reachy_heal.py      >> /tmp/reachy_heal.log    2>&1 &   # robot drops, returns, moves
 pgrep -x caffeinate >/dev/null || (caffeinate -dims > /dev/null 2>&1 &)   # alarms need an awake Mac
 
 echo "starting… (camera takes ~10s to negotiate WebRTC)"
