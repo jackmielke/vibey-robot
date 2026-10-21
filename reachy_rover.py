@@ -65,8 +65,11 @@ AP_URL = "http://192.168.4.1"   # the rover's own hotspot "UGV" (password 123456
 
 # Fractions of full power. With Vibey on top they stay very gentle: it is tall
 # and top-heavy. On its own the rover can go a bit quicker.
-SPEEDS = ({"slow": 0.12, "medium": 0.2, "fast": 0.3} if RIDING
-          else {"slow": 0.15, "medium": 0.25, "fast": 0.4})
+# Measured on Jack's rover: 0.15 hums and barely creeps, 0.25 rolls.
+SPEEDS = ({"slow": 0.2, "medium": 0.25, "fast": 0.32} if RIDING
+          else {"slow": 0.22, "medium": 0.3, "fast": 0.42})
+# Below this nothing moves, so any move gets at least this on its faster wheel.
+MOVE_MIN = 0.22
 # Turning in place drags the tyres sideways, so it needs far more push than
 # rolling straight: at the normal speeds the motors just hum and nothing
 # turns. Any pivot (wheels going opposite ways) gets at least this much.
@@ -95,6 +98,9 @@ def _wheels(lm: float, rm: float, p: float) -> tuple[float, float]:
     """Wheel powers for multipliers lm, rm (-1..1) at speed p, boosting pivots."""
     left, right = lm * p, rm * p
     k = max(abs(left), abs(right))
+    if 0 < k < MOVE_MIN:
+        left, right = left * MOVE_MIN / k, right * MOVE_MIN / k
+        k = MOVE_MIN
     if left * right < 0 and 0 < k < SPIN_MIN:
         # A small joystick twist still turns, just more gently than a full one.
         frac = max(abs(lm), abs(rm))
@@ -112,7 +118,14 @@ def _send(cmd: dict, url: str | None = None, timeout: float = 2.0) -> str:
         return r.read().decode(errors="replace")
 
 
+# Bumped by every stop and every manual press, so a longer job (the camera
+# pilot) can tell a person took over and get out of the way.
+interrupts = 0
+
+
 def stop() -> str:
+    global interrupts
+    interrupts += 1
     _cancel.set()
     # Let a running move ease down to zero first (it holds the lock while it
     # ramps), then send zeros anyway in case nothing was moving.
@@ -205,6 +218,8 @@ def hold_lr(left: float, right: float, speed: str = "medium") -> str:
 
 
 def _set_target(lm: float, rm: float, speed: str) -> str:
+    global interrupts
+    interrupts += 1
     p = SPEEDS.get(speed, SPEEDS["medium"])
     with _hold_mu:
         _hold["target"] = _wheels(lm, rm, p)

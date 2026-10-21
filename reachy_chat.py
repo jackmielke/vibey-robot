@@ -1674,7 +1674,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/rover"):
             import reachy_rover
-            self._json(reachy_rover.info())
+            import reachy_rover_pilot
+            self._json({**reachy_rover.info(), "pilot": reachy_rover_pilot.status()})
             return
         if self.path.startswith("/state"):
             # Capture state is read live rather than from STATE: in realtime
@@ -1915,6 +1916,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     result = reachy_rover.stop()
                 elif p == "/rover/release":
                     result = reachy_rover.release()
+                elif p == "/rover/pilot":                       # drive by eye
+                    import reachy_rover_pilot
+                    result = reachy_rover_pilot.go_async(str(body.get("goal", "")))
                 elif "left" in body and "right" in body:      # joystick
                     result = reachy_rover.hold_lr(body["left"], body["right"],
                                                   str(body.get("speed", "medium")))

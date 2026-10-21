@@ -241,6 +241,8 @@
       <button data-a=back title="Back (S or ↓)">▼</button>
       <span></span>
     </div>
+    <form class=memadd id=pilotf style="margin-top:6px"><input id=pilotgoal placeholder="Drive by eye… e.g. drive to the couch" aria-label="Where should Vibey drive"><button class=ghost id=pilotgo>Go</button></form>
+    <div class=sub id=pilotsub style="min-height:1.2em;margin:4px 0 2px"></div>
     <div class=row><div class=l>Top speed<small>let go of anything to stop</small></div><div class=seg id=wspeed style="width:200px"><button data-s=slow>Slow</button><button data-s=medium>Med</button><button data-s=fast>Fast</button></div></div>
   </div>
 
@@ -505,6 +507,14 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
     if(!K[k]) return; e.preventDefault(); keys.add(K[k]); const a=fromKeys(); if(a) go(a); });
   addEventListener('keyup',e=>{ const k=K[e.key.toLowerCase()]; if(!k) return; keys.delete(k);
     const a=fromKeys(); if(a) go(a); else letGo(); });
+  $('pilotf').onsubmit=async e=>{ e.preventDefault(); const g=$('pilotgoal').value.trim(); if(!g) return;
+    $('pilotsub').textContent='looking…'; const r=await j('/rover/pilot',{goal:g});
+    $('pilotsub').textContent=r&&r.result==='driving'?'driving to '+g+' · STOP or any key takes over':(r&&r.result)||'chat service offline';
+    pilotPoll(); };
+  let pilotT=null;
+  async function pilotPoll(){ clearTimeout(pilotT); const r=await j('/rover'); const pl=r&&r.pilot; if(!pl) return;
+    if(pl.running){ $('pilotsub').textContent=`step ${pl.step}: ${pl.last||'looking…'}`; pilotT=setTimeout(pilotPoll,700); }
+    else if(pl.goal){ $('pilotsub').textContent='done: '+(pl.last||pl.goal); } }
   async function wheels(){ const r=await j('/rover'); const off=!r||!r.connected;
     pad.querySelectorAll('button').forEach(b=>b.disabled=off&&b.id!=='padstop'); stick.classList.toggle('dis',off);
     $('wheelsub').textContent=!r?'chat service offline':!r.connected?'no rover set (ROVER_URL)':r.online===false?'rover not answering':

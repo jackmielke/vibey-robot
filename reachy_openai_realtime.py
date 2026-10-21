@@ -1217,7 +1217,8 @@ if not SUPERMEMORY_RECALL:
 # Wheels: the `drive` tool exists only once a rover is configured (ROVER_URL).
 import reachy_rover
 if reachy_rover.ROVER_URL:
-    TOOLS = TOOLS + [reachy_rover.TOOL]
+    import reachy_rover_pilot
+    TOOLS = TOOLS + [reachy_rover.TOOL, reachy_rover_pilot.TOOL]
 
 # Self-coding is off unless asked for. It kept overhearing Jack dictating to
 # Claude Code on the Mac, spawning its own jobs on the same files, and those
@@ -1716,6 +1717,10 @@ def _dispatch_tool_inner(name: str, args: dict, announce) -> str:
             return reachy_rover.drive(str(args.get("action", "")),
                                       float(args.get("seconds") or 1.0),
                                       str(args.get("speed") or "medium"))
+        if name == "drive_to":
+            import reachy_rover_pilot
+            return reachy_rover_pilot.go(str(args.get("goal", "")),
+                                         int(args.get("max_steps") or 10))
         if name == "improve_yourself":
             return _tool_improve(args, announce)
         if name == "check_progress":

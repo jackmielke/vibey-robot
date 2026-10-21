@@ -16,7 +16,11 @@ driven by `reachy_rover.py`. Vibey's voice brain gets a `drive` tool whenever
   It goes through the chat service (`/rover`), which owns the rover, so the
   pad and Vibey's voice never drive it at the same time.
 
-## Phase 2: Vibey watches the rover
+## Phase 2: Vibey watches the rover (started)
+- `reachy_rover_pilot.py`: frame from :8771, a vision model picks ONE short
+  move toward a goal, drive it, look again, up to 10 steps. Voice tool
+  `drive_to` ("drive to the couch"), and the "Drive by eye" box in the Wheels
+  panel. Any stop or manual press ends it. Same camera/privacy rules as `look`.
 - Point Vibey's camera at the floor area. Between moves Vibey calls `look`
   to see where the rover went, so "drive it to the couch" becomes
   move, look, correct, repeat.
