@@ -92,6 +92,8 @@
   .ghost:hover { border-color:var(--dim) }
   .pad { display:grid; grid-template-columns:repeat(3,64px); grid-template-rows:repeat(3,56px); gap:8px; justify-content:center; margin:6px 0 10px; touch-action:none; user-select:none; -webkit-user-select:none }
   .pad button { border-radius:12px; border:1px solid var(--line); background:var(--field); color:var(--text); font-size:22px; cursor:pointer }
+  .pad button .pl { display:block; font-size:10px; line-height:1; color:var(--dim); text-transform:uppercase; letter-spacing:.5px }
+  .pad button.held .pl { color:inherit }
   .pad button.held { background:var(--on); color:#052; border-color:var(--on) }
   .pad button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-size:13px; font-weight:700 }
   .pad:has(button:disabled) { opacity:.4 }
@@ -223,7 +225,7 @@
 
   <div class=panel id=p-wheels>
     <h2><span>Wheels</span><span class=sub id=wheelsub>checking…</span></h2>
-    <div class=row style="padding-top:0"><div class=l>Controls<small id=padhint>hold a button or WASD / arrow keys</small></div><div class=seg id=wmode style="width:160px"><button data-m=pad>Pad</button><button data-m=stick>Joystick</button></div></div>
+    <div class=row style="padding-top:0"><div class=l>Controls<small id=padhint>hold a button · WASD / arrows · Q E spin</small></div><div class=seg id=wmode style="width:160px"><button data-m=pad>Pad</button><button data-m=stick>Joystick</button></div></div>
     <div class=stickwrap id=stickwrap hidden>
       <div class=stick id=stick><div class=knob id=knob></div></div>
       <button class=stop id=stickstop title="Stop (space)">STOP</button>
@@ -232,9 +234,9 @@
       <button data-a=left title="Arc left (A + W)">↖</button>
       <button data-a=forward title="Forward (W or ↑)">▲</button>
       <button data-a=right title="Arc right (D + W)">↗</button>
-      <button data-a=spin_left title="Spin left (A or ←)">⟲</button>
+      <button data-a=spin_left title="Spin in place left (Q, or A / ←)">⟲<small class=pl>spin</small></button>
       <button class=stop id=padstop title="Stop (space)">STOP</button>
-      <button data-a=spin_right title="Spin right (D or →)">⟳</button>
+      <button data-a=spin_right title="Spin in place right (E, or D / →)">⟳<small class=pl>spin</small></button>
       <span></span>
       <button data-a=back title="Back (S or ↓)">▼</button>
       <span></span>
@@ -491,8 +493,9 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   ['pointerup','pointercancel','lostpointercapture'].forEach(t=>pad.addEventListener(t,letGo));
   addEventListener('blur',letGo); document.addEventListener('visibilitychange',()=>{ if(document.hidden) letGo(); });
   // Keyboard: WASD or arrows; W+A / W+D arc; space stops. Ignored while typing.
-  const keys=new Set(), K={w:'f',arrowup:'f',s:'b',arrowdown:'b',a:'l',arrowleft:'l',d:'r',arrowright:'r'};
+  const keys=new Set(), K={w:'f',arrowup:'f',s:'b',arrowdown:'b',a:'l',arrowleft:'l',d:'r',arrowright:'r',q:'ql',e:'qr'};
   const fromKeys=()=>{ const f=keys.has('f'), b=keys.has('b'), l=keys.has('l'), r=keys.has('r');
+    if(keys.has('ql')) return 'spin_left'; if(keys.has('qr')) return 'spin_right';
     if(f&&l) return 'left'; if(f&&r) return 'right'; if(f) return 'forward'; if(b) return 'back';
     if(l) return 'spin_left'; if(r) return 'spin_right'; return null; };
   const typing=()=>{ const a=document.activeElement; return a&&(/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable); };
@@ -511,7 +514,7 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   let mode='pad'; try{ mode=localStorage.getItem('vibey.wmode')||mode; }catch(_){}
   const paintMode=()=>{ document.querySelectorAll('#wmode button').forEach(b=>b.classList.toggle('on',b.dataset.m===mode));
     $('pad').hidden=mode!=='pad'; $('stickwrap').hidden=mode!=='stick';
-    $('padhint').textContent=mode==='pad'?'hold a button or WASD / arrow keys':'drag the knob · or plug in a game controller'; };
+    $('padhint').textContent=mode==='pad'?'hold a button · WASD / arrows · Q E spin':'push sideways to spin · or plug in a game controller'; };
   paintMode();
   $('wmode').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; letGo(); mode=b.dataset.m; paintMode();
     try{ localStorage.setItem('vibey.wmode',mode); }catch(_){} repack(); };

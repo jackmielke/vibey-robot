@@ -67,6 +67,10 @@ AP_URL = "http://192.168.4.1"   # the rover's own hotspot "UGV" (password 123456
 # and top-heavy. On its own the rover can go a bit quicker.
 SPEEDS = ({"slow": 0.12, "medium": 0.2, "fast": 0.3} if RIDING
           else {"slow": 0.15, "medium": 0.25, "fast": 0.4})
+# Turning in place drags the tyres sideways, so it needs far more push than
+# rolling straight: at the normal speeds the motors just hum and nothing
+# turns. Any pivot (wheels going opposite ways) gets at least this much.
+SPIN_MIN = 0.3 if RIDING else 0.4
 MAX_SECONDS = 4.0
 RESEND_EVERY = 0.4
 # Soft start and stop. Jumping straight to full speed (or to zero) is what
@@ -85,6 +89,18 @@ ACTIONS = {
 
 _lock = threading.Lock()   # one move at a time; a new one cancels the old
 _cancel = threading.Event()
+
+
+def _wheels(lm: float, rm: float, p: float) -> tuple[float, float]:
+    """Wheel powers for multipliers lm, rm (-1..1) at speed p, boosting pivots."""
+    left, right = lm * p, rm * p
+    k = max(abs(left), abs(right))
+    if left * right < 0 and 0 < k < SPIN_MIN:
+        # A small joystick twist still turns, just more gently than a full one.
+        frac = max(abs(lm), abs(rm))
+        scale = SPIN_MIN * (0.7 + 0.3 * frac) / k
+        left, right = left * scale, right * scale
+    return round(left, 3), round(right, 3)
 
 
 def _send(cmd: dict, url: str | None = None, timeout: float = 2.0) -> str:
@@ -120,7 +136,8 @@ def drive(action: str, seconds: float = 1.0, speed: str = "medium") -> str:
         return "my wheels aren't connected yet"
     p = SPEEDS.get(speed, SPEEDS["medium"])
     lm, rm = ACTIONS[action]
-    cmd = {"T": 1, "L": lm * p, "R": rm * p}
+    wl, wr = _wheels(lm, rm, p)
+    cmd = {"T": 1, "L": wl, "R": wr}
     seconds = max(0.2, min(float(seconds or 1.0), MAX_SECONDS))
     _cancel.set()                      # interrupt any move in flight
     def at(level: float) -> dict:
@@ -190,7 +207,7 @@ def hold_lr(left: float, right: float, speed: str = "medium") -> str:
 def _set_target(lm: float, rm: float, speed: str) -> str:
     p = SPEEDS.get(speed, SPEEDS["medium"])
     with _hold_mu:
-        _hold["target"] = (lm * p, rm * p)
+        _hold["target"] = _wheels(lm, rm, p)
         _hold["until"] = time.time() + HOLD_TTL
         if _hold["running"]:
             return "driving"
@@ -203,7 +220,7 @@ def _set_target(lm: float, rm: float, speed: str) -> str:
 def _hold_loop() -> None:
     # Biggest change per tick, so speeding up, slowing down and switching
     # direction all take about RAMP_SECONDS from standstill to full.
-    step = max(SPEEDS.values()) * RAMP_TICK / RAMP_SECONDS
+    step = max(max(SPEEDS.values()), SPIN_MIN) * RAMP_TICK / RAMP_SECONDS
     cur = [0.0, 0.0]
     last_sent = 0.0
     try:
