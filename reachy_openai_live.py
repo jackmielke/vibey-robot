@@ -50,6 +50,9 @@ LIVE_URL = "wss://api.openai.com/v1/live/sessions"
 LIVE_MODEL = os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1").strip()
 # The model that thinks. Live only speaks.
 BACKEND_MODEL = os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5").strip()
+# Default (medium) effort spent ~3 s per backend pass on Vibey's 8.8k-token
+# prompt; a tool turn is two passes. Low measured ~1.3 s with the same tool picks.
+BACKEND_EFFORT = os.environ.get("OPENAI_LIVE_EFFORT", "low").strip()
 
 LIVE_RULES = (
     "\n\nIMPORTANT — HOW YOU WORK: you are the voice only. You have no hands and "
@@ -160,6 +163,7 @@ class LiveSession(RealtimeSession):
                     "says it could not do something, say that."
                     + rt.memory_block() + shared),
                 "tools": fn_tools,
+                **({"reasoning": {"effort": BACKEND_EFFORT}} if BACKEND_EFFORT else {}),
             }},
         }}
 
