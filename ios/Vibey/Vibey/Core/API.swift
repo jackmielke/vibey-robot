@@ -186,6 +186,15 @@ private struct AskResponse: Decodable { let reply: String?; let error: String? }
 private struct TextTurnResponse: Decodable { let delivered: String?; let reply: String?; let spoke: Bool? }
 private struct VolumeResponse: Decodable { let volume: Double? }
 private struct DriveResponse: Decodable { let ok: Bool?; let result: String?; let error: String? }
+struct DriveResult { let ok: Bool; let text: String }
+
+/// GET :8772/rover. connected = ROVER_URL is set; online = it answered.
+struct RoverInfo: Decodable {
+    let connected: Bool
+    let riding: Bool?
+    let online: Bool?
+    let volts: Double?
+}
 
 enum APIError: LocalizedError {
     case unauthorized, eyesClosed, server(String), unreachable(String)
@@ -300,6 +309,26 @@ struct VibeyAPI {
                                      timeout: 10)
         let r = try JSONDecoder().decode(DriveResponse.self, from: data)
         return r.result ?? r.error ?? "ok"
+    }
+
+    // Hold-to-drive (same endpoints as the Wheels panel). Each hold call keeps
+    // the rover going ~0.6 s, so the caller resends while a finger is down.
+    func roverInfo() async throws -> RoverInfo {
+        try JSONDecoder().decode(RoverInfo.self, from: try await request("\(chat)/rover", timeout: 6))
+    }
+    func roverHold(_ action: String, speed: String) async throws -> DriveResult {
+        try await roverPost("/rover", ["action": action, "speed": speed])
+    }
+    func roverWheels(left: Double, right: Double, speed: String) async throws -> DriveResult {
+        try await roverPost("/rover", ["left": (left * 100).rounded() / 100,
+                                       "right": (right * 100).rounded() / 100, "speed": speed])
+    }
+    func roverRelease() async throws { _ = try await roverPost("/rover/release", [:]) }
+    func roverStop() async throws { _ = try await roverPost("/rover/stop", [:], timeout: 4) }
+    private func roverPost(_ path: String, _ body: [String: Any], timeout: TimeInterval = 2) async throws -> DriveResult {
+        let data = try await request("\(chat)\(path)", method: "POST", json: body, timeout: timeout)
+        let r = try JSONDecoder().decode(DriveResponse.self, from: data)
+        return DriveResult(ok: r.ok ?? false, text: r.result ?? r.error ?? "")
     }
 
     // Dashboard service (:8770)

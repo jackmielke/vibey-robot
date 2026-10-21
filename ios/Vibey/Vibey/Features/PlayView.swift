@@ -151,7 +151,7 @@ struct PlayView: View {
                 .foregroundStyle(Palette.duck)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Drive").font(.system(.headline, design: .rounded))
-                Text("D-pad for the rover wheels").font(.system(.subheadline, design: .rounded))
+                Text("Hold to drive, joystick, spin in place").font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(Palette.inkDim)
             }
             Spacer()
