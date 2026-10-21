@@ -114,8 +114,47 @@ def _send(cmd: dict, url: str | None = None, timeout: float = 2.0) -> str:
     if not base:
         raise RuntimeError("rover not connected (ROVER_URL isn't set)")
     q = urllib.parse.quote(json.dumps(cmd, separators=(",", ":")))
-    with urllib.request.urlopen(f"{base}/js?json={q}", timeout=timeout) as r:
-        return r.read().decode(errors="replace")
+    try:
+        with urllib.request.urlopen(f"{base}/js?json={q}", timeout=timeout) as r:
+            return r.read().decode(errors="replace")
+    except OSError:
+        # Switched off and on, the rover can come back on a new address.
+        # Look for it once and carry on, instead of needing a restart.
+        if url or not _relocate():
+            raise
+        with urllib.request.urlopen(f"{ROVER_URL}/js?json={q}", timeout=timeout) as r:
+            return r.read().decode(errors="replace")
+
+
+_relocate_mu = threading.Lock()
+_relocate_at = 0.0
+RELOCATE_EVERY = 60.0
+
+
+def _relocate() -> bool:
+    """Sweep the rover's subnet for it; True if it turned up somewhere new.
+    At most once a minute, so a rover that is simply off costs nothing much."""
+    global ROVER_URL, _relocate_at
+    if not ROVER_URL or not _relocate_mu.acquire(blocking=False):
+        return False
+    try:
+        if time.time() - _relocate_at < RELOCATE_EVERY:
+            return False
+        _relocate_at = time.time()
+        host = urllib.parse.urlparse(ROVER_URL).hostname or ""
+        prefix = host.rsplit(".", 1)[0] if host.count(".") == 3 else None
+        hits = [u for u in find(prefix) if u != ROVER_URL]
+        if len(hits) != 1:
+            return False
+        print(f"[rover] moved from {ROVER_URL} to {hits[0]}", flush=True)
+        ROVER_URL = hits[0]
+        try:
+            save_url(ROVER_URL)
+        except OSError:
+            pass
+        return True
+    finally:
+        _relocate_mu.release()
 
 
 # Bumped by every stop and every manual press, so a longer job (the camera
