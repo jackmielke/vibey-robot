@@ -39,7 +39,7 @@ there is a stutter you can hear. Everything here goes onto a queue and a daemon
 thread does the slow parts.
 
 Local only, on purpose. A robot in a room logging everything said near it is the
-exact data that should not leave the house — see MEMORY_PLAN.md. Nothing here
+exact data that should not leave the house — see docs/plans/MEMORY_PLAN.md. Nothing here
 posts to Supermemory or Supabase; `transcripts/` is gitignored.
 
     import reachy_transcript

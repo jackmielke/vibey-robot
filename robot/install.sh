@@ -73,7 +73,7 @@ fi
 # Heavy packages must never land on the robot.
 for pkg in faster-whisper ctranslate2 torch mediapipe dlib face-recognition; do
   if "$VIBEY/.venv/bin/python" -m pip show -q "$pkg" >/dev/null 2>&1; then
-    warn "$pkg is installed in ~/vibey/.venv and should not be (see ROBOT_NATIVE.md)"
+    warn "$pkg is installed in ~/vibey/.venv and should not be (see docs/ROBOT_NATIVE.md)"
   fi
 done
 

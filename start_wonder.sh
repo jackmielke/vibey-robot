@@ -78,7 +78,7 @@ stop_all >/dev/null 2>&1
 sleep 1
 
 # Services that have moved onto the robot itself (robot/deploy.sh writes this
-# file; see ROBOT_NATIVE.md). The Mac must not start its own copy. No file =
+# file; see docs/ROBOT_NATIVE.md). The Mac must not start its own copy. No file =
 # everything starts here, exactly as before.
 ROBOT_OWNS=" $(grep -v '^#' .robot_services 2>/dev/null | tr '\n' ' ') "
 here() { [[ "$ROBOT_OWNS" != *" $1 "* ]]; }

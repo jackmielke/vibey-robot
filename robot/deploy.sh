@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # robot/deploy.sh: push Vibey's code to the robot and move services onto it.
-# Runs on the MAC. See ROBOT_NATIVE.md for the phases and why in that order.
+# Runs on the MAC. See docs/ROBOT_NATIVE.md for the phases and why in that order.
 #
 #   robot/deploy.sh                 rsync code + restart whatever already runs there
 #   robot/deploy.sh --install       ...and run robot/install.sh on the robot (idempotent)
@@ -43,7 +43,7 @@ rsh() { "${SSH[@]}" "$ROBOT" "$@"; }
 
 # Phases. Names are the watchdog's service names; units are vibey-<unit>.service.
 # Phase 3 (memories on the robot's disk) adds no process: the env already points
-# chat/telegram/viewer at ~/vibey/memories, see ROBOT_NATIVE.md.
+# chat/telegram/viewer at ~/vibey/memories, see docs/ROBOT_NATIVE.md.
 phase_services() {
   case "$1" in
     1) echo "robot_mic chat watchdog" ;;     # voice brain + clap wake + emotes/idle, loop guard
@@ -122,7 +122,7 @@ check() {  # $1 label
 # --- 6. move a phase onto the robot -------------------------------------------
 if [[ -n "$PHASE" ]]; then
   svcs=$(phase_services "$PHASE")
-  [[ -z "$svcs" ]] && { echo "phase $PHASE adds no service (see ROBOT_NATIVE.md)"; exit 0; }
+  [[ -z "$svcs" ]] && { echo "phase $PHASE adds no service (see docs/ROBOT_NATIVE.md)"; exit 0; }
   check "before phase $PHASE" || echo "(already under the floor BEFORE this phase)"
   for s in $svcs; do
     scr=$(script_of "$s")

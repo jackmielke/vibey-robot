@@ -135,7 +135,7 @@ rover gets a new address after a power cycle, Vibey finds it again by itself.
 ## Setup
 
 You need the robot (a Reachy Mini, wireless or lite) on the same network as a
-Mac. Everything else runs on the Mac today; [ROBOT_NATIVE.md](ROBOT_NATIVE.md)
+Mac. Everything else runs on the Mac today; [docs/ROBOT_NATIVE.md](docs/ROBOT_NATIVE.md)
 is the plan for moving the services onto the robot itself (prepared, not yet
 deployed).
 
@@ -173,15 +173,15 @@ The repo grew one feature at a time, so most of it is flat at the top level:
 - `mac/`, `ios/`: the native apps. `mimic/`: a separate browser face-mimic toy.
 - `robot/`: deploy scripts and systemd units for running on the robot itself.
 - `supabase/`: the Telegram webhook function and its one migration.
-- `docs/`: the rover plan and the demo reel source.
-- Top-level `*.md`: mostly Vibey's own brain, see below; `ROBOT_NATIVE.md`,
-  `MEMORY_PLAN.md` and `VIBEVERSE_IDEAS.md` are plans.
+- Top-level `*.md`: Vibey's own brain, see below.
+- `docs/`: the rover plan, the robot-native plan, older plans in
+  `docs/plans/`, a build diary in `docs/diary/`, and the demo reel source.
 
 ## Identity
 
 Vibey's personality and self-knowledge live in the markdown files it can edit
 itself: `IDENTITY.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `AGENTS.md`,
 `HEARTBEAT.md`, and `SKILLS.md` (things it was taught in conversation).
-`OVERNIGHT.md` is the diary of one all-night build session. Private things
+`docs/diary/OVERNIGHT.md` is the diary of one all-night build session. Private things
 (transcripts, faces, memories, `.env`) are git-ignored and never leave the
 machine.

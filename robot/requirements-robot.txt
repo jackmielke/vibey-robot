@@ -1,7 +1,7 @@
 # ~/vibey/.venv on the robot (aarch64, Raspberry Pi OS, Python >= 3.11).
 # Both have prebuilt manylinux aarch64 wheels, so nothing compiles on the CM4.
 #
-# Deliberately NOT here (see ROBOT_NATIVE.md, "ARM and heavy deps"):
+# Deliberately NOT here (see docs/ROBOT_NATIVE.md, "ARM and heavy deps"):
 #   faster-whisper / ctranslate2 / onnxruntime-for-whisper  (wake phrase, scribe,
 #       whisper brain: stays on the Mac; clap wake works without it)
 #   torch, mediapipe, opencv (gestures: Mac only)

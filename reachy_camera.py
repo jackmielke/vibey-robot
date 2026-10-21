@@ -22,7 +22,7 @@ Env overrides:
                   a low cap: in LOCAL mode every frame is a software JPEG encode
                   on the CM4, competing with the motor control loop.
     VIBEY_ON_ROBOT=1  running ON the robot: read the daemon's local camera
-                  (SDK LOCAL backend), no WebRTC. See ROBOT_NATIVE.md.
+                  (SDK LOCAL backend), no WebRTC. See docs/ROBOT_NATIVE.md.
 """
 
 from __future__ import annotations

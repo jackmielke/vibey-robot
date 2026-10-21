@@ -72,7 +72,7 @@ SERVICES = {
     "dj":        ("http://localhost:8778/status",  "reachy_dj.py",        "reachy_env/bin/python3", "/tmp/reachy_dj.log"),
 }
 
-# --- Robot-native mode (VIBEY_ON_ROBOT=1, see ROBOT_NATIVE.md) --------------
+# --- Robot-native mode (VIBEY_ON_ROBOT=1, see docs/ROBOT_NATIVE.md) --------------
 # On the robot, systemd user units own the processes (Restart=always), so this
 # checks health the same way but restarts through systemctl, and it also guards
 # the one thing that matters most there: the motor control loop's rate.

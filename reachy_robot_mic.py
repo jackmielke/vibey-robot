@@ -24,7 +24,7 @@ Env overrides:
     ROBOT_MIC_BIND default 127.0.0.1 (only local
                    services read it, and it is a live room mic)
     VIBEY_ON_ROBOT=1  running ON the robot: read the mic from the daemon's
-                   local audio (SDK LOCAL backend), no WebRTC. See ROBOT_NATIVE.md.
+                   local audio (SDK LOCAL backend), no WebRTC. See docs/ROBOT_NATIVE.md.
 """
 
 from __future__ import annotations
