@@ -2354,6 +2354,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/sfx"):
             from reachy_sfx import catalog
             self._send(json.dumps(catalog()).encode(), "application/json")
+        elif self.path.startswith("/rover"):
+            out = _get(f"{CHAT_URL}/rover", timeout=5.0)
+            self._send(json.dumps(out or {"connected": False, "error": "chat service not answering"}).encode(),
+                       "application/json")
         elif self.path.startswith("/peoplelist"):
             # Cached: this is a Supabase round trip carrying every saved photo
             # as base64, which took the Friends panel eight seconds to appear
@@ -2775,6 +2779,18 @@ class Handler(BaseHTTPRequestHandler):
                                        "ignored": ignored}).encode(), "application/json")
             except Exception as e:
                 self._send(json.dumps({"ok": False, "error": str(e)}).encode(), "application/json", 500)
+            return
+        if self.path.startswith("/rover"):
+            # Arrow pad -> chat service, which owns the rover (one process, one
+            # lock, so the pad and Vibey's voice never drive it at once).
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n)) if n else {}
+                out = _post(f"{CHAT_URL}{self.path.split('?')[0]}", body, timeout=4.0)
+                self._send(json.dumps(out or {"ok": False, "error": "chat service not answering"}).encode(),
+                           "application/json")
+            except Exception as e:
+                self._send(json.dumps({"error": str(e)}).encode(), "application/json", 500)
             return
         if self.path.startswith(("/wake", "/sleep", "/dials", "/brain", "/scribe", "/stage")):
             try:

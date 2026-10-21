@@ -90,6 +90,11 @@
   .kv { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); font-size:12px } .kv b { color:var(--text) }
   .ghost { background:transparent; border:1px solid var(--line); color:var(--text); border-radius:9px; padding:6px 10px; cursor:pointer }
   .ghost:hover { border-color:var(--dim) }
+  .pad { display:grid; grid-template-columns:repeat(3,64px); grid-template-rows:repeat(3,56px); gap:8px; justify-content:center; margin:6px 0 10px; touch-action:none; user-select:none; -webkit-user-select:none }
+  .pad button { border-radius:12px; border:1px solid var(--line); background:var(--field); color:var(--text); font-size:22px; cursor:pointer }
+  .pad button.held { background:var(--on); color:#052; border-color:var(--on) }
+  .pad button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-size:13px; font-weight:700 }
+  .pad:has(button:disabled) { opacity:.4 }
   /* Group headings inside a panel: which sense a row belongs to, so "listening"
      and "take notes" can't read as two names for the same thing. */
   .grp { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim);
@@ -205,6 +210,22 @@
       <canvas id=fov width=960 height=540></canvas>
       <div class=noc id=noc>camera offline</div>
     </div>
+  </div>
+
+  <div class=panel id=p-wheels>
+    <h2><span>Wheels</span><span class=sub id=wheelsub>checking…</span></h2>
+    <div class=pad id=pad>
+      <button data-a=left title="Arc left (A + W)">↖</button>
+      <button data-a=forward title="Forward (W or ↑)">▲</button>
+      <button data-a=right title="Arc right (D + W)">↗</button>
+      <button data-a=spin_left title="Spin left (A or ←)">⟲</button>
+      <button class=stop id=padstop title="Stop (space)">STOP</button>
+      <button data-a=spin_right title="Spin right (D or →)">⟳</button>
+      <span></span>
+      <button data-a=back title="Back (S or ↓)">▼</button>
+      <span></span>
+    </div>
+    <div class=row><div class=l>Speed<small>hold a button or arrow key to drive · let go to stop</small></div><div class=seg id=wspeed style="width:200px"><button data-s=slow>Slow</button><button data-s=medium>Med</button><button data-s=fast>Fast</button></div></div>
   </div>
 
   <div class=panel id=p-brain>
@@ -412,8 +433,8 @@ function renderBrain(){
 // panel never changes its height, so packing settles instead of flapping.
 // Wide adds Live chat as its own sticky right column. Re-packed on resize and
 // whenever a panel's height changes (ResizeObserver).
-const ORDER=['p-stage','p-log','p-eyes','p-memory','p-brain','p-senses','p-dj','p-friends','p-else'];
-const PACK=['p-eyes','p-brain','p-senses','p-memory','p-friends','p-dj'];
+const ORDER=['p-stage','p-log','p-eyes','p-wheels','p-memory','p-brain','p-senses','p-dj','p-friends','p-else'];
+const PACK=['p-eyes','p-wheels','p-brain','p-senses','p-memory','p-friends','p-dj'];
 let layoutMode=0, packKey='', packRaf=0;
 const PNL=Object.fromEntries(ORDER.map(id=>[id,document.getElementById(id)])), $p=id=>PNL[id]; // cached: detached panels aren't findable by id
 const div=(cls,...kids)=>{ const d=document.createElement('div'); d.className=cls; kids.forEach(k=>d.appendChild(k)); return d; };
@@ -434,6 +455,45 @@ function pack(){ if(layoutMode===1) return; const cs=document.querySelectorAll('
 const repack=()=>{ cancelAnimationFrame(packRaf); packRaf=requestAnimationFrame(layout); };
 layout(); addEventListener('resize',repack); document.addEventListener('focusout',()=>setTimeout(repack,50));
 if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=>ro.observe($p(id))); }
+
+// ---- wheels ---------------------------------------------------------------
+// Hold to drive. While a pad button or key is down this re-sends the move
+// every 250ms; the chat service keeps the rover going only ~0.6s per call, so
+// letting go, switching windows or a dropped request all end in a stop.
+(()=>{ let speed='medium', act=null, timer=null;
+  try{ speed=localStorage.getItem('vibey.wspeed')||speed; }catch(_){}
+  const paintSpeed=()=>document.querySelectorAll('#wspeed button').forEach(b=>b.classList.toggle('on',b.dataset.s===speed));
+  paintSpeed();
+  $('wspeed').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; speed=b.dataset.s; paintSpeed();
+    try{ localStorage.setItem('vibey.wspeed',speed); }catch(_){} };
+  const paint=()=>document.querySelectorAll('#pad button[data-a]').forEach(b=>b.classList.toggle('held',b.dataset.a===act));
+  const send=()=>{ if(act) j('/rover',{action:act,speed}).then(r=>{ if(r&&!r.ok&&r.result) $('wheelsub').textContent=r.result; }); };
+  const go=a=>{ if(act===a) return; act=a; paint(); send(); clearInterval(timer); timer=setInterval(send,250); };
+  const letGo=()=>{ if(!act) return; act=null; paint(); clearInterval(timer); j('/rover/release',{}); };
+  const halt=()=>{ act=null; paint(); clearInterval(timer); j('/rover/stop',{}); };
+  const pad=$('pad');
+  pad.addEventListener('pointerdown',e=>{ const b=e.target.closest('button'); if(!b||b.disabled) return; e.preventDefault();
+    if(b.id==='padstop') return halt(); try{ b.setPointerCapture(e.pointerId); }catch(_){} go(b.dataset.a); });
+  ['pointerup','pointercancel','lostpointercapture'].forEach(t=>pad.addEventListener(t,letGo));
+  addEventListener('blur',letGo); document.addEventListener('visibilitychange',()=>{ if(document.hidden) letGo(); });
+  // Keyboard: WASD or arrows; W+A / W+D arc; space stops. Ignored while typing.
+  const keys=new Set(), K={w:'f',arrowup:'f',s:'b',arrowdown:'b',a:'l',arrowleft:'l',d:'r',arrowright:'r'};
+  const fromKeys=()=>{ const f=keys.has('f'), b=keys.has('b'), l=keys.has('l'), r=keys.has('r');
+    if(f&&l) return 'left'; if(f&&r) return 'right'; if(f) return 'forward'; if(b) return 'back';
+    if(l) return 'spin_left'; if(r) return 'spin_right'; return null; };
+  const typing=()=>{ const a=document.activeElement; return a&&(/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)||a.isContentEditable); };
+  addEventListener('keydown',e=>{ if(typing()||e.metaKey||e.ctrlKey||e.altKey||$('pad').querySelector(':disabled')) return;
+    const k=e.key.toLowerCase();
+    if(k===' '&&act){ e.preventDefault(); keys.clear(); return halt(); }
+    if(!K[k]) return; e.preventDefault(); keys.add(K[k]); const a=fromKeys(); if(a) go(a); });
+  addEventListener('keyup',e=>{ const k=K[e.key.toLowerCase()]; if(!k) return; keys.delete(k);
+    const a=fromKeys(); if(a) go(a); else letGo(); });
+  async function wheels(){ const r=await j('/rover'); const off=!r||!r.connected;
+    pad.querySelectorAll('button').forEach(b=>b.disabled=off&&b.id!=='padstop');
+    $('wheelsub').textContent=!r?'chat service offline':!r.connected?'no rover set (ROVER_URL)':r.online===false?'rover not answering':
+      (r.riding?'riding · ':'')+(r.volts?r.volts+' V':'connected'); }
+  wheels(); setInterval(wheels,10000);
+})();
 
 // ---- eyes -----------------------------------------------------------------
 // Two ways to see. MJPEG from the camera bridge (:8771) is the default: works

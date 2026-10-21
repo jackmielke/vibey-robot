@@ -155,6 +155,101 @@ def drive(action: str, seconds: float = 1.0, speed: str = "medium") -> str:
     return f"drove {action.replace('_', ' ')} for {seconds:.1f}s"
 
 
+# ---- hold-to-drive (the app's arrow pad) -------------------------------------
+# The app sends hold() every ~250 ms while a button or arrow key is down. Each
+# call keeps the rover going for HOLD_TTL more seconds, so letting go, closing
+# the window or losing Wi-Fi all end in a stop within a fraction of a second.
+HOLD_TTL = 0.6
+_hold = {"target": (0.0, 0.0), "until": 0.0, "running": False}
+_hold_mu = threading.Lock()
+
+
+def hold(action: str, speed: str = "medium") -> str:
+    action = (action or "").strip().lower().replace(" ", "_")
+    if action not in ACTIONS:
+        return f"unknown move {action!r}; try {', '.join(ACTIONS)}"
+    if action == "stop":
+        return stop()
+    if not ROVER_URL:
+        return "my wheels aren't connected yet"
+    p = SPEEDS.get(speed, SPEEDS["medium"])
+    lm, rm = ACTIONS[action]
+    with _hold_mu:
+        _hold["target"] = (lm * p, rm * p)
+        _hold["until"] = time.time() + HOLD_TTL
+        if _hold["running"]:
+            return "driving"
+        _hold["running"] = True
+    _cancel.set()                      # a timed move in flight eases down first
+    threading.Thread(target=_hold_loop, daemon=True).start()
+    return "driving"
+
+
+def _hold_loop() -> None:
+    # Biggest change per tick, so speeding up, slowing down and switching
+    # direction all take about RAMP_SECONDS from standstill to full.
+    step = max(SPEEDS.values()) * RAMP_TICK / RAMP_SECONDS
+    cur = [0.0, 0.0]
+    last_sent = 0.0
+    try:
+        with _lock:
+            _cancel.clear()
+            while True:
+                with _hold_mu:
+                    live = time.time() < _hold["until"] and not _cancel.is_set()
+                    tgt = _hold["target"] if live else (0.0, 0.0)
+                    if not live and cur == [0.0, 0.0]:
+                        _hold["running"] = False
+                        break
+                moved = False
+                for i in (0, 1):
+                    d = max(-step, min(step, tgt[i] - cur[i]))
+                    if abs(tgt[i] - cur[i]) < 1e-6:
+                        cur[i] = tgt[i]
+                    else:
+                        cur[i] = round(cur[i] + d, 3)
+                        moved = True
+                if moved or time.time() - last_sent >= RESEND_EVERY:
+                    try:
+                        _send({"T": 1, "L": round(cur[0], 3), "R": round(cur[1], 3)})
+                    except Exception:  # noqa: BLE001
+                        pass               # rover stops itself after 3 s of silence
+                    last_sent = time.time()
+                time.sleep(RAMP_TICK)
+            try:
+                _send({"T": 1, "L": 0, "R": 0})
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        with _hold_mu:
+            _hold["running"] = False
+
+
+def release() -> str:
+    """Let go of the pad: ease down to a stop without waiting for it."""
+    with _hold_mu:
+        _hold["until"] = 0.0
+    return "stopping"
+
+
+def info() -> dict:
+    """What the app shows: is a rover configured, and its battery if it answers."""
+    out = {"connected": bool(ROVER_URL), "riding": RIDING, "url": ROVER_URL,
+           "speeds": list(SPEEDS)}
+    if not ROVER_URL:
+        return out
+    try:
+        fb = status()
+        v = fb.get("v")
+        if isinstance(v, (int, float)):
+            out["volts"] = round(v / 100 if v > 30 else v, 2)
+        out["online"] = True
+    except Exception as e:  # noqa: BLE001
+        out["online"] = False
+        out["error"] = str(e)[:120]
+    return out
+
+
 def status() -> dict:
     """Raw chassis feedback (includes battery voltage)."""
     raw = _send({"T": 130}, timeout=3)

@@ -1672,6 +1672,10 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             self._json({"events": reachy_events.since(after),
                         "last": reachy_events.last_id()})
             return
+        if self.path.startswith("/rover"):
+            import reachy_rover
+            self._json(reachy_rover.info())
+            return
         if self.path.startswith("/state"):
             # Capture state is read live rather than from STATE: in realtime
             # mode this loop has handed the mic over entirely and stops
@@ -1895,6 +1899,26 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 _log_turn("wonder", f"(re-saying) {last}")
                 threading.Thread(target=_speak_line, args=(last,), daemon=True).start()
                 self._json({"ok": True, "text": last})
+            except Exception as e:
+                self._json({"error": str(e)}, 400)
+        elif self.path.startswith("/rover"):
+            # The app's arrow pad: /rover {"action","speed"} while held (each
+            # call keeps it going ~0.6 s), /rover/release on let go,
+            # /rover/stop for the big stop button.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                import reachy_rover
+                p = self.path.split("?")[0]
+                if p == "/rover/stop":
+                    result = reachy_rover.stop()
+                elif p == "/rover/release":
+                    result = reachy_rover.release()
+                else:
+                    result = reachy_rover.hold(str(body.get("action", "stop")),
+                                               str(body.get("speed", "medium")))
+                self._json({"ok": result in ("driving", "stopping", "stopped"),
+                            "result": result})
             except Exception as e:
                 self._json({"error": str(e)}, 400)
         elif self.path.startswith("/drive"):

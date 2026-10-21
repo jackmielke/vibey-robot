@@ -11,6 +11,10 @@ driven by `reachy_rover.py`. Vibey's voice brain gets a `drive` tool whenever
   (`./vibey rover wifi "SSID"` while the Mac is on UGV), then
   `./vibey rover find --save`, then restart Vibey.
 - `ROVER_RIDING` unset: the tool describes the rover as a separate car.
+- V0 manual driving: the Wheels panel in the Vibey app (control.html on
+  :8770) has a hold-to-drive pad, WASD/arrow keys, a speed picker and a stop.
+  It goes through the chat service (`/rover`), which owns the rover, so the
+  pad and Vibey's voice never drive it at the same time.
 
 ## Phase 2: Vibey watches the rover
 - Point Vibey's camera at the floor area. Between moves Vibey calls `look`
