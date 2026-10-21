@@ -298,7 +298,10 @@ def find(prefix: str | None = None) -> list[str]:
         url = f"http://{prefix}.{i}"
         try:
             out = _send({"T": 130}, url=url, timeout=1.0)
-            return url if "{" in out else None
+            # Real feedback is a JSON object like {"T":1001,...}; plain web
+            # pages (NAS, router) can contain "{" in their CSS.
+            fb = json.loads(out.strip())
+            return url if isinstance(fb, dict) and "T" in fb else None
         except Exception:  # noqa: BLE001
             return None
 
