@@ -44,7 +44,9 @@ ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 def _env(key: str, default: str = "") -> str:
     """os.environ first (start_wonder.sh exports .env), else read .env directly
     so the CLI works from a bare shell."""
-    if key in os.environ:
+    # An empty export (e.g. ROVER_URL= captured before `find --save`) falls
+    # through to .env, so a restart picks up the saved address.
+    if os.environ.get(key):
         return os.environ[key]
     try:
         with open(ENV_PATH) as f:
