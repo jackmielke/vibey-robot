@@ -325,7 +325,7 @@ def info() -> dict:
     if not ROVER_URL:
         return out
     try:
-        fb = status()
+        fb = status(timeout=1.0)   # the app waits on this; a live rover answers in ~70 ms
         v = fb.get("v")
         if isinstance(v, (int, float)):
             out["volts"] = round(v / 100 if v > 30 else v, 2)
@@ -336,9 +336,9 @@ def info() -> dict:
     return out
 
 
-def status() -> dict:
+def status(timeout: float = 3.0) -> dict:
     """Raw chassis feedback (includes battery voltage)."""
-    raw = _send({"T": 130}, timeout=3)
+    raw = _send({"T": 130}, timeout=timeout)
     try:
         return json.loads(raw)
     except ValueError:
