@@ -13,6 +13,7 @@ struct DriveView: View {
     @AppStorage("vibey.wmode") private var mode = "car"
     @State private var info: RoverInfo?
     @State private var reachable = true
+    @State private var showMap = false
 
     private var off: Bool { !(info?.connected ?? false) }
 
@@ -21,7 +22,19 @@ struct DriveView: View {
             VStack(spacing: 18) {
                 ScreenTitle(title: "Drive", subtitle: hint)
 
-                status
+                HStack {
+                    status
+                    Spacer()
+                    Button { driver.letGo(); showMap = true } label: {
+                        Label("Map", systemImage: "map.fill")
+                            .font(.system(.subheadline, design: .rounded).weight(.bold))
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(Capsule().fill(Palette.duck))
+                            .foregroundStyle(Palette.ink)
+                    }
+                    .buttonStyle(PressScale())
+                    .accessibilityLabel("Room map and drive by eye")
+                }
 
                 Picker("Controls", selection: $mode) {
                     Text("Car").tag("car"); Text("Pad").tag("pad"); Text("Stick").tag("stick")
@@ -60,6 +73,7 @@ struct DriveView: View {
         .onChange(of: speed) { _, s in driver.speed = s }
         .onChange(of: phase) { _, p in if p != .active { driver.letGo() } }
         .onDisappear { driver.letGo() }
+        .sheet(isPresented: $showMap) { RoomMapView().environmentObject(store) }
         .task {
             while !Task.isCancelled {
                 await refresh()

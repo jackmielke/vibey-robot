@@ -208,6 +208,43 @@ struct RoverInfo: Decodable {
     let riding: Bool?
     let online: Bool?
     let volts: Double?
+    let pilot: PilotStatus?
+}
+
+/// Drive-by-eye run (reachy_rover_pilot.status()).
+struct PilotStatus: Decodable {
+    let goal: String?
+    let step: Int?
+    let last: String?
+    let running: Bool?
+}
+
+/// GET :8772/rover/map. Metres, Vibey at (0,0), +y is the way Vibey faces.
+struct RoomMap {
+    struct Thing: Identifiable { let name: String; let x: Double; let y: Double; let missed: Bool; var id: String { name } }
+    struct Rover { let x: Double; let y: Double; let heading: Double; let seen: Bool }
+    var things: [Thing] = []
+    var rover: Rover?
+    var scans = 0
+    var scanning = false
+    var step = ""
+
+    init() {}
+    init(_ o: [String: Any]) {
+        let num = { (v: Any?) -> Double? in (v as? NSNumber)?.doubleValue }
+        things = (o["objects"] as? [[String: Any]] ?? []).compactMap { t in
+            guard let n = t["name"] as? String, let x = num(t["x"]), let y = num(t["y"]) else { return nil }
+            let missed = (t["missed"] as? NSNumber)?.boolValue ?? false
+            return Thing(name: n, x: x, y: y, missed: missed)
+        }
+        if let r = o["rover"] as? [String: Any], let x = num(r["x"]), let y = num(r["y"]) {
+            rover = Rover(x: x, y: y, heading: num(r["heading"]) ?? 0, seen: r["source"] as? String == "seen")
+        }
+        scans = (o["scans"] as? NSNumber)?.intValue ?? 0
+        let st = o["status"] as? [String: Any] ?? [:]
+        scanning = (st["scanning"] as? NSNumber)?.boolValue ?? false
+        step = st["step"] as? String ?? ""
+    }
 }
 
 enum APIError: LocalizedError {
@@ -339,6 +376,16 @@ struct VibeyAPI {
     }
     func roverRelease() async throws { _ = try await roverPost("/rover/release", [:]) }
     func roverStop() async throws { _ = try await roverPost("/rover/stop", [:], timeout: 4) }
+    /// Drive by eye: Vibey looks, makes a short move, looks again (up to 10).
+    func roverPilot(_ goal: String) async throws -> DriveResult {
+        try await roverPost("/rover/pilot", ["goal": goal], timeout: 8)
+    }
+    func roomMap() async throws -> RoomMap {
+        let data = try await request("\(chat)/rover/map", timeout: 6)
+        return RoomMap(try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:])
+    }
+    func roomScan() async throws -> DriveResult { try await roverPost("/rover/map/scan", [:], timeout: 8) }
+    func roomForget() async throws { _ = try await roverPost("/rover/map/forget", [:], timeout: 6) }
     private func roverPost(_ path: String, _ body: [String: Any], timeout: TimeInterval = 2) async throws -> DriveResult {
         let data = try await request("\(chat)\(path)", method: "POST", json: body, timeout: timeout)
         let r = try JSONDecoder().decode(DriveResponse.self, from: data)
