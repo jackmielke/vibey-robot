@@ -202,8 +202,21 @@ def _load_tts() -> str:
             try:
                 if name == "kokoro":
                     from kokoro_onnx import Kokoro
-                    _tts["obj"] = Kokoro(os.path.join(KOKORO_DIR, "kokoro-v1.0.onnx"),
-                                         os.path.join(KOKORO_DIR, "voices-v1.0.bin"))
+                    k = Kokoro(os.path.join(KOKORO_DIR, "kokoro-v1.0.onnx"),
+                               os.path.join(KOKORO_DIR, "voices-v1.0.bin"))
+                    # Kokoro sounds best but runs on the CPU. If this Mac can't
+                    # render it well ahead of real time (Low Power Mode does
+                    # that), every sentence would stall, so use Piper instead.
+                    k.create("Warming up.", voice=voice(), lang="en-us")
+                    t = time.time()
+                    a, sr = k.create("Okay, let me think about that for a second.",
+                                     voice=voice(), lang="en-us")
+                    rtf = (time.time() - t) / max(0.1, len(a) / sr)
+                    if rtf > 0.6 and TTS != "kokoro":
+                        print(f"[local] Kokoro too slow here ({rtf:.2f}x real time); "
+                              f"using Piper. LOCAL_TTS=kokoro forces it.", flush=True)
+                        continue
+                    _tts["obj"] = k
                 elif name == "piper":
                     from piper import PiperVoice
                     _tts["obj"] = PiperVoice.load(PIPER)
