@@ -39,6 +39,7 @@ SCAN_YAWS = [80, 40, 0, -40, -80]
 SCAN_PITCH = 0.12        # radians, a little down so the floor is in view
 SETTLE = 1.1             # seconds after a turn before the frame is trusted
 MERGE_M = 0.8            # same name within this distance = the same thing
+MERGE_DEG = 22           # ...or within this many degrees of each other
 DROP_AFTER = 2           # scans that miss a thing before it's forgotten
 
 # Dead reckoning, measured roughly on the real rover (2026-10-21): about 0.2 m/s
@@ -146,7 +147,8 @@ _PROMPT = (
     "across the photo from 0 (left edge) to 1 (right edge), and dist_m = your "
     "best guess of how far it is from the camera in metres, judged from its "
     "size and where it meets the floor (a door is 2 m tall, a chair seat is "
-    "45 cm high). At most 8 things, the clearest first.\n"
+    "45 cm high). At most 8 things, the clearest first. If two "
+    "are the same kind, tell them apart (\"white door\", \"glass door\").\n"
     "{rover}"
     "Answer ONLY JSON: {{\"objects\": [{{\"name\": \"couch\", \"x\": 0.3, "
     "\"dist_m\": 2.5}}], \"rover\": null}}"
@@ -167,6 +169,18 @@ def _goto(yaw_deg: float, duration: float = 0.8, pitch: float = SCAN_PITCH) -> N
         f"{REACHY_URL}/api/move/goto", data=json.dumps(body).encode(),
         method="POST", headers={"Content-Type": "application/json"})
     urllib.request.urlopen(req, timeout=6).read()
+
+
+def _actual_yaw() -> float | None:
+    """Where the head really points (degrees, positive = left). The first test
+    scan's body only turned ~40 of the 80 degrees asked, so trust the robot."""
+    try:
+        with urllib.request.urlopen(f"{REACHY_URL}/api/state/full", timeout=3) as r:
+            st = json.loads(r.read() or b"{}")
+        y = (st.get("head_pose") or {}).get("yaw")
+        return math.degrees(float(y)) if y is not None else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _tracking(on: bool) -> None:
@@ -235,17 +249,31 @@ def _place(x_frac, dist, look_deg: float, ox: float, oy: float):
     return round(ox + d * math.sin(b), 2), round(oy + d * math.cos(b), 2), bearing
 
 
-def _merge(seen: list[dict]) -> None:
+def _same(a: dict, b: dict, ox: float = 0.0, oy: float = 0.0) -> bool:
+    """Same name and either close on the map, or in the same direction at a
+    similar distance. Distance guesses swing a lot between views; direction
+    much less, so one door seen from two angles stays one door."""
+    if _slug(a["name"]) != _slug(b["name"]):
+        return False
+    if math.hypot(a["x"] - b["x"], a["y"] - b["y"]) <= MERGE_M:
+        return True
+    da, db = math.hypot(a["x"] - ox, a["y"] - oy), math.hypot(b["x"] - ox, b["y"] - oy)
+    ba = math.degrees(math.atan2(a["x"] - ox, a["y"] - oy))
+    bb = math.degrees(math.atan2(b["x"] - ox, b["y"] - oy))
+    return abs(_norm(ba - bb)) <= MERGE_DEG and max(da, db) <= 1.7 * max(0.3, min(da, db))
+
+
+def _merge(seen: list[dict], ox: float = 0.0, oy: float = 0.0) -> None:
     """Fold one scan into the map: average repeats, age out what's gone."""
     objs = _map["objects"]
     hit = set()
     for s in seen:
-        best, best_d = None, MERGE_M
+        best, best_d = None, 0.0
         for i, o in enumerate(objs):
-            if i in hit or _slug(o["name"]) != _slug(s["name"]):
+            if i in hit or not _same(o, s, ox, oy):
                 continue
             dd = math.hypot(o["x"] - s["x"], o["y"] - s["y"])
-            if dd <= best_d:
+            if best is None or dd < best_d:
                 best, best_d = i, dd
         if best is None:
             objs.append({**s, "seen": 1, "missed": 0})
@@ -290,8 +318,9 @@ def scan() -> str:
                 _goto(yaw)
                 time.sleep(SETTLE)
                 jpeg, err = reachy_scene._grab_frame()
+                real = _actual_yaw()
                 if jpeg:
-                    frames.append((_norm(oh - yaw), jpeg))
+                    frames.append((_norm(oh - (yaw if real is None else real)), jpeg))
         finally:
             try:
                 _goto(0, 1.0, pitch=0.0)
@@ -340,11 +369,18 @@ def scan() -> str:
         # Neighbouring views overlap, so one thing can show up twice in a scan.
         uniq: list[dict] = []
         for s in seen:
-            if not any(_slug(u["name"]) == _slug(s["name"]) and
-                       math.hypot(u["x"] - s["x"], u["y"] - s["y"]) < MERGE_M for u in uniq):
-                uniq.append(s)
+            u = next((u for u in uniq if _same(u, s, ox, oy)), None)
+            if u is None:
+                uniq.append({**s, "n": 1})
+            else:                          # average the two sightings
+                n = u["n"]
+                u["x"] = round((u["x"] * n + s["x"]) / (n + 1), 2)
+                u["y"] = round((u["y"] * n + s["y"]) / (n + 1), 2)
+                u["n"] = n + 1
+        for u in uniq:
+            u.pop("n", None)
         with _mu:
-            _merge(uniq)
+            _merge(uniq, ox, oy)
             if rover_hits:
                 rv = rover_hits[0]
                 _map["rover"] = {**rv, "source": "seen", "at": now, "drift_m": 0.0}
