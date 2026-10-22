@@ -1728,7 +1728,8 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                         "stage": STAGE["n"], "mic_source": MIC_SOURCE,
                         "speaker_source": os.environ.get("SPEAKER_SOURCE", "robot"),
                         "vision_model": os.environ.get("SCENE_MODEL", "gpt-4o-mini"),
-                        "text_model": __import__("reachy_brain").MODEL})
+                        "text_model": __import__("reachy_brain").MODEL,
+                        **_local_voices()})
         elif self.path.startswith("/macmusic"):
             import reachy_spotify
             self._json(reachy_spotify.status())
@@ -2120,6 +2121,13 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             try:
                 n = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(n)) if n else {}
+                if "local_voice" in body and "brain" not in body:
+                    # A voice change is live: the next sentence uses it, no restart.
+                    import reachy_local
+                    v = reachy_local.set_voice(str(body["local_voice"]))
+                    reachy_events.emit("system", f"local voice → {v}", icon="🗣")
+                    self._json({"ok": True, "local_voice": v})
+                    return
                 name = set_voice_brain(str(body.get("brain", "")))
                 reachy_events.emit("system", f"brain → {name}", icon="🧠")
                 if not STATE["asleep"]:
@@ -2836,6 +2844,14 @@ VOICE_BRAINS = {
     "local":    {"label": "Local", "module": "reachy_local",
                  "blurb": "Everything on this Mac: whisper, qwen3, Kokoro voice. Free, private, offline. Run tools/setup_local_voice.sh once."},
 }
+
+
+def _local_voices() -> dict:
+    try:
+        import reachy_local
+        return {"local_voice": reachy_local.voice(), "local_voices": reachy_local.VOICES}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _local_models() -> list:

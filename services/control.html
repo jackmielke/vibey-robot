@@ -15,6 +15,16 @@
   h1 { font-size:22px; margin:0; letter-spacing:.2px }
   .pill { padding:4px 10px; border-radius:999px; background:var(--off); font-size:12px; font-weight:600 }
   .pill.awake { background:var(--on); color:#052 }
+  .brainwrap { position:relative }
+  #status { cursor:pointer; user-select:none }
+  #status::after { content:" ▾"; opacity:.7 }
+  #brainmenu { position:absolute; top:calc(100% + 6px); left:0; z-index:60; width:300px; max-width:calc(100vw - 32px); background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.18); padding:6px }
+  #brainmenu[hidden] { display:none }
+  .bm-h { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); padding:8px 10px 4px }
+  .bm-item { display:block; width:100%; text-align:left; padding:7px 10px; border:0; background:none; color:var(--text); border-radius:8px; cursor:pointer; font:inherit }
+  .bm-item:hover { background:var(--field) }
+  .bm-item b { font-weight:600 } .bm-item.on b::before { content:"✓ "; color:var(--on) }
+  .bm-item small { display:block; color:var(--dim); font-size:12px; line-height:1.35 }
   .pill.offline { background:var(--bad); color:#fff }
   .big { margin-left:auto; padding:12px 22px; border-radius:12px; border:0; font-size:16px; font-weight:700; cursor:pointer; color:#052; background:var(--on) }
   .big.off { background:var(--bad); color:#fff }
@@ -200,7 +210,7 @@
 <div class=wrap>
 <header>
   <h1>Vibey</h1>
-  <span class=pill id=status>connecting…</span>
+  <span class=brainwrap><span class="pill" id=status role=button tabindex=0 title="Click to switch brain or voice">connecting…</span><div id=brainmenu hidden></div></span>
   <button class=ghost id=scribe title="Keep notes of the room and text them to Telegram">📝 Take notes</button>
   <span class="sub costchip" id=costchip title="OpenAI spend, live. Green dot: a paid voice connection is open. Click for the breakdown"><span class=dot id=costdot></span><span id=cost></span><span class=tick id=costtick></span><span class=bar><i id=costbar style="width:0"></i></span><div id=costpanel></div></span>
   <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
@@ -361,7 +371,7 @@ async function pollOnce(){
   p.disabled=false;
   const awake=!chat.asleep && !chat.off, busy=want.power!==null||!!chat.turning;
   // One plain answer to "what is it doing right now".
-  const sc=chat.scribe||{}, brainName=(brainInfo&&brainInfo.brains&&brainInfo.brains[brainInfo.brain]&&brainInfo.brains[brainInfo.brain].label)||(chat.voice_brain==='live'?'GPT-Live':'Realtime');
+  const sc=chat.scribe||{}, bOpts=(brainInfo&&brainInfo.options)||{}, bKey=want.brain||(brainInfo&&brainInfo.brain)||chat.voice_brain, brainName=(bOpts[bKey]&&bOpts[bKey].label)||(chat.voice_brain==='live'?'GPT-Live':'Realtime');
   if(!busy&&!chat.off&&!sc.on&&(chat.stage||3)<3){ st.textContent=chat.stage===1?'stage 1 · robot alone':'stage 2 · Mac, no cloud'; st.className='pill awake'; } else
   st.textContent=busy?((want.power??(chat.turning==='on'))?'waking up…':'going to sleep…'):chat.off?'off':sc.on?`📝 taking notes · ${sc.minutes||0} min · not talking`:awake?(chat.speaking?`talking · ${brainName}`:`voice on · ${brainName} · listening`):'asleep · say "hey vibey"';
   st.className='pill'+((awake||sc.on)&&!busy?' awake':'');
@@ -481,11 +491,31 @@ $('svol').oninput=e=>$('svolv').textContent=e.target.value+'% on every wake';
 $('svol').onchange=async e=>{ await j('/dials',{start_volume:sliderToVol(+e.target.value)}); poll(); };
 
 // ---- brain ----------------------------------------------------------------
+async function pickBrain(k){ want.brain=k; want.at=Date.now(); renderBrain(); const r=await j('/brain',{brain:k}); if(!r||r.error){ want.brain=null; alert((r&&r.error)||'brain switch failed'); } poll(); }
+// Local voice: applies from the next sentence, no restart.
+async function pickVoice(v){ if(brainInfo) brainInfo.local_voice=v; renderBrain(); const r=await j('/brain',{local_voice:v}); if(!r||r.error) alert((r&&r.error)||'voice change failed'); poll(); }
+// The status pill opens a menu of brains (and, on Local, voices): the place
+// you look when you want to know which brain is talking is where you change it.
+function renderBrainMenu(){
+  const m=$('brainmenu'); if(m.hidden||!brainInfo) return;
+  const opts=brainInfo.options||{}, shown=want.brain||brainInfo.brain;
+  let h='<div class=bm-h>Brain</div>'+Object.entries(opts).map(([k,v])=>`<button class="bm-item ${k===shown?'on':''}" data-b="${k}"><b>${v.label}${want.brain===k?' …':''}</b><small>${v.blurb||''}</small></button>`).join('');
+  if(shown==='local'&&brainInfo.local_voices) h+='<div class=bm-h>Voice</div>'+Object.entries(brainInfo.local_voices).map(([k,v])=>`<button class="bm-item ${k===brainInfo.local_voice?'on':''}" data-v="${k}"><b>${v}</b></button>`).join('');
+  if(m._h===h) return;   // the poll repaints every 1.5s; don't swap buttons out from under a click
+  m._h=h; m.innerHTML=h;
+  m.querySelectorAll('[data-b]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); pickBrain(b.dataset.b); });
+  m.querySelectorAll('[data-v]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); pickVoice(b.dataset.v); });
+}
+$('status').onclick=e=>{ e.stopPropagation(); const m=$('brainmenu'); m.hidden=!m.hidden; renderBrainMenu(); };
+$('status').onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); $('status').click(); } };
+document.addEventListener('click',e=>{ const m=$('brainmenu'); if(!m.hidden&&!m.contains(e.target)) m.hidden=true; });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') $('brainmenu').hidden=true; });
 function renderBrain(){
   const seg=$('brain'); const opts=brainInfo.options||{};
   const shown=want.brain||brainInfo.brain;
   seg.innerHTML=Object.entries(opts).map(([k,v])=>`<button data-b="${k}" class="${k===shown?'on':''}">${v.label}${want.brain===k?' …':''}</button>`).join('');
-  seg.querySelectorAll('button').forEach(b=>b.onclick=async()=>{ want.brain=b.dataset.b; want.at=Date.now(); renderBrain(); const r=await j('/brain',{brain:b.dataset.b}); if(!r||r.error){ want.brain=null; alert((r&&r.error)||'brain switch failed'); } poll(); });
+  seg.querySelectorAll('button').forEach(b=>b.onclick=()=>pickBrain(b.dataset.b));
+  renderBrainMenu();
   const cur=opts[shown]; const awake=chat&&!chat.asleep&&!chat.off;
   $('brainsub').textContent=(cur?cur.blurb:'')+(want.brain?(awake?' · restarting the conversation on it…':' · saved, used on next wake'):'');
 }

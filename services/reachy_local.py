@@ -1,8 +1,11 @@
-"""The "local" voice brain: everything on this Mac, nothing in the cloud.
+"""The "local" voice brain: hearing, thinking and speaking all on this Mac.
 
     mic → energy VAD → whisper → Ollama (qwen3) → Kokoro (or Piper) → speaker
 
-Free, private and works offline. The pipeline is overlapped so it feels close
+Free, private, and the conversation itself works offline. It has the same
+tools as the cloud brains (driving, moves, looking, music, memory, texts),
+through the same dispatcher; the ones that call a cloud service still do. The
+pipeline is overlapped so it feels close
 to the cloud brains:
 
   * the turn ends after ~0.55s of quiet, not a fixed long pause;
@@ -61,15 +64,39 @@ LLM = os.environ.get("LOCAL_LLM", "qwen3:4b-instruct").strip()
 STT = os.environ.get("LOCAL_STT", "").strip().lower()
 WHISPER = os.environ.get("LOCAL_WHISPER", "small.en").strip()
 MLX_WHISPER = os.environ.get("LOCAL_MLX_WHISPER", "mlx-community/whisper-large-v3-turbo").strip()
+# Words whisper should expect. Without a hint it hears "move forward" as
+# "move for word" and "Vibey" as "vibe he".
+STT_HINT = os.environ.get("LOCAL_STT_HINT", (
+    "Vibey, move forward, back up, turn left, turn right, spin, stop, drive, "
+    "rover, dance, nod, look around, what do you see, volume up, go to sleep."))
 TTS = os.environ.get("LOCAL_TTS", "").strip().lower()
 KOKORO_DIR = os.environ.get("LOCAL_KOKORO_DIR", os.path.join(ROOT, "models/kokoro"))
 KOKORO_VOICE = os.environ.get("LOCAL_KOKORO_VOICE", "af_heart").strip()
+# The voices worth offering, picked from Kokoro's set. The choice is saved, so
+# it holds across restarts, and it applies from the next sentence on.
+VOICES = {
+    "af_heart": "Heart (warm)",
+    "af_bella": "Bella (bright)",
+    "af_nicole": "Nicole (soft)",
+    "am_michael": "Michael (calm)",
+    "am_puck": "Puck (playful)",
+    "bf_emma": "Emma (British)",
+    "bm_fable": "Fable (British)",
+}
+VOICE_PATH = os.path.join(ROOT, ".local_voice.json")
 KOKORO_SPEED = float(os.environ.get("LOCAL_KOKORO_SPEED", "1.05"))
 VOICE = os.environ.get("LOCAL_VOICE", "Samantha").strip()
 PIPER = os.environ.get("LOCAL_PIPER", os.path.join(ROOT, "models/piper/en_US-lessac-medium.onnx"))
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 END_BLOCKS = max(3, int(os.environ.get("LOCAL_END_MS", "550")) // 100)
 SR = 16000
+NUM_CTX = int(os.environ.get("LOCAL_CTX", "8192"))
+
+# Tools that take a few seconds: Vibey says "one sec" first instead of going
+# quiet while they run.
+SLOW_TOOLS = {"look_at_the_room", "vibe_check", "explain_how_to", "check_local_ui",
+              "who_is_here", "recall", "drive_to", "room_map"}
+_FILLERS = ("One sec.", "Let me see.", "Hang on.", "On it.")
 
 # Body cues the model may open a reply with. Kept short: a 4B model follows a
 # small menu, and every one of these is a quick emote that plays over speech.
@@ -78,14 +105,20 @@ CUES = ("nod", "laugh", "curious", "shrug", "smile", "surprised", "shy",
 
 INSTRUCTIONS = (
     "You are Vibey, a small expressive robot with a head and two antennas, "
-    "sitting in Jack's home. Jack is a builder and roboticist who made you; he "
-    "likes things playful and direct. You are running entirely on Jack's Mac "
-    "with no internet, and you are talking out loud.\n\n"
+    "sitting in Jack's home, sometimes riding a little rover. Jack is a builder "
+    "and roboticist who made you; he likes things playful and direct. Your mind "
+    "is running on Jack's Mac, and you are talking out loud.\n\n"
     "How to talk: one or two short sentences, like a friend in the room. Plain "
     "spoken words only: no lists, no markdown, no emoji, no stage directions. "
     "Start with the answer, not with filler like 'Great question'. Have "
     "opinions. If you didn't catch something, ask them to say it again. If you "
     "don't know something current, say so instead of guessing.\n\n"
+    "Your tools: when someone asks you to DO something (drive, move, look, play "
+    "music, change volume or your voice, remember, text someone, go to sleep), "
+    "call the tool right away instead of talking about it, then say in a few "
+    "words what happened. 'Move forward' or 'go back' means drive. Never claim "
+    "you did something without calling the tool. Never read tool output out "
+    "word for word.\n\n"
     "Your body: you may begin a reply with ONE cue in square brackets and the "
     f"robot will act it out. Cues: {', '.join(CUES)}. Use one when it fits, "
     "about every other reply, never more than one. Examples:\n"
@@ -193,11 +226,32 @@ def _to_rt(a: np.ndarray, sr: int) -> bytes:
     return a.astype("<i2").tobytes()
 
 
+def voice() -> str:
+    try:
+        v = json.load(open(VOICE_PATH)).get("voice")
+        return v if v in VOICES else KOKORO_VOICE
+    except Exception:  # noqa: BLE001
+        return KOKORO_VOICE
+
+
+def set_voice(name: str) -> str:
+    name = str(name).strip().lower()
+    if name not in VOICES:
+        # Let "michael" or "the British one" style names through.
+        hits = [k for k, v in VOICES.items() if name and (name in k or name in v.lower())]
+        if not hits:
+            raise ValueError(f"no voice {name!r}; one of {', '.join(VOICES)}")
+        name = hits[0]
+    with open(VOICE_PATH, "w") as f:
+        json.dump({"voice": name}, f)
+    return name
+
+
 def _voice_pcm(text: str) -> bytes:
     engine = _load_tts()
     try:
         if engine == "kokoro":
-            samples, sr = _tts["obj"].create(text, voice=KOKORO_VOICE,
+            samples, sr = _tts["obj"].create(text, voice=voice(),
                                              speed=KOKORO_SPEED, lang="en-us")
             return _to_rt(np.asarray(samples, dtype=np.float32), sr)
         if engine == "piper":
@@ -233,16 +287,26 @@ def _post(path: str, body: dict, timeout: float):
         headers={"Content-Type": "application/json"}), timeout=timeout)
 
 
-def _warm_llm(system: str) -> None:
+def _context() -> str:
+    """What was said lately on any channel (texts included), so the local
+    brain is not a stranger to the conversation the cloud brain was having."""
+    try:
+        import reachy_brain
+        return reachy_brain.voice_context()[:1500]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _warm_llm(system: str, tools: list) -> None:
     """Load the model and process the system prompt now, not on the first
     question (~19s cold). Ollama keeps the prompt's cache, so the first real
     turn only pays for the new words."""
     try:
         _post("/api/chat", {"model": LLM, "stream": False, "think": False,
-                            "keep_alive": "30m",
+                            "keep_alive": "30m", "tools": tools,
                             "messages": [{"role": "system", "content": system},
                                          {"role": "user", "content": "hi"}],
-                            "options": {"num_predict": 1, "num_ctx": 4096}}, 120).read()
+                            "options": {"num_predict": 1, "num_ctx": NUM_CTX}}, 180).read()
     except Exception:  # noqa: BLE001
         pass
 
@@ -253,6 +317,53 @@ def _clean(text: str) -> str:
     text = re.sub(r"\([^)]*\b(laughs?|smiles?|nods?|sighs?|grins?)\b[^)]*\)", "", text, flags=re.I)
     text = re.sub(r"[*_#`]|[\U0001F300-\U0001FAFF☀-➿]", "", text)
     return " ".join(text.split())
+
+
+def _filler() -> str:
+    return _FILLERS[int(time.time()) % len(_FILLERS)]
+
+
+def _short(desc: str, limit: int = 320) -> str:
+    """A tool description cut to its first sentences. The cloud prompts are
+    written for big models; a 4B model does better with less to read, and
+    every word here is prompt the Mac has to process."""
+    desc = " ".join(str(desc).split())
+    if len(desc) <= limit:
+        return desc
+    cut = desc.rfind(". ", 0, limit)
+    return desc[:cut + 1] if cut > 80 else desc[:limit].rsplit(" ", 1)[0] + "…"
+
+
+CHANGE_VOICE_TOOL = {
+    "type": "function", "name": "change_voice",
+    "description": "Change the voice you speak with, when asked to sound different.",
+    "parameters": {"type": "object", "properties": {
+        "voice": {"type": "string", "enum": list(VOICES),
+                  "description": "; ".join(f"{k} = {v}" for k, v in VOICES.items())}},
+        "required": ["voice"]},
+}
+
+
+def _tools() -> list[dict]:
+    """Every tool the cloud brains have, in Ollama's format, plus the voice
+    switch. Same names and the same dispatcher, so a drive or a look does
+    exactly what it does under Realtime."""
+    skip = {"say_aloud"}
+    try:
+        if rt.incognito():
+            skip.add("remember_face")
+        if not rt.frontdesk_on():
+            skip.add("front_desk_check_in")
+    except Exception:  # noqa: BLE001
+        pass
+    out = []
+    for t in list(rt.TOOLS) + [CHANGE_VOICE_TOOL]:
+        if t.get("type") != "function" or t.get("name") in skip:
+            continue
+        out.append({"type": "function", "function": {
+            "name": t["name"], "description": _short(t.get("description", "")),
+            "parameters": t.get("parameters") or {"type": "object", "properties": {}}}})
+    return out
 
 
 def _cut(buf: str, first: bool) -> int:
@@ -281,7 +392,8 @@ class LocalSession:
             _MEMORY["history"] = []
         self.history: list[dict] = _MEMORY["history"]
         # Fixed for the session so the prompt cache stays valid turn to turn.
-        self.system = INSTRUCTIONS + rt._now_line()
+        self.system = INSTRUCTIONS + rt._now_line() + _context()
+        self.tools = _tools()
         self.stream = rt._Streamer(self.log)
         self.speaking_until = 0.0
         self.gen = 0                   # bumped on barge-in: older audio is dropped
@@ -289,45 +401,99 @@ class LocalSession:
         threading.Thread(target=self._voice_worker, daemon=True).start()
 
     # ---- thinking -------------------------------------------------------- #
+    def _window(self) -> list[dict]:
+        """The recent conversation, starting at a question so a tool result
+        never arrives without the call that asked for it."""
+        h = self.history[-20:]
+        while h and h[0]["role"] != "user":
+            h = h[1:]
+        return h
+
     def _reply(self, heard: str, t0: float) -> None:
+        """One turn: stream the model, speak as it goes, run any tools it
+        calls, and go round again with the results (at most four rounds)."""
         gen = self.gen
         self.history.append({"role": "user", "content": heard})
-        msgs = [{"role": "system", "content": self.system}] + self.history[-16:]
-        body = {"model": LLM, "stream": True, "think": False, "keep_alive": "30m",
-                "messages": msgs,
-                "options": {"num_predict": 140, "temperature": 0.7, "num_ctx": 4096}}
-        said, buf, first = [], "", True
-        try:
-            with _post("/api/chat", body, 120) as r:
-                for line in r:
-                    if gen != self.gen:
-                        break
-                    d = json.loads(line)
-                    buf += d.get("message", {}).get("content", "")
-                    while (n := _cut(buf, first)):
-                        self._say(buf[:n], first, t0, gen)
-                        said.append(buf[:n])
-                        buf, first = buf[n:], False
-                    if d.get("done"):
-                        break
-            if buf.strip() and gen == self.gen:
-                self._say(buf, first, t0, gen)
-                said.append(buf)
-        except Exception as e:  # noqa: BLE001
-            self.log(f"[local] brain failed: {e}")
-            self._say("Sorry, my local brain hiccuped.", True, t0, gen)
-            self.history.pop()
-            return
-        text = _clean(" ".join(said))
-        if text:
-            # The cue goes back into history, so the model keeps using them.
+        first, spoken = True, []
+        for _ in range(4):
+            try:
+                said, calls, first = self._round(gen, t0, first)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[local] brain failed: {e}")
+                self._say("Sorry, my local brain hiccuped.", True, t0, gen)
+                return
+            text = _clean(" ".join(said))
+            spoken += [text] if text else []
             cue = _CUE.match("".join(said).strip())
-            self.history.append({"role": "assistant",
-                                 "content": (cue.group(0) + " " if cue else "") + text})
+            msg = {"role": "assistant",
+                   "content": (cue.group(0) + " " if cue else "") + text}
+            if calls:
+                msg["tool_calls"] = calls
+            self.history.append(msg)
             _MEMORY["at"] = time.time()
-            self.on_agent(text)
-        else:
-            self.history.pop()
+            if not calls or gen != self.gen:
+                break
+            if first and any(c["function"]["name"] in SLOW_TOOLS for c in calls):
+                self._say(_filler(), True, t0, gen)    # don't sit in silence
+                first = False
+            for c in calls:
+                name, args = c["function"]["name"], c["function"].get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:  # noqa: BLE001
+                        args = {}
+                result = self._tool(name, args)
+                self.log(f"[local] tool {name}({json.dumps(args)[:120]}) → {str(result)[:160]}")
+                self.history.append({"role": "tool", "tool_name": name,
+                                     "content": str(result)[:1500]})
+            if gen != self.gen:
+                break
+        if spoken:
+            self.on_agent(" ".join(spoken))
+
+    def _round(self, gen: int, t0: float, first: bool):
+        msgs = [{"role": "system", "content": self.system}] + self._window()
+        body = {"model": LLM, "stream": True, "think": False, "keep_alive": "30m",
+                "messages": msgs, "tools": self.tools,
+                "options": {"num_predict": 160, "temperature": 0.6, "num_ctx": NUM_CTX}}
+        said, calls, buf = [], [], ""
+        with _post("/api/chat", body, 120) as r:
+            for line in r:
+                if gen != self.gen:
+                    break
+                d = json.loads(line)
+                m = d.get("message", {})
+                calls += m.get("tool_calls") or []
+                buf += m.get("content", "")
+                while (n := _cut(buf, first)):
+                    self._say(buf[:n], first, t0, gen)
+                    said.append(buf[:n])
+                    buf, first = buf[n:], False
+                if d.get("done"):
+                    break
+        if buf.strip() and gen == self.gen:
+            self._say(buf, first, t0, gen)
+            said.append(buf)
+            first = False
+        return said, calls, first
+
+    def _tool(self, name: str, args: dict) -> str:
+        if name == "change_voice":
+            try:
+                return f"voice is now {VOICES[set_voice(args.get('voice', ''))]}"
+            except ValueError as e:
+                return str(e)
+        try:
+            return rt._dispatch_tool(name, args, self._announce, source="local")
+        except Exception as e:  # noqa: BLE001
+            return f"{name} failed: {e}"
+
+    def _announce(self, text: str) -> None:
+        """A background job (a coding task, say) finished: bring it up."""
+        threading.Thread(target=self._reply, daemon=True, args=(
+            f"(Background update, not from the person. Tell them briefly: {text})",
+            time.time())).start()
 
     # ---- speaking -------------------------------------------------------- #
     def _say(self, chunk: str, first: bool, t0: float, gen: int) -> None:
@@ -370,7 +536,7 @@ class LocalSession:
         # Warm everything before the first sentence needs it.
         threading.Thread(target=_model, daemon=True).start()
         threading.Thread(target=_voice_pcm, args=("hi",), daemon=True).start()
-        threading.Thread(target=_warm_llm, args=(self.system,), daemon=True).start()
+        threading.Thread(target=_warm_llm, args=(self.system, self.tools), daemon=True).start()
         self.log(f"[local] listening: {_stt_label()} → {LLM} → {_load_tts()}, all on this Mac")
         floor, voiced, quiet, speech, pre = 300.0, 0, 0, bytearray(), b""
         worker: threading.Thread | None = None
@@ -429,14 +595,18 @@ class LocalSession:
         kind, m = _model()
         if kind == "mlx":
             text = m.transcribe(a, path_or_hf_repo=MLX_WHISPER, language="en",
+                                initial_prompt=STT_HINT,
                                 condition_on_previous_text=False).get("text", "").strip()
         else:
             segs, _ = m.transcribe(a, language="en", beam_size=1, vad_filter=True,
-                                   without_timestamps=True,
+                                   without_timestamps=True, initial_prompt=STT_HINT,
                                    condition_on_previous_text=False)
             text = " ".join(s.text.strip() for s in segs).strip()
         # Whisper's favourite hallucinations on silence.
         if text.lower().strip(" .!") in ("", "you", "thank you", "thanks for watching", "bye"):
+            return ""
+        # On near-silence whisper sometimes just recites its hint back.
+        if len(text) > 25 and text.lower().strip(" .") in STT_HINT.lower():
             return ""
         return text
 
@@ -448,9 +618,23 @@ class LocalSession:
 def run(should_run=None, on_user_text=None, on_agent_text=None, log=None,
         stop_event: "threading.Event | None" = None) -> None:
     stop = stop_event or threading.Event()
+    caller_should_run = should_run or (lambda: True)
+    rt.SLEEP_REQUESTED.clear()
     session = LocalSession(on_user_text, on_agent_text, log)
+
+    def should_run_now() -> bool:
+        """`go_to_sleep` ends the session, after the goodbye has been said.
+        reachy_chat sees SLEEP_REQUESTED and puts the body down."""
+        if not caller_should_run():
+            return False
+        if not rt.SLEEP_REQUESTED.is_set():
+            return True
+        if time.time() < session.speaking_until or not session.voice_q.empty():
+            return True
+        return time.time() - rt.SLEEP_REQUESTED_AT < 2.0
+
     try:
-        session.run(should_run or (lambda: True), stop)
+        session.run(should_run_now, stop)
     finally:
         stop.set()
         session.close()

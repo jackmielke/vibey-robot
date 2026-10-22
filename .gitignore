@@ -22,6 +22,7 @@ transcripts/
 .off
 .telegram_contacts.json
 .voice_brain.json
+.local_voice.json
 notes/
 .mic_source.json
 .speaker_source.json
