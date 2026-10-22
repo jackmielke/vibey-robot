@@ -168,7 +168,7 @@ def _goto(yaw_deg: float, duration: float = 0.8, pitch: float = SCAN_PITCH) -> N
     req = urllib.request.Request(
         f"{REACHY_URL}/api/move/goto", data=json.dumps(body).encode(),
         method="POST", headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=6).read()
+    urllib.request.urlopen(req, timeout=12).read()
 
 
 def _actual_yaw() -> float | None:
@@ -184,11 +184,23 @@ def _actual_yaw() -> float | None:
 
 
 def _tracking(on: bool) -> None:
+    """Face-following and speech wobble, together (as reachy_chat does)."""
+    for what in ("tracking", "wobbling"):
+        try:
+            req = urllib.request.Request(
+                f"{REACHY_URL}/api/media/{what}/{'enable' if on else 'disable'}",
+                data=b"", method="POST", headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=6).read()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _idle(pause: bool) -> None:
+    """The breathing idle sends a head goto every ~2 s with the body centred,
+    which undid each scan turn on the first real test. Hold it off meanwhile."""
     try:
-        req = urllib.request.Request(
-            f"{REACHY_URL}/api/media/tracking/{'enable' if on else 'disable'}",
-            data=b"", method="POST", headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=6).read()
+        import reachy_idle
+        reachy_idle.pause() if pause else reachy_idle.resume()
     except Exception:  # noqa: BLE001
         pass
 
@@ -293,6 +305,16 @@ def _merge(seen: list[dict], ox: float = 0.0, oy: float = 0.0) -> None:
 
 def scan() -> str:
     """Look around, update the map, return a short summary. Blocks ~10-20 s."""
+    try:
+        out = _scan()
+    except Exception as e:  # noqa: BLE001
+        print(f"[roommap] scan failed: {e!r}", flush=True)
+        out = f"the scan failed: {str(e)[:100]}"
+    _state["last"] = out
+    return out
+
+
+def _scan() -> str:
     import reachy_scene
     ok, why = reachy_scene._eyes_open()
     if not ok:
@@ -311,16 +333,30 @@ def scan() -> str:
         with _mu:
             ox, oy, oh = _observer()
         frames: list[tuple[float, bytes]] = []
+        skipped: list[str] = []
+        _idle(True)
         _tracking(False)
         try:
             for yaw in SCAN_YAWS:
                 _state["step"] = f"looking {'left' if yaw > 0 else 'right' if yaw < 0 else 'ahead'}"
-                _goto(yaw)
-                time.sleep(SETTLE)
+                # One bad view (a Wi-Fi blip timing out the move) skips that
+                # angle instead of ending the whole scan.
+                try:
+                    _goto(yaw)
+                    time.sleep(0.8 + SETTLE)
+                    real = _actual_yaw()
+                    if real is not None and abs(real - yaw) > 15:
+                        _goto(yaw, 0.6)          # something nudged it; once more
+                        time.sleep(0.6 + SETTLE)
+                        real = _actual_yaw()
+                except Exception as e:  # noqa: BLE001
+                    skipped.append(f"{yaw:+d}°: {str(e)[:60]}")
+                    continue
                 jpeg, err = reachy_scene._grab_frame()
-                real = _actual_yaw()
                 if jpeg:
                     frames.append((_norm(oh - (yaw if real is None else real)), jpeg))
+                else:
+                    skipped.append(f"{yaw:+d}°: {err}")
         finally:
             try:
                 _goto(0, 1.0, pitch=0.0)
@@ -328,8 +364,12 @@ def scan() -> str:
                 pass
             if _tracking_wanted():
                 _tracking(True)
+            _idle(False)
+        if skipped:
+            print(f"[roommap] skipped views: {'; '.join(skipped)}", flush=True)
         if not frames:
-            return "my camera didn't give me any pictures to map with"
+            return ("my camera didn't give me any pictures to map with"
+                    + (f" ({skipped[0]})" if skipped else ""))
         _state["step"] = f"thinking about {len(frames)} pictures"
         answers: list[dict | None] = [None] * len(frames)
         errors: list[str] = []
@@ -390,6 +430,8 @@ def scan() -> str:
             _save()
             names = [o["name"] for o in _map["objects"]]
         bits = [f"{len(uniq)} things this time"]
+        if skipped:
+            bits.append(f"skipped {len(skipped)} of {len(SCAN_YAWS)} views")
         if rover_hits:
             bits.append("spotted the rover")
         if errors and len(errors) == len(frames):

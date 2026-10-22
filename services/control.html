@@ -672,6 +672,7 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   async function load(){ m=await j('/rover/map'); draw(); const st=m&&m.status||{};
     $('mapscan').disabled=!!st.scanning;
     $('mapsub').textContent=st.scanning?(st.step||'looking around')+'…':
+      st.last&&!/^mapped/.test(st.last)?st.last:
       m&&m.scans?`${m.objects.length} things from ${m.scans} scan${m.scans>1?'s':''} · tap one to drive there`:'Vibey looks around and pins what it sees';
     clearTimeout(pollT); if(st.scanning) pollT=setTimeout(load,800); }
   $('mapscan').onclick=async()=>{ $('mapsub').textContent='starting…'; const r=await j('/rover/map/scan',{});
