@@ -264,11 +264,18 @@ def _place(x_frac, dist, look_deg: float, ox: float, oy: float):
     return round(ox + d * math.sin(b), 2), round(oy + d * math.cos(b), 2), bearing
 
 
+def _kind(name: str) -> str:
+    """The head noun: 'metal trash can' and 'silver trash can' are both a can,
+    'electric fan' and 'small fan' both a fan. Views rename things freely."""
+    w = (_slug(name).split() or [""])[-1]
+    return w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+
+
 def _same(a: dict, b: dict, ox: float = 0.0, oy: float = 0.0) -> bool:
-    """Same name and either close on the map, or in the same direction at a
+    """Same kind of thing and either close on the map, or in the same direction at a
     similar distance. Distance guesses swing a lot between views; direction
     much less, so one door seen from two angles stays one door."""
-    if _slug(a["name"]) != _slug(b["name"]):
+    if _kind(a["name"]) != _kind(b["name"]):
         return False
     if math.hypot(a["x"] - b["x"], a["y"] - b["y"]) <= MERGE_M:
         return True
@@ -420,6 +427,8 @@ def _scan() -> str:
                 u["x"] = round((u["x"] * n + s["x"]) / (n + 1), 2)
                 u["y"] = round((u["y"] * n + s["y"]) / (n + 1), 2)
                 u["n"] = n + 1
+                if len(s["name"]) > len(u["name"]):
+                    u["name"] = s["name"]
         for u in uniq:
             u.pop("n", None)
         with _mu:
