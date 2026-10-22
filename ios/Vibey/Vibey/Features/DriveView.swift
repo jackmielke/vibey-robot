@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The rover's wheels, same as the Wheels panel on the Mac: hold a pad button
-/// (or push the joystick) to drive, let go to stop. While a finger is down the
+/// The rover's wheels, same as the Wheels panel on the Mac: gas and steering
+/// sliders (Car), a hold-to-drive pad, or a joystick. Let go to stop. While a finger is down the
 /// move is resent every 250 ms (150 ms for the stick); the chat service keeps
 /// the rover going only ~0.6 s per call, so a dropped request, leaving the
 /// screen or locking the phone all end in a stop.
@@ -10,7 +10,7 @@ struct DriveView: View {
     @Environment(\.scenePhase) private var phase
     @StateObject private var driver = RoverDriver()
     @AppStorage("vibey.wspeed") private var speed = "medium"
-    @AppStorage("vibey.wmode") private var mode = "pad"
+    @AppStorage("vibey.wmode") private var mode = "car"
     @State private var info: RoverInfo?
     @State private var reachable = true
 
@@ -19,18 +19,22 @@ struct DriveView: View {
     var body: some View {
         SpaceScreen {
             VStack(spacing: 18) {
-                ScreenTitle(title: "Drive", subtitle: mode == "pad" ? "Hold a button. Let go to stop." : "Push to drive, sideways to spin.")
+                ScreenTitle(title: "Drive", subtitle: hint)
 
                 status
 
                 Picker("Controls", selection: $mode) {
-                    Text("Pad").tag("pad"); Text("Joystick").tag("stick")
+                    Text("Car").tag("car"); Text("Pad").tag("pad"); Text("Stick").tag("stick")
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: mode) { _, _ in driver.letGo() }
 
                 Spacer(minLength: 0)
-                if mode == "pad" { pad } else { Joystick(driver: driver, disabled: off) }
+                switch mode {
+                case "pad": pad
+                case "stick": Joystick(driver: driver, disabled: off)
+                default: carControls
+                }
                 Spacer(minLength: 0)
 
                 Button { driver.halt() } label: {
@@ -64,6 +68,14 @@ struct DriveView: View {
         }
     }
 
+    private var hint: String {
+        switch mode {
+        case "pad": return "Hold a button. Let go to stop."
+        case "stick": return "Push to drive, sideways to spin."
+        default: return "Gas on the left, steering on the right."
+        }
+    }
+
     // MARK: Status
 
     private var status: some View {
@@ -87,6 +99,17 @@ struct DriveView: View {
         driver.api = store.api
         do { info = try await store.api.roverInfo(); reachable = true }
         catch { info = nil; reachable = false }
+    }
+
+    // MARK: Car (gas and steering apart, use both thumbs)
+
+    private var carControls: some View {
+        HStack(alignment: .center) {
+            CarTrack(vertical: true, label: "GAS", driver: driver, disabled: off)
+            Spacer(minLength: 12)
+            CarTrack(vertical: false, label: "STEER", driver: driver, disabled: off)
+        }
+        .padding(.horizontal, 8)
     }
 
     // MARK: Pad (same layout as the Mac panel)
@@ -128,6 +151,7 @@ final class RoverDriver: ObservableObject {
     var api = VibeyAPI(host: "", token: "")
     var speed = "medium"
     private var wheels: (Double, Double)?
+    private var gas = 0.0, turn = 0.0
     private var loop: Task<Void, Never>?
 
     func hold(_ a: String) {
@@ -146,6 +170,16 @@ final class RoverDriver: ObservableObject {
         let fresh = !steering
         wheels = v; action = nil; steering = true
         if fresh { Haptics.soft(); run(every: 0.15) }
+    }
+
+    /// Car mode. Gas alone drives straight, steering alone spins in place,
+    /// both together arc, and in reverse the steering flips so it backs up
+    /// like a car (same mix as the Mac panel).
+    func car(gas g: Double? = nil, steer s: Double? = nil) {
+        if let g { gas = g }
+        if let s { turn = s }
+        let moving = abs(gas) > 0.08
+        steer(x: (moving ? 0.7 : 1) * (gas < -0.08 ? -turn : turn), y: gas)
     }
 
     /// Let go of `only` (or anything). Eases to a stop on the Mac side.
@@ -170,6 +204,7 @@ final class RoverDriver: ObservableObject {
     private func end() {
         loop?.cancel(); loop = nil
         action = nil; wheels = nil; steering = false
+        gas = 0; turn = 0
     }
 
     private func run(every: Double) {
@@ -248,6 +283,66 @@ private struct HoldKey: View {
         .onChange(of: down) { _, d in d ? driver.hold(action) : driver.letGo(action) }
         .accessibilityLabel(action.replacingOccurrences(of: "_", with: " "))
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// One Car slider: vertical is gas (up forward, down reverse), horizontal is
+/// steering. Each has its own gesture, so both thumbs work at once.
+private struct CarTrack: View {
+    let vertical: Bool
+    let label: String
+    @ObservedObject var driver: RoverDriver
+    let disabled: Bool
+    @State private var knob: CGFloat = 0
+    @GestureState private var down = false
+    private let long: CGFloat = 230, short: CGFloat = 76
+
+    var body: some View {
+        let reach = long / 2 - 34
+        VStack(spacing: 8) {
+            ZStack {
+                Capsule()
+                    .fill(Palette.ink.opacity(0.5))
+                    .overlay(Capsule().stroke(.white.opacity(down ? 0.5 : 0.2), lineWidth: 2))
+                Image(systemName: vertical ? "arrow.up" : "arrow.left")
+                    .offset(x: vertical ? 0 : -long / 2 + 18, y: vertical ? -long / 2 + 18 : 0)
+                Image(systemName: vertical ? "arrow.down" : "arrow.right")
+                    .offset(x: vertical ? 0 : long / 2 - 18, y: vertical ? long / 2 - 18 : 0)
+                Circle()
+                    .fill(down ? AnyShapeStyle(Palette.live)
+                               : AnyShapeStyle(LinearGradient(colors: [Palette.shellTop, Palette.shellBottom],
+                                                              startPoint: .top, endPoint: .bottom)))
+                    .frame(width: 60, height: 60)
+                    .shadow(color: (down ? Palette.live : .white).opacity(0.5), radius: 12)
+                    .offset(x: vertical ? 0 : knob, y: vertical ? knob : 0)
+            }
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(.white.opacity(0.4))
+            .frame(width: vertical ? short : long, height: vertical ? long : short)
+            .contentShape(Capsule())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .updating($down) { _, s, _ in s = true }
+                    .onChanged { g in
+                        let d = max(-reach, min(reach, (vertical ? g.location.y : g.location.x) - long / 2))
+                        knob = d
+                        if vertical { driver.car(gas: -d / reach) } else { driver.car(steer: d / reach) }
+                    },
+                including: disabled ? .none : .all
+            )
+            Text(label).font(.system(size: 11, weight: .heavy, design: .rounded)).foregroundStyle(Palette.inkDim)
+        }
+        .opacity(disabled ? 0.35 : 1)
+        .onChange(of: down) { _, d in
+            if !d {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { knob = 0 }
+                if vertical { driver.car(gas: 0) } else { driver.car(steer: 0) }
+            }
+        }
+        .onChange(of: driver.steering) { _, s in
+            if !s && !down { withAnimation(.spring(response: 0.25)) { knob = 0 } }
+        }
+        .accessibilityLabel(vertical ? "Gas" : "Steering")
     }
 }
 
