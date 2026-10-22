@@ -429,14 +429,15 @@ def _scan() -> str:
             _map["hfov"] = HFOV
             _save()
             names = [o["name"] for o in _map["objects"]]
-        bits = [f"{len(uniq)} things this time"]
+        bits = [f"{len(uniq)} seen this time"]
         if skipped:
             bits.append(f"skipped {len(skipped)} of {len(SCAN_YAWS)} views")
         if rover_hits:
             bits.append("spotted the rover")
         if errors and len(errors) == len(frames):
             return f"I looked around but couldn't think about the pictures ({errors[0]})"
-        summary = (f"mapped the room: {', '.join(names[:12]) or 'nothing clear'}"
+        more = f" and {len(names) - 12} more" if len(names) > 12 else ""
+        summary = (f"mapped the room: {', '.join(names[:12]) or 'nothing clear'}{more}"
                    f" ({'; '.join(bits)})")
         _state["last"] = summary
         _emit(summary)
