@@ -1672,9 +1672,14 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             self._json({"events": reachy_events.since(after),
                         "last": reachy_events.last_id()})
             return
+        if self.path.startswith("/rover/map"):
+            import reachy_roommap
+            self._json(reachy_roommap.get())
+            return
         if self.path.startswith("/rover"):
             import reachy_rover
             import reachy_rover_pilot
+            import reachy_roommap  # noqa: F401  (starts following the rover's moves)
             self._json({**reachy_rover.info(), "pilot": reachy_rover_pilot.status()})
             return
         if self.path.startswith("/state"):
@@ -1922,6 +1927,15 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                 elif p == "/rover/pilot":                       # drive by eye
                     import reachy_rover_pilot
                     result = reachy_rover_pilot.go_async(str(body.get("goal", "")))
+                elif p == "/rover/map/scan":                    # look around, map the room
+                    import reachy_roommap
+                    result = reachy_roommap.scan_async()
+                    self._json({"ok": result == "scanning", "result": result})
+                    return
+                elif p == "/rover/map/forget":
+                    import reachy_roommap
+                    self._json({"ok": True, "result": reachy_roommap.clear()})
+                    return
                 elif "left" in body and "right" in body:      # joystick
                     result = reachy_rover.hold_lr(body["left"], body["right"],
                                                   str(body.get("speed", "medium")))

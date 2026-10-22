@@ -2355,7 +2355,7 @@ class Handler(BaseHTTPRequestHandler):
             from reachy_sfx import catalog
             self._send(json.dumps(catalog()).encode(), "application/json")
         elif self.path.startswith("/rover"):
-            out = _get(f"{CHAT_URL}/rover", timeout=5.0)
+            out = _get(f"{CHAT_URL}{self.path.split('?')[0]}", timeout=5.0)
             self._send(json.dumps(out or {"connected": False, "error": "chat service not answering"}).encode(),
                        "application/json")
         elif self.path.startswith("/peoplelist"):

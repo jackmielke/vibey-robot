@@ -48,7 +48,7 @@ _VIEW = {
 }
 
 _RULES = (
-    "\nGoal: {goal}\nStep {step} of {max}. Previous moves: {history}\n"
+    "\nGoal: {goal}\n{hint}Step {step} of {max}. Previous moves: {history}\n"
     "Pick ONE short move. Moves: forward, back, left (gentle arc), right "
     "(gentle arc), spin_left, spin_right (turn in place), stop. seconds is "
     "0.3 to 1.5: about 1 s at this speed rolls roughly 20 cm, and a 0.5 s spin "
@@ -60,12 +60,13 @@ _RULES = (
 )
 
 
-def _decide(jpeg: bytes, goal: str, step: int, history: list[str]) -> dict:
+def _decide(jpeg: bytes, goal: str, step: int, history: list[str],
+            hint: str = "") -> dict:
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
         raise RuntimeError("no OPENAI_API_KEY for vision")
     prompt = _VIEW[reachy_rover.RIDING] + _RULES.format(
-        goal=goal, step=step, max=MAX_STEPS,
+        goal=goal, step=step, max=MAX_STEPS, hint=(hint + "\n") if hint else "",
         history=", ".join(history[-5:]) or "none yet")
     body = json.dumps({
         "model": PILOT_MODEL,
@@ -109,8 +110,11 @@ def _emit(text: str, detail: dict | None = None) -> None:
         pass
 
 
-def go(goal: str, max_steps: int = MAX_STEPS) -> str:
-    """Drive toward `goal` by eye. Blocks until done; returns a short summary."""
+def go(goal: str, max_steps: int = MAX_STEPS, hint: str | None = None) -> str:
+    """Drive toward `goal` by eye. Blocks until done; returns a short summary.
+
+    `hint` is a line from the room map about where the goal is; by default it
+    is looked up from the goal's words, and only helps the first steps aim."""
     goal = " ".join((goal or "").split())[:200]
     if not goal:
         return "tell me where to drive"
@@ -129,6 +133,12 @@ def go(goal: str, max_steps: int = MAX_STEPS) -> str:
     if not _busy.acquire(blocking=False):
         return f"I'm already driving toward {_state['goal']}; say stop first"
     try:
+        if hint is None:
+            try:
+                import reachy_roommap
+                hint = reachy_roommap.hint_for(goal)
+            except Exception:  # noqa: BLE001
+                hint = ""
         start_mark = reachy_rover.interrupts
         _state.update(goal=goal, step=0, last="", running=True)
         _emit(f"driving by eye: {goal}")
@@ -141,7 +151,14 @@ def go(goal: str, max_steps: int = MAX_STEPS) -> str:
             if jpeg is None:
                 return f"stopped after {len(history)} moves: {err}"
             try:
-                d = _decide(jpeg, goal, step, history)
+                # Refresh it each step: the map follows the rover as it moves.
+                if hint and step > 1:
+                    try:
+                        import reachy_roommap
+                        hint = reachy_roommap.hint_for(goal) or hint
+                    except Exception:  # noqa: BLE001
+                        pass
+                d = _decide(jpeg, goal, step, history, hint or "")
             except Exception as e:  # noqa: BLE001
                 reachy_rover.stop()
                 return f"stopped after {len(history)} moves: I couldn't think about the picture ({e})"

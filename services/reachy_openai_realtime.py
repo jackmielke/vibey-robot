@@ -1218,7 +1218,8 @@ if not SUPERMEMORY_RECALL:
 import reachy_rover
 if reachy_rover.ROVER_URL:
     import reachy_rover_pilot
-    TOOLS = TOOLS + [reachy_rover.TOOL, reachy_rover_pilot.TOOL]
+    import reachy_roommap
+    TOOLS = TOOLS + [reachy_rover.TOOL, reachy_rover_pilot.TOOL, reachy_roommap.TOOL]
 
 # Self-coding is off unless asked for. It kept overhearing Jack dictating to
 # Claude Code on the Mac, spawning its own jobs on the same files, and those
@@ -1717,6 +1718,14 @@ def _dispatch_tool_inner(name: str, args: dict, announce) -> str:
             return reachy_rover.drive(str(args.get("action", "")),
                                       float(args.get("seconds") or 1.0),
                                       str(args.get("speed") or "medium"))
+        if name == "room_map":
+            import reachy_roommap
+            act = str(args.get("action") or "list").lower()
+            if act == "scan":
+                return reachy_roommap.scan()
+            if act == "forget":
+                return reachy_roommap.clear()
+            return reachy_roommap.describe()
         if name == "drive_to":
             import reachy_rover_pilot
             return reachy_rover_pilot.go(str(args.get("goal", "")),

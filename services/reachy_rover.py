@@ -109,10 +109,31 @@ def _wheels(lm: float, rm: float, p: float) -> tuple[float, float]:
     return round(left, 3), round(right, 3)
 
 
+# Odometry listeners (the room map): fn(left, right, seconds) for each stretch
+# of wheel power, called as the next wheel command replaces it.
+on_motion: list = []
+_last_wheels = {"L": 0.0, "R": 0.0, "at": 0.0}
+
+
+def _note_wheels(cmd: dict) -> None:
+    now = time.time()
+    prev = dict(_last_wheels)
+    _last_wheels.update(L=float(cmd.get("L") or 0), R=float(cmd.get("R") or 0), at=now)
+    # The rover stops by itself after 3 s without a command.
+    dt = min(now - prev["at"], 3.0) if prev["at"] else 0.0
+    for fn in list(on_motion):
+        try:
+            fn(prev["L"], prev["R"], dt)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _send(cmd: dict, url: str | None = None, timeout: float = 2.0) -> str:
     base = url or ROVER_URL
     if not base:
         raise RuntimeError("rover not connected (ROVER_URL isn't set)")
+    if cmd.get("T") == 1 and not url:
+        _note_wheels(cmd)
     q = urllib.parse.quote(json.dumps(cmd, separators=(",", ":")))
     try:
         with urllib.request.urlopen(f"{base}/js?json={q}", timeout=timeout) as r:
