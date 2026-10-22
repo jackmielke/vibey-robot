@@ -3308,13 +3308,20 @@ def _idle_watcher() -> None:
     landing in TRANSCRIPT is the only reliable evidence that a conversation is
     still happening.
     """
+    woke_at = None
     while True:
         time.sleep(30)
         try:
             if STATE["asleep"] or not STATE["openai"]:
+                woke_at = None
                 continue
+            # Quiet counts from waking at the earliest: right after a restart
+            # the transcript is empty, and measuring from 0 read as decades of
+            # silence and put Vibey straight back to sleep.
+            if woke_at is None:
+                woke_at = time.time()
             last = TRANSCRIPT[-1]["ts"] / 1000 if TRANSCRIPT else 0
-            quiet = time.time() - last
+            quiet = time.time() - max(last, woke_at)
             # A shorter fuse overnight. Nobody is coming back to the room at
             # three in the morning, so a wake word misfiring on the television
             # should cost five minutes of empty room rather than fifteen — and
