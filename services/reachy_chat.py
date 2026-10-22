@@ -1720,9 +1720,7 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             models = {"realtime": [rtm], "basic": [rtm],
                       "live": [os.environ.get("OPENAI_LIVE_MODEL", "gpt-live-1"),
                                os.environ.get("OPENAI_LIVE_BACKEND", "gpt-5.5")],
-                      "local": [os.environ.get("LOCAL_WHISPER", "small.en"),
-                                os.environ.get("LOCAL_LLM", "qwen3:4b-instruct"),
-                                "piper:lessac"]}
+                      "local": _local_models()}
             self._json({"brain": voice_brain(),
                         "options": {k: {**v, "models": models.get(k, [])}
                                     for k, v in VOICE_BRAINS.items()},
@@ -2838,6 +2836,16 @@ VOICE_BRAINS = {
     "local":    {"label": "Local", "module": "reachy_local",
                  "blurb": "Everything on this Mac: whisper, qwen3, Kokoro voice. Free, private, offline. Run tools/setup_local_voice.sh once."},
 }
+
+
+def _local_models() -> list:
+    """What the local brain is running (or will run): ears, brain, voice."""
+    try:
+        import reachy_local
+        return [reachy_local._stt_label(), reachy_local.LLM,
+                reachy_local._tts["engine"] or reachy_local.TTS or "kokoro"]
+    except Exception:  # noqa: BLE001
+        return [os.environ.get("LOCAL_LLM", "qwen3:4b-instruct")]
 
 
 def voice_brain() -> str:
