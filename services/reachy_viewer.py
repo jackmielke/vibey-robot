@@ -2559,6 +2559,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps(_get(f"{CHAT_URL}/dials", timeout=4.0) or {}).encode(), "application/json")
         elif self.path.startswith("/brain"):
             self._send(json.dumps(_get(f"{CHAT_URL}/brain", timeout=4.0) or {}).encode(), "application/json")
+        elif self.path.startswith("/cost/live"):
+            self._send(json.dumps(_get(f"{CHAT_URL}/cost/live", timeout=2.0) or {}).encode(), "application/json")
         elif self.path.startswith("/cost"):
             self._send(json.dumps(_get(f"{CHAT_URL}/cost", timeout=4.0) or {}).encode(), "application/json")
         elif self.path.startswith("/events"):

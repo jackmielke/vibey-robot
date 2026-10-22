@@ -1729,6 +1729,9 @@ class _CtrlHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/macmusic"):
             import reachy_spotify
             self._json(reachy_spotify.status())
+        elif self.path.startswith("/cost/live"):
+            import reachy_cost
+            self._json(reachy_cost.live())
         elif self.path.startswith("/cost/detail"):
             import reachy_cost
             self._json(reachy_cost.detail())

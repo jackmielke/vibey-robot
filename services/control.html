@@ -189,6 +189,12 @@
   .costchip.open #costpanel { display:block }
   #costpanel .row { display:flex; justify-content:space-between; gap:12px }
   #costpanel .h { color:var(--dim); margin-top:6px }
+  .costchip .dot { width:8px; height:8px; border-radius:50%; background:var(--off); display:inline-block; flex:none }
+  .costchip.live .dot { background:var(--on); animation:costlive 1.6s ease-in-out infinite }
+  @keyframes costlive { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb,var(--on) 60%,transparent) } 50% { box-shadow:0 0 0 5px transparent } }
+  .costchip small { font-size:.8em; opacity:.6 }
+  .costchip .tick { color:var(--on); font-weight:600; opacity:0; transition:opacity .25s }
+  .costchip .tick.show { opacity:1 }
 </style>
 
 <div class=wrap>
@@ -196,7 +202,7 @@
   <h1>Vibey</h1>
   <span class=pill id=status>connecting…</span>
   <button class=ghost id=scribe title="Keep notes of the room and text them to Telegram">📝 Take notes</button>
-  <span class="sub costchip" id=costchip title="OpenAI spend — click for the breakdown"><span id=cost></span><span class=bar><i id=costbar style="width:0"></i></span><div id=costpanel></div></span>
+  <span class="sub costchip" id=costchip title="OpenAI spend, live. Green dot: a paid voice connection is open. Click for the breakdown"><span class=dot id=costdot></span><span id=cost></span><span class=tick id=costtick></span><span class=bar><i id=costbar style="width:0"></i></span><div id=costpanel></div></span>
   <button class=ghost id=theme title="Light / dark" aria-label="Toggle light or dark mode">☾</button>
   <button class=big id=power>Turn on</button>
 </header>
@@ -379,11 +385,13 @@ const COST_LABELS={live_voice:'live voice',live_backend:'live brain (gpt-5.5)',r
 function renderCost(c){
   const b=c.budget||{}, f=Math.min(1,b.fraction||0), lvl=b.level||'ok';
   const chip=$('costchip'); chip.classList.toggle('warn',lvl==='warn'); chip.classList.toggle('over',lvl==='over');
-  $('cost').textContent=lvl==='over'?`out of budget · $${(c.today||0).toFixed(2)}`:`$${(c.today||0).toFixed(2)} today`;
+  costLevel=lvl; if(costShown==null) costShown=c.today||0; paintCostNumber();
   $('costbar').style.width=(f*100).toFixed(0)+'%';
   const m=v=>'$'+(v||0).toFixed(2), esc=t=>String(t).replace(/[&<>]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[x]));
   const src=Object.entries(c.by_source_today||{}).sort((a,b)=>b[1]-a[1]).filter(e=>e[1]>=0.005);
-  let h=`<div class=h>Vibey's own estimate</div>`;
+  const sk=(costLive&&costLive.socket)||{};
+  let h=`<div class=h>Right now</div><div class=row><span>${sk.open?`● ${esc(COST_LABELS[sk.source]||sk.source)} connected`:'○ idle, no paid voice open'}</span><span>${sk.open?(sk.minutes||0).toFixed(0)+' min':''}</span></div>`;
+  h+=`<div class=h>Vibey's own estimate</div>`;
   h+=src.length?src.map(([k,v])=>`<div class=row><span>${esc(COST_LABELS[k]||k)}</span><span>${m(v)}</span></div>`).join(''):`<div class=row><span>nothing today</span><span></span></div>`;
   if(c.unpriced_today) h+=`<div class=row><span>calls with unknown price</span><span>${c.unpriced_today}</span></div>`;
   h+=`<div class=h>Totals</div><div class=row><span>today</span><span>${m(c.today)} / ${m(b.daily_cap)}</span></div>`;
@@ -396,6 +404,31 @@ function renderCost(c){
     :`<div class=sub>${esc(bl.hint||'')}</div>`;
   h+=`<div class=sub style="margin-top:6px">sleeps after ${(c.idle_sleep_minutes||10).toFixed(0)} min quiet or ${(c.voice_session_max_minutes||20).toFixed(0)} min awake · prices checked ${esc(c.prices_checked||'')}</div>`;
   $('costpanel').innerHTML=h;
+}
+// The live meter. One small request a second: today's total to the tenth of a
+// cent and whether a paid voice socket is open. The number counts up to each new
+// charge and flashes what it added, so every reply's cost is visible as it lands.
+let costLive=null, costLevel='ok', costShown=null, costAnim=0;
+function paintCostNumber(){
+  const v=costShown??(costLive&&costLive.today)??0, d=v.toFixed(3);
+  const txt=`$${d.slice(0,-1)}<small>${d.slice(-1)}</small>`;
+  $('cost').innerHTML=costLevel==='over'?`out of budget · ${txt}`:`${txt} today`;
+}
+async function costTick(){
+  const c=await j('/cost/live'); if(!c||c.today==null) return;
+  const prev=costLive&&costLive.today; costLive=c;
+  $('costchip').classList.toggle('live',!!(c.socket&&c.socket.open));
+  const dot=$('costdot'); dot.title=c.socket&&c.socket.open?`${COST_LABELS[c.socket.source]||c.socket.source} connected · ${(c.socket.minutes||0).toFixed(0)} min`:'idle · no paid voice connection';
+  if(prev==null||c.today<prev){ costShown=c.today; paintCostNumber(); return; }
+  if(c.today>prev+1e-6){
+    const add=c.today-prev, t=$('costtick');
+    t.textContent=add<0.01?`+${(add*100).toFixed(1)}¢`:`+$${add.toFixed(2)}`; t.classList.add('show');
+    clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),2500);
+    const from=costShown??prev, t0=performance.now(), id=++costAnim;
+    const step=now=>{ if(id!==costAnim) return; const k=Math.min(1,(now-t0)/700);
+      costShown=from+(c.today-from)*(1-Math.pow(1-k,3)); paintCostNumber(); if(k<1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
 }
 $('costchip').addEventListener('click',e=>{ if(!e.target.closest('#costpanel')) $('costchip').classList.toggle('open'); });
 (function(){ const r=document.documentElement, b=$('theme');
@@ -791,5 +824,5 @@ async function memPoll(force){
 $('memadd').onsubmit=async e=>{ e.preventDefault(); const v=$('memnew').value.trim(); if(!v) return;
   const r=await memReq('POST',{text:v}); if(r&&r.ok){ $('memnew').value=''; memPoll(true); } else alert((r&&r.error)||'add failed'); };
 
-poll(); setInterval(poll,1500); evPoll(); setInterval(evPoll,1200); memPoll(true); setInterval(memPoll,15000); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
+poll(); setInterval(poll,1500); costTick(); setInterval(costTick,1000); evPoll(); setInterval(evPoll,1200); memPoll(true); setInterval(memPoll,15000); eyes(); setInterval(eyes,500); friends(); setInterval(friends,8000); djTracks(); djPoll(); setInterval(djPoll,700); setInterval(djTracks,15000); pulse();
 </script>

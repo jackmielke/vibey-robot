@@ -2713,6 +2713,7 @@ class RealtimeSession:
                         max_size=16 * 1024 * 1024) as ws:
                     await ws.send(json.dumps(self._session_update()))
                     self.log("connected — full-duplex, just talk")
+                    reachy_cost.socket_open("realtime_voice", MODEL)
                     if self._stream is None:
                         self._stream = _Streamer(self.log)
                     # A connection that worked clears whatever the last one failed
@@ -2727,6 +2728,7 @@ class RealtimeSession:
                     finally:
                         sender.cancel()
                         announcer.cancel()
+                        reachy_cost.socket_closed()
             except Exception as e:  # noqa: BLE001
                 if not should_run() or stop.is_set():
                     break

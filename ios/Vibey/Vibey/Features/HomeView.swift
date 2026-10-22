@@ -5,6 +5,9 @@ struct HomeView: View {
     @State private var volume: Double = 50
     @State private var volumeKnown = false
     @State private var cost: Cost?
+    @State private var live: CostLive?
+    @State private var added: String?
+    @State private var pulse = false
     @State private var showSpend = false
     @State private var showBrain = false
     @State private var music: MacMusic?
@@ -77,6 +80,20 @@ struct HomeView: View {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
+        // The live meter: every new charge ticks the pill and flashes what it added.
+        .task {
+            while !Task.isCancelled {
+                if let l = try? await store.api.costLive() {
+                    if let was = live?.today, let now = l.today, now > was + 0.000001 {
+                        let add = now - was
+                        added = add < 0.01 ? String(format: "+%.1f¢", add * 100) : String(format: "+$%.2f", add)
+                        Task { try? await Task.sleep(for: .seconds(2.5)); added = nil }
+                    }
+                    withAnimation(.easeOut(duration: 0.5)) { live = l }
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+        }
     }
 
     /// Past the daily line: loud, but nothing stops. /sleep or the button does.
@@ -127,16 +144,41 @@ struct HomeView: View {
                 chip(icon: privacy ? "eye.slash.fill" : "eye.fill",
                      text: privacy ? "Eyes closed" : "Eyes open", on: !privacy)
                 if s?.muted == true { chip(icon: "mic.slash.fill", text: "Muted", on: false) }
-                if let today = cost?.today {
-                    Button { Haptics.tap(); showSpend = true } label: {
-                        chip(icon: "dollarsign.circle.fill", text: String(format: "%.2f today", today), on: false)
-                    }
-                    .buttonStyle(.plain)
+                if let today = live?.today ?? cost?.today {
+                    Button { Haptics.tap(); showSpend = true } label: { spendChip(today) }
+                        .buttonStyle(.plain)
                 }
             }
             .padding(.top, 6)
         }
         .animation(.spring, value: store.status)
+    }
+
+    /// Green and breathing while a paid voice socket (Realtime or GPT-Live) is
+    /// open; grey when nothing is billing. Tenths of a cent so each reply shows.
+    private func spendChip(_ today: Double) -> some View {
+        let open = live?.socket?.open == true
+        return HStack(spacing: 6) {
+            Circle().fill(open ? Palette.live : .white.opacity(0.35))
+                .frame(width: 8, height: 8)
+                .shadow(color: open ? Palette.live : .clear, radius: pulse ? 6 : 1)
+                .scaleEffect(open && pulse ? 1.25 : 1)
+            Text(String(format: "$%.3f today", today))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: today))
+            if let added {
+                Text(added).foregroundStyle(Palette.live).transition(.opacity)
+            }
+        }
+        .font(.system(.footnote, design: .rounded).weight(.semibold))
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(Capsule().fill(open ? Palette.live.opacity(0.16) : .white.opacity(0.08)))
+        .overlay(Capsule().stroke(open ? Palette.live.opacity(0.6) : .white.opacity(0.15)))
+        .foregroundStyle(open ? Palette.live : .white.opacity(0.75))
+        .animation(.easeOut(duration: 0.3), value: added)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+        }
     }
 
     private func chip(icon: String, text: String, on: Bool) -> some View {

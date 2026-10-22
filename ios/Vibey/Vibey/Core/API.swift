@@ -136,6 +136,20 @@ struct Cost: Decodable {
                          "guest_brain": "Guests", "vision": "Vision", "other": "Other"]
 }
 
+/// GET :8772/cost/live, polled every couple of seconds for the spend pill:
+/// today to the tenth of a cent, and whether a paid voice socket is open.
+struct CostLive: Decodable {
+    var today: Double?
+    var socket: Socket?
+
+    struct Socket: Decodable {
+        var open: Bool?
+        var source: String?
+        var model: String?
+        var minutes: Double?
+    }
+}
+
 struct SoundFX: Decodable, Identifiable, Hashable {
     let name: String
     let label: String
@@ -371,6 +385,9 @@ struct VibeyAPI {
     }
     func cost() async throws -> Cost {
         try JSONDecoder().decode(Cost.self, from: try await request("\(chat)/cost"))
+    }
+    func costLive() async throws -> CostLive {
+        try JSONDecoder().decode(CostLive.self, from: try await request("\(chat)/cost/live"))
     }
 
     // Play (:8772)

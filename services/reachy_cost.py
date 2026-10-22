@@ -411,6 +411,44 @@ def summary() -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Live meter: is a paid voice socket open right now, and what has today cost
+# to the tenth of a cent. Polled every second or two by the dashboard chip and
+# the iOS pill, so it is one small query, not summary().
+# --------------------------------------------------------------------------- #
+# The voice engines run inside reachy_chat's process, the same process that
+# answers /cost/live, so a plain dict is enough.
+VOICE_SOCKET = {"source": None, "model": None, "since": 0.0}
+
+
+def socket_open(source: str, model: str) -> None:
+    VOICE_SOCKET.update(source=source, model=model, since=time.time())
+
+
+def socket_closed() -> None:
+    VOICE_SOCKET.update(source=None, model=None, since=0.0)
+
+
+def live() -> dict:
+    out = {"today": 0.0, "last": None,
+           "socket": {"open": False, "source": None, "model": None, "minutes": 0.0}}
+    try:
+        with _LOCK, _db() as c:
+            out["today"] = round(c.execute("SELECT COALESCE(SUM(usd),0) FROM calls WHERE at>=?",
+                                           (_midnight(),)).fetchone()[0], 4)
+            r = c.execute("SELECT at, source, usd FROM calls WHERE usd>0 "
+                          "ORDER BY at DESC LIMIT 1").fetchone()
+        if r:
+            out["last"] = {"at": r[0], "source": r[1], "usd": round(r[2], 5)}
+    except Exception:  # noqa: BLE001
+        pass
+    s = dict(VOICE_SOCKET)
+    if s["since"]:
+        out["socket"] = {"open": True, "source": s["source"], "model": s["model"],
+                         "minutes": round((time.time() - s["since"]) / 60, 1)}
+    return out
+
+
 LABELS = {"live_voice": "live voice", "live_backend": "live brain",
           "realtime_voice": "realtime", "text_brain": "texts",
           "guest_brain": "guests", "vision": "vision", "other": "other"}

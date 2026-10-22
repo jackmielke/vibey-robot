@@ -194,6 +194,11 @@ class LiveSession(RealtimeSession):
                     self._response_active = False
                     self._last_rx = time.time()
                     self._conn_at, self._billed_min, self._minutes = time.time(), 0.0, 0.0
+                    try:
+                        import reachy_cost
+                        reachy_cost.socket_open("live_voice", LIVE_MODEL)
+                    except Exception:  # noqa: BLE001
+                        pass
                     await ws.send(json.dumps(self._session_start()))
                     if self._stream is None:
                         self._stream = rt._Streamer(self.log)
@@ -208,6 +213,11 @@ class LiveSession(RealtimeSession):
                             t.cancel()
                         self._meter()
                         self._conn_at = 0.0
+                        try:
+                            import reachy_cost
+                            reachy_cost.socket_closed()
+                        except Exception:  # noqa: BLE001
+                            pass
             except Exception as e:  # noqa: BLE001
                 if not should_run() or stop.is_set():
                     break
