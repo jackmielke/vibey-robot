@@ -106,6 +106,12 @@
   .stick.dis { opacity:.4; cursor:default }
   .stickwrap .stop { width:64px; height:56px; border-radius:12px; border:0; background:var(--bad); color:#fff; font-weight:700; cursor:pointer }
   [hidden] { display:none !important }
+  .track { position:relative; border-radius:30px; background:var(--field); border:1px solid var(--line); touch-action:none; cursor:grab; flex:none }
+  .track.v { width:64px; height:180px } .track.h { width:180px; height:64px }
+  .track .knob { position:absolute; left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px; border-radius:50%; background:var(--off); border:2px solid var(--line); pointer-events:none; z-index:1 }
+  .track.held .knob { background:var(--on); border-color:var(--on) }
+  .track .tl { position:absolute; font-size:10px; letter-spacing:.6px; color:var(--dim); left:0; right:0; text-align:center; bottom:-16px }
+  .track.dis { opacity:.4; cursor:default }
   /* Group headings inside a panel: which sense a row belongs to, so "listening"
      and "take notes" can't read as two names for the same thing. */
   .grp { font-size:11px; text-transform:uppercase; letter-spacing:.7px; color:var(--dim);
@@ -225,7 +231,12 @@
 
   <div class=panel id=p-wheels>
     <h2><span>Wheels</span><span class=sub id=wheelsub>checking…</span></h2>
-    <div class=row style="padding-top:0"><div class=l>Controls<small id=padhint>hold a button · WASD / arrows · Q E spin</small></div><div class=seg id=wmode style="width:160px"><button data-m=pad>Pad</button><button data-m=stick>Joystick</button></div></div>
+    <div class=row style="padding-top:0"><div class=l>Controls<small id=padhint>hold a button · WASD / arrows · Q E spin</small></div><div class=seg id=wmode style="width:220px"><button data-m=car>Car</button><button data-m=pad>Pad</button><button data-m=stick>Stick</button></div></div>
+    <div class=stickwrap id=carwrap hidden>
+      <div class="track v" id=gas title="Gas: up forward, down reverse (W / S)"><div class=knob></div><span class=tl>GAS</span></div>
+      <button class=stop id=carstop title="Stop (space)">STOP</button>
+      <div class="track h" id=wheel title="Steer: left / right (A / D). With no gas it spins in place"><div class=knob></div><span class=tl>STEER</span></div>
+    </div>
     <div class=stickwrap id=stickwrap hidden>
       <div class=stick id=stick><div class=knob id=knob></div></div>
       <button class=stop id=stickstop title="Stop (space)">STOP</button>
@@ -504,8 +515,9 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   addEventListener('keydown',e=>{ if(typing()||e.metaKey||e.ctrlKey||e.altKey||$('pad').querySelector(':disabled')) return;
     const k=e.key.toLowerCase();
     if(k===' '&&(act||vec)){ e.preventDefault(); keys.clear(); if(vec){ vec=null; clearInterval(vtimer); vtimer=null; } return halt(); }
-    if(!K[k]) return; e.preventDefault(); keys.add(K[k]); const a=fromKeys(); if(a) go(a); });
+    if(!K[k]) return; e.preventDefault(); keys.add(K[k]); if(mode==='car') return carKeys(); const a=fromKeys(); if(a) go(a); });
   addEventListener('keyup',e=>{ const k=K[e.key.toLowerCase()]; if(!k) return; keys.delete(k);
+    if(mode==='car') return carKeys();
     const a=fromKeys(); if(a) go(a); else letGo(); });
   $('pilotf').onsubmit=async e=>{ e.preventDefault(); const g=$('pilotgoal').value.trim(); if(!g) return;
     $('pilotsub').textContent='looking…'; const r=await j('/rover/pilot',{goal:g});
@@ -517,16 +529,18 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
     else if(pl.goal){ $('pilotsub').textContent='done: '+(pl.last||pl.goal); } }
   async function wheels(){ const r=await j('/rover'); const off=!r||!r.connected;
     pad.querySelectorAll('button').forEach(b=>b.disabled=off&&b.id!=='padstop'); stick.classList.toggle('dis',off);
+    document.querySelectorAll('.track').forEach(t=>t.classList.toggle('dis',off));
     $('wheelsub').textContent=!r?'chat service offline':!r.connected?'no rover set (ROVER_URL)':r.online===false?'rover not answering':
       (r.riding?'riding · ':'')+(r.volts?r.volts+' V':'connected'); }
   // Joystick: drag anywhere in the circle. Up is forward, sideways steers,
   // and the two blend like a game: each wheel = forward ± turn.
-  let mode='pad'; try{ mode=localStorage.getItem('vibey.wmode')||mode; }catch(_){}
+  let mode='car'; try{ mode=localStorage.getItem('vibey.wmode')||mode; }catch(_){}
   const paintMode=()=>{ document.querySelectorAll('#wmode button').forEach(b=>b.classList.toggle('on',b.dataset.m===mode));
-    $('pad').hidden=mode!=='pad'; $('stickwrap').hidden=mode!=='stick';
-    $('padhint').textContent=mode==='pad'?'hold a button · WASD / arrows · Q E spin':'push sideways to spin · or plug in a game controller'; };
+    $('pad').hidden=mode!=='pad'; $('stickwrap').hidden=mode!=='stick'; $('carwrap').hidden=mode!=='car';
+    $('padhint').textContent={car:'gas on the left, steering on the right · W S gas, A D steer',
+      pad:'hold a button · WASD / arrows · Q E spin',stick:'push sideways to spin · or plug in a game controller'}[mode]; };
   paintMode();
-  $('wmode').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; letGo(); mode=b.dataset.m; paintMode();
+  $('wmode').onclick=e=>{ const b=e.target.closest('button'); if(!b) return; letGo(); car.t=car.s=0; carGo(); mode=b.dataset.m; paintMode();
     try{ localStorage.setItem('vibey.wmode',mode); }catch(_){} repack(); };
   let vec=null, vtimer=null;
   const mix=(x,y)=>{ const m=Math.hypot(x,y); if(m<0.12) return null;              // dead zone
@@ -547,6 +561,26 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   ['pointerup','pointercancel','lostpointercapture'].forEach(t=>stick.addEventListener(t,stickUp));
   $('stickstop').onclick=()=>{ stickUp(); vec=null; clearInterval(vtimer); vtimer=null; halt(); };
   addEventListener('blur',stickUp);
+  // Car: gas and steering are separate, like a real car. Gas alone drives
+  // straight, steering alone spins in place, both together arc. In reverse
+  // the steering flips so it backs up the way a car does (wheel right, tail
+  // swings right).
+  const car={t:0,s:0};
+  const carGo=()=>{ const t=car.t, s=car.s, moving=Math.abs(t)>0.08;
+    steer((moving?0.7:1)*(t<-0.08?-s:s), t); };
+  const carKeys=()=>{ car.t=(keys.has('f')?1:0)-(keys.has('b')?1:0);
+    car.s=(keys.has('r')||keys.has('qr')?1:0)-(keys.has('l')||keys.has('ql')?1:0); carGo(); };
+  [['gas','t'],['wheel','s']].forEach(([id,ax])=>{ const el=$(id), kn=el.querySelector('.knob'); let pid=null;
+    const at=e=>{ const r=el.getBoundingClientRect();
+      if(ax==='t'){ const R=r.height/2-28; let d=e.clientY-r.top-r.height/2; d=Math.max(-R,Math.min(R,d)); kn.style.transform=`translateY(${d}px)`; car.t=-d/R; }
+      else { const R=r.width/2-28; let d=e.clientX-r.left-r.width/2; d=Math.max(-R,Math.min(R,d)); kn.style.transform=`translateX(${d}px)`; car.s=d/R; }
+      carGo(); };
+    el.addEventListener('pointerdown',e=>{ if(el.classList.contains('dis')) return; e.preventDefault(); pid=e.pointerId;
+      try{ el.setPointerCapture(pid); }catch(_){} el.classList.add('held'); at(e); });
+    el.addEventListener('pointermove',e=>{ if(e.pointerId===pid) at(e); });
+    const up=()=>{ if(pid===null) return; pid=null; el.classList.remove('held'); kn.style.transform=''; car[ax]=0; carGo(); };
+    ['pointerup','pointercancel','lostpointercapture'].forEach(t=>el.addEventListener(t,up)); addEventListener('blur',up); });
+  $('carstop').onclick=()=>{ car.t=car.s=0; vec=null; clearInterval(vtimer); vtimer=null; halt(); };
   // Game controller (Xbox, PlayStation, Switch Pro over Bluetooth): left stick
   // drives, B / circle stops. Browsers only report it after a button press.
   let pad0=null;
@@ -555,6 +589,11 @@ if(window.ResizeObserver){ const ro=new ResizeObserver(repack); PACK.forEach(id=
   function padLoop(){ if(pad0===null) return; const g=(navigator.getGamepads()||[])[pad0];
     if(g&&!stick.classList.contains('dis')&&sp===null){
       if(g.buttons[1]&&g.buttons[1].pressed){ if(vec){ vec=null; clearInterval(vtimer); vtimer=null; halt(); } }
+      else if(mode==='car'){ // racing-game layout: triggers are gas / reverse (or left stick up / down), either stick steers
+        const rt=(g.buttons[7]&&g.buttons[7].value)||0, lt=(g.buttons[6]&&g.buttons[6].value)||0;
+        car.t=(rt>0.05||lt>0.05)?rt-lt:-(g.axes[1]||0);
+        const sx=g.axes[2]||0, lx=g.axes[0]||0; car.s=Math.abs(sx)>Math.abs(lx)?sx:lx;
+        if(Math.abs(car.t)<0.12) car.t=0; if(Math.abs(car.s)<0.12) car.s=0; carGo(); }
       else steer(g.axes[0]||0,-(g.axes[1]||0));
       if(mode==='stick'){ const R=58; place((g.axes[0]||0)*R,(g.axes[1]||0)*R); } }
     requestAnimationFrame(padLoop); }
