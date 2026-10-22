@@ -2836,7 +2836,7 @@ VOICE_BRAINS = {
     "basic":    {"label": "Basic", "module": "reachy_openai_basic",
                  "blurb": "Realtime 2.1 with no tools, memory or extras. Just talks."},
     "local":    {"label": "Local", "module": "reachy_local",
-                 "blurb": "Everything on this Mac: whisper, qwen3, Piper voice. Free, private, offline. Slower."},
+                 "blurb": "Everything on this Mac: whisper, qwen3, Kokoro voice. Free, private, offline. Run tools/setup_local_voice.sh once."},
 }
 
 

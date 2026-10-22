@@ -4,3 +4,7 @@ faster-whisper
 sounddevice
 numpy
 websockets
+# Local voice brain (services/reachy_local.py): tools/setup_local_voice.sh
+# installs these plus the Ollama model and Kokoro voice files.
+# kokoro-onnx
+# mlx-whisper   (Apple Silicon)
