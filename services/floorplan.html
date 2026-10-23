@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vibey floor plan</title>
+<style>
+  :root { color-scheme:light; --bg:#f3f4f8; --panel:#ffffff; --line:#dfe0e8; --grid:#ececf2; --text:#17171f; --dim:#6a6a7a; --on:#1fb96a; --off:#cfd0da; --warn:#c77a12; --bad:#e04848; --field:#f6f6fa; --wall:#3b3f58; --sel:#2f7cf6; --pen:#d2499b; }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) { color-scheme:dark; --bg:#0b0b0f; --panel:#15151c; --line:#26262f; --grid:#1c1c24; --text:#ececf1; --dim:#8b8b99; --on:#7ef0a6; --off:#3a3a46; --warn:#ffb454; --bad:#ff6b6b; --field:#0f0f14; --wall:#c9cce0; --sel:#6aa8ff; --pen:#ff7ac4; } }
+  :root[data-theme="dark"] { color-scheme:dark; --bg:#0b0b0f; --panel:#15151c; --line:#26262f; --grid:#1c1c24; --text:#ececf1; --dim:#8b8b99; --on:#7ef0a6; --off:#3a3a46; --warn:#ffb454; --bad:#ff6b6b; --field:#0f0f14; --wall:#c9cce0; --sel:#6aa8ff; --pen:#ff7ac4; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif }
+  header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 16px 6px }
+  header h1 { font-size:18px; margin:0 } header a { color:var(--dim); text-decoration:none }
+  header .sp { flex:1 } #saved { color:var(--dim); font-size:12px }
+  button { font:inherit; cursor:pointer; color:var(--text); background:var(--field); border:1px solid var(--line); border-radius:9px; padding:6px 11px }
+  button:disabled { opacity:.5; cursor:default }
+  button.on { background:var(--sel); border-color:var(--sel); color:#fff }
+  button.danger { color:var(--bad) }
+  main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); gap:14px; padding:6px 16px 16px }
+  @media (max-width:900px){ main { grid-template-columns:minmax(0,1fr) } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px; min-width:0 }
+  .panel h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin:0 0 8px; display:flex; justify-content:space-between; align-items:center; gap:8px }
+  .tools { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px }
+  .stage { position:relative; width:100%; aspect-ratio:4/3; border:1px solid var(--line); border-radius:12px; background:var(--field); overflow:hidden; touch-action:none }
+  #plan { width:100%; height:100%; display:block; user-select:none; -webkit-user-select:none }
+  #three { width:100%; height:100%; display:block }
+  .hint { color:var(--dim); font-size:12px; min-height:1.3em; margin-top:6px }
+  .side { display:flex; flex-direction:column; gap:14px; min-width:0 }
+  .insp label { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:5px 0 }
+  .insp input { width:110px; font:inherit; color:var(--text); background:var(--field); border:1px solid var(--line); border-radius:8px; padding:5px 7px }
+  .insp input.wide { width:180px }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px }
+  .things { max-height:260px; overflow:auto }
+  .thing { display:flex; justify-content:space-between; gap:8px; padding:6px 4px; border-bottom:1px solid var(--line); cursor:pointer; border-radius:6px }
+  .thing:hover { background:var(--field) } .thing small { color:var(--dim) }
+  .pin { color:var(--sel); font-size:11px }
+  svg text { font:600 12px -apple-system,system-ui,sans-serif; fill:var(--text); paint-order:stroke; stroke:var(--field); stroke-width:3px }
+  svg text.dim { fill:var(--dim); font-weight:500; font-size:11px }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">← dashboard</a>
+  <h1>Floor plan</h1>
+  <span class=sp></span>
+  <span id=saved></span>
+  <button id=scan>Scan room</button>
+</header>
+<main>
+  <section class=panel>
+    <h2><span>Top-down</span><span id=dims style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class=tools id=tools>
+      <button data-t=select class=on title="Move and pick things (V)">Select</button>
+      <button data-t=wall title="Click corners to draw a room's walls (W)">Walls</button>
+      <button data-t=box title="Drag out a piece of furniture (B)">Furniture</button>
+      <button data-t=pen title="Draw freely (P)">Pen</button>
+      <span style="flex:1"></span>
+      <button id=fit title="Fit everything in view">Fit</button>
+    </div>
+    <div class=stage id=stagePlan><svg id=plan></svg></div>
+    <div class=hint id=hint></div>
+  </section>
+  <div class=side>
+    <section class=panel>
+      <h2><span>3D</span><span style="text-transform:none;letter-spacing:0">drag to orbit · scroll to zoom</span></h2>
+      <div class=stage id=stage3d style="aspect-ratio:4/3"><canvas id=three></canvas></div>
+    </section>
+    <section class="panel insp" id=insp>
+      <h2><span id=inspTitle>Selected</span></h2>
+      <div id=inspBody class=hint>Tap something on the plan to edit it.</div>
+    </section>
+    <section class=panel>
+      <h2><span>Things</span><span id=count style="text-transform:none;letter-spacing:0"></span></h2>
+      <div class=things id=things></div>
+      <div class=row>
+        <button id=clearPen>Erase pen</button>
+        <button id=forgetScan>Forget scan dots</button>
+        <button id=eraseAll class=danger>Erase whole plan</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+// ---------------------------------------------------------------------------
+// Data: the room map from the chat service (/rover/map, proxied here). Units
+// are metres. Vibey's base is (0,0), +y is straight ahead of Vibey, +x its
+// right. On screen ahead is up.
+// ---------------------------------------------------------------------------
+const $=id=>document.getElementById(id);
+const j=(u,b)=>fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{}).then(r=>r.json()).catch(()=>null);
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const uid=()=>Math.random().toString(16).slice(2,10);
+const r2=v=>Math.round(v*100)/100;
+
+let M={objects:[],walls:[],drawings:[],rover:null};
+let dirty=new Set(), deleted=new Set(), planDirty=false, saveT=null, lastServer=0;
+let tool='select', sel=null;            // sel = {kind:'obj'|'wall'|'pen', id}
+let view={x:0,y:1.5,k:80};              // centre of view (m) and pixels per metre
+let draft=null;                         // wall being drawn: {pts}
+let busy=false;                         // mid-drag: don't let a poll overwrite
+
+// Heights for the 3D view when Jack hasn't set one.
+const H_BY_KIND={bed:.55,couch:.85,sofa:.85,chair:.9,table:.75,desk:.75,nightstand:.55,dresser:1,door:2.05,window:1.2,
+  dog:.5,cat:.3,person:1.7,leg:1.7,fan:1.0,box:.4,can:.6,bicycle:1.0,bike:1.0,tv:.6,shelf:1.8,bookshelf:1.8,plant:.8,lamp:1.5,bin:.6,bedspread:.55,speaker:.4};
+const kind=n=>{ const w=(n||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').trim().split(/\s+/).pop()||''; return w.length>3&&w.endsWith('s')&&!w.endsWith('ss')?w.slice(0,-1):w; };
+const heightOf=o=>o.h||H_BY_KIND[kind(o.name)]||.5;
+const PRESETS=[['bed',1.5,2.0],['desk',1.4,.7],['couch',2.0,.9],['table',1.2,.8],['chair',.5,.5],['nightstand',.45,.4],['door',.9,.08],['shelf',.9,.35]];
+
+// ---- server sync ----------------------------------------------------------
+async function load(force){
+  if(busy||(!force&&(planDirty||dirty.size||deleted.size))) return;
+  const m=await j('/rover/map'); if(!m) { $('saved').textContent='chat service offline'; return; }
+  if(!force&&(busy||planDirty||dirty.size||deleted.size)) return;
+  M={...m,walls:m.walls||[],drawings:m.drawings||[]};
+  const st=m.status||{};
+  $('scan').disabled=!!st.scanning; $('scan').textContent=st.scanning?(st.step||'scanning')+'…':'Scan room';
+  if(sel&&!find(sel)) sel=null;
+  if(!lastServer) fit(); lastServer=Date.now(); render();
+}
+function touch(obj){ if(obj) dirty.add(obj.id); planDirty=true; $('saved').textContent='editing…';
+  clearTimeout(saveT); saveT=setTimeout(save,700); render(); }
+async function save(){
+  if(busy){ saveT=setTimeout(save,500); return; }
+  const body={walls:M.walls,drawings:M.drawings,deleted:[...deleted],
+    objects:M.objects.filter(o=>dirty.has(o.id)).map(o=>({id:o.id,name:o.name,x:o.x,y:o.y,w:o.w,d:o.d,h:o.h,rot:o.rot}))};
+  const sentDirty=new Set(dirty), sentDel=new Set(deleted);
+  $('saved').textContent='saving…';
+  const r=await j('/rover/map/plan',body);
+  if(!r||!r.ok){ $('saved').textContent='not saved (chat service offline?)'; return; }
+  sentDirty.forEach(i=>dirty.delete(i)); sentDel.forEach(i=>deleted.delete(i));
+  if(!dirty.size&&!deleted.size){ planDirty=false; M={...r.map,walls:r.map.walls||[],drawings:r.map.drawings||[]}; }
+  $('saved').textContent='saved'; render();
+}
+
+// ---- view transform -------------------------------------------------------
+const svg=$('plan'), stage=$('stagePlan');
+const size=()=>{ const b=stage.getBoundingClientRect(); return [b.width,b.height]; };
+const toS=(x,y)=>{ const [W,H]=size(); return [W/2+(x-view.x)*view.k, H/2-(y-view.y)*view.k]; };
+const toM=(sx,sy)=>{ const [W,H]=size(); return [view.x+(sx-W/2)/view.k, view.y-(sy-H/2)/view.k]; };
+function fit(){
+  const pts=[[0,0]];
+  M.objects.forEach(o=>pts.push([o.x,o.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
+  M.drawings.forEach(d=>d.pts.forEach(p=>pts.push(p))); if(M.rover) pts.push([M.rover.x,M.rover.y]);
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  const x0=Math.min(...xs)-1, x1=Math.max(...xs)+1, y0=Math.min(...ys)-1, y1=Math.max(...ys)+1;
+  const [W,H]=size(); view={x:(x0+x1)/2,y:(y0+y1)/2,k:Math.max(15,Math.min(W/Math.max(3,x1-x0),H/Math.max(3,y1-y0)))};
+  render();
+}
+
+// ---- drawing the plan -----------------------------------------------------
+const NS='http://www.w3.org/2000/svg';
+const el=(t,a,parent)=>{ const e=document.createElementNS(NS,t); for(const k in a) e.setAttribute(k,a[k]); (parent||svg).appendChild(e); return e; };
+const segLen=(a,b)=>Math.hypot(b[0]-a[0],b[1]-a[1]);
+function polyArea(p){ let s=0; for(let i=0;i<p.length;i++){ const a=p[i], b=p[(i+1)%p.length]; s+=a[0]*b[1]-b[0]*a[1]; } return Math.abs(s)/2; }
+function boxCorners(o){ const w=o.w||.4, d=o.d||.4, a=(o.rot||0)*Math.PI/180, c=Math.cos(a), s=Math.sin(a);
+  return [[-w/2,-d/2],[w/2,-d/2],[w/2,d/2],[-w/2,d/2]].map(([u,v])=>[o.x+u*c+v*s, o.y-u*s+v*c]); }
+function find(s){ if(!s) return null;
+  return s.kind==='obj'?M.objects.find(o=>o.id===s.id):s.kind==='wall'?M.walls.find(w=>w.id===s.id):M.drawings.find(d=>d.id===s.id); }
+
+function render(){
+  const [W,H]=size(); svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML='';
+  // grid: 0.5 m light, 1 m stronger
+  const [mx0,my1]=toM(0,0), [mx1,my0]=toM(W,H), step=view.k<35?1:.5;
+  for(let g=Math.floor(mx0/step)*step; g<=mx1; g+=step){ const [a]=toS(g,0);
+    el('line',{x1:a,y1:0,x2:a,y2:H,stroke:css(Math.abs(g%1)<1e-6?'--line':'--grid'),'stroke-width':1}); }
+  for(let g=Math.floor(my0/step)*step; g<=my1; g+=step){ const [,b]=toS(0,g);
+    el('line',{x1:0,y1:b,x2:W,y2:b,stroke:css(Math.abs(g%1)<1e-6?'--line':'--grid'),'stroke-width':1}); }
+  // scale bar
+  el('line',{x1:14,y1:H-16,x2:14+view.k,y2:H-16,stroke:css('--dim'),'stroke-width':3});
+  el('text',{x:14,y:H-24,class:'dim'}).textContent='1 m';
+  // pen
+  M.drawings.forEach(d=>{ if(d.pts.length<2) return;
+    const on=sel&&sel.kind==='pen'&&sel.id===d.id;
+    el('polyline',{points:d.pts.map(p=>toS(...p).join(',')).join(' '),fill:'none',stroke:on?css('--sel'):(d.color||css('--pen')),
+      'stroke-width':on?4:3,'stroke-linecap':'round','stroke-linejoin':'round','data-pen':d.id}); });
+  // walls
+  M.walls.forEach(w=>{ const on=sel&&sel.kind==='wall'&&sel.id===w.id, p=w.pts; if(p.length<2) return;
+    const closed=p.length>2&&!w.open;
+    if(closed) el('polygon',{points:p.map(q=>toS(...q).join(',')).join(' '),fill:css('--wall'),'fill-opacity':.05,stroke:'none','pointer-events':'none'});
+    el(closed?'polygon':'polyline',{points:p.map(q=>toS(...q).join(',')).join(' '),fill:'none',stroke:on?css('--sel'):css('--wall'),
+      'stroke-width':on?6:5,'stroke-linejoin':'round','data-wall':w.id});
+    // length on each side
+    for(let i=0;i<p.length-(closed?0:1);i++){ const a=p[i], b=p[(i+1)%p.length], L=segLen(a,b); if(L<.3) continue;
+      const [sx,sy]=toS((a[0]+b[0])/2,(a[1]+b[1])/2); el('text',{x:sx+4,y:sy-4,class:'dim'}).textContent=L.toFixed(2)+' m'; }
+    if(closed){ const cx=p.reduce((s,q)=>s+q[0],0)/p.length, cy=p.reduce((s,q)=>s+q[1],0)/p.length, [sx,sy]=toS(cx,cy);
+      const t=el('text',{x:sx,y:sy,'text-anchor':'middle'}); t.textContent=(w.name||'room')+' · '+polyArea(p).toFixed(1)+' m²'; }
+    if(on) p.forEach((q,i)=>{ const [sx,sy]=toS(...q); el('circle',{cx:sx,cy:sy,r:7,fill:css('--panel'),stroke:css('--sel'),'stroke-width':2,'data-vert':w.id+':'+i}); }); });
+  // wall in progress
+  if(draft&&draft.pts.length){ const pts=[...draft.pts,...(draft.hover?[draft.hover]:[])];
+    el('polyline',{points:pts.map(q=>toS(...q).join(',')).join(' '),fill:'none',stroke:css('--sel'),'stroke-width':4,'stroke-dasharray':'8 6'});
+    if(draft.hover){ const a=draft.pts[draft.pts.length-1], [sx,sy]=toS(...draft.hover);
+      el('text',{x:sx+10,y:sy-10}).textContent=segLen(a,draft.hover).toFixed(2)+' m'; }
+    const [fx,fy]=toS(...draft.pts[0]); el('circle',{cx:fx,cy:fy,r:8,fill:'none',stroke:css('--sel'),'stroke-width':2}); }
+  // things
+  // boxes first, then every dot and name on top, so a bed never hides the couch
+  M.objects.forEach(o=>{ if(!(o.w&&o.d)) return; const on=sel&&sel.kind==='obj'&&sel.id===o.id;
+    el('polygon',{points:boxCorners(o).map(q=>toS(...q).join(',')).join(' '),fill:css('--warn'),'fill-opacity':.22,
+      stroke:on?css('--sel'):css('--warn'),'stroke-width':on?3:2,'data-obj':o.id,style:'cursor:pointer'}); });
+  M.objects.forEach(o=>{ const on=sel&&sel.kind==='obj'&&sel.id===o.id, faded=!o.pinned&&o.missed>0;
+    const g=el('g',{'data-obj':o.id,opacity:faded?.5:1,style:'cursor:pointer'});
+    const [sx,sy]=toS(o.x,o.y);
+    el('circle',{cx:sx,cy:sy,r:on?8:6,fill:on?css('--sel'):css('--warn'),'data-obj':o.id},g);
+    const t=el('text',{x:sx+10,y:sy+4,'data-obj':o.id},g); t.textContent=o.name+(o.pinned?' 📌':''); });
+  // Vibey and the rover
+  const [vx,vy]=toS(0,0); el('circle',{cx:vx,cy:vy,r:10,fill:css('--text')}); el('path',{d:`M${vx} ${vy-18} l-6 9 h12z`,fill:css('--text')});
+  el('text',{x:vx+14,y:vy+4,class:'dim'}).textContent='Vibey';
+  if(M.rover){ const [a,b]=toS(M.rover.x,M.rover.y), g=el('g',{transform:`translate(${a} ${b}) rotate(${M.rover.heading||0})`});
+    el('path',{d:'M0 -14 L9 10 L-9 10 Z',fill:M.rover.source==='seen'?css('--on'):'none',stroke:css('--on'),'stroke-width':2.5},g);
+    el('text',{x:a+14,y:b+14,class:'dim'}).textContent='rover'; }
+  // header dims: overall size of what's drawn
+  const wp=M.walls.flatMap(w=>w.pts);
+  $('dims').textContent=wp.length>2?`walls span ${(Math.max(...wp.map(p=>p[0]))-Math.min(...wp.map(p=>p[0]))).toFixed(1)} × ${(Math.max(...wp.map(p=>p[1]))-Math.min(...wp.map(p=>p[1]))).toFixed(1)} m`:'';
+  renderList(); renderInsp(); scheduleThree();
+}
+
+// ---- pointer handling ------------------------------------------------------
+const pts=new Map(); let drag=null, pinch=null;
+const snap=v=>Math.round(v*20)/20;                      // 5 cm
+function snapWall(p){ // straight walls: lock to horizontal / vertical when close
+  if(!draft||!draft.pts.length) return [snap(p[0]),snap(p[1])];
+  const a=draft.pts[draft.pts.length-1], dx=p[0]-a[0], dy=p[1]-a[1];
+  const ang=Math.abs(Math.atan2(dy,dx)*180/Math.PI);
+  if(ang<8||ang>172) return [snap(p[0]),a[1]];
+  if(Math.abs(ang-90)<8) return [a[0],snap(p[1])];
+  return [snap(p[0]),snap(p[1])]; }
+const local=e=>{ const b=svg.getBoundingClientRect(); return [e.clientX-b.left,e.clientY-b.top]; };
+svg.addEventListener('pointerdown',e=>{
+  svg.setPointerCapture(e.pointerId); pts.set(e.pointerId,local(e));
+  if(pts.size===2){ const [a,b]=[...pts.values()]; pinch={d:Math.hypot(a[0]-b[0],a[1]-b[1]),k:view.k}; drag=null; return; }
+  const [sx,sy]=local(e), m=toM(sx,sy), t=e.target, d=t.dataset||{};
+  busy=true;
+  if(tool==='wall'){ const p=snapWall(m);
+    if(draft&&draft.pts.length>2&&segLen(p,draft.pts[0])*view.k<14) return finishWall(true);
+    draft=draft||{pts:[]}; draft.pts.push(p); render(); return; }
+  if(tool==='box'){ drag={type:'box',a:[snap(m[0]),snap(m[1])],b:[snap(m[0]),snap(m[1])]}; return; }
+  if(tool==='pen'){ const s={id:uid(),pts:[[r2(m[0]),r2(m[1])]],color:''}; M.drawings.push(s); drag={type:'pen',s}; return; }
+  // select
+  if(d.vert){ const [wid,i]=d.vert.split(':'); drag={type:'vert',w:M.walls.find(w=>w.id===wid),i:+i}; return; }
+  if(d.obj){ const o=M.objects.find(o=>o.id===d.obj); sel={kind:'obj',id:o.id}; drag={type:'obj',o,off:[o.x-m[0],o.y-m[1]],moved:false}; render(); return; }
+  if(d.wall){ const w=M.walls.find(w=>w.id===d.wall); sel={kind:'wall',id:w.id}; drag={type:'wallmove',w,last:m,moved:false}; render(); return; }
+  if(d.pen){ sel={kind:'pen',id:d.pen}; render(); busy=false; return; }
+  sel=null; drag={type:'pan',s:[sx,sy],v:{...view}}; render(); });
+svg.addEventListener('pointermove',e=>{
+  if(!pts.has(e.pointerId)){ // hover preview while drawing walls
+    if(tool==='wall'&&draft){ draft.hover=snapWall(toM(...local(e))); render(); } return; }
+  pts.set(e.pointerId,local(e));
+  if(pinch&&pts.size===2){ const [a,b]=[...pts.values()]; view.k=Math.max(10,Math.min(600,pinch.k*Math.hypot(a[0]-b[0],a[1]-b[1])/pinch.d)); render(); return; }
+  if(!drag) return; const [sx,sy]=local(e), m=toM(sx,sy);
+  if(drag.type==='pan'){ view.x=drag.v.x-(sx-drag.s[0])/view.k; view.y=drag.v.y+(sy-drag.s[1])/view.k; render(); }
+  else if(drag.type==='obj'){ drag.o.x=r2(snap(m[0]+drag.off[0])); drag.o.y=r2(snap(m[1]+drag.off[1])); drag.moved=true; render(); }
+  else if(drag.type==='vert'){ drag.w.pts[drag.i]=[snap(m[0]),snap(m[1])]; drag.moved=true; render(); }
+  else if(drag.type==='wallmove'){ const dx=snap(m[0]-drag.last[0]), dy=snap(m[1]-drag.last[1]);
+    if(dx||dy){ drag.w.pts=drag.w.pts.map(p=>[r2(p[0]+dx),r2(p[1]+dy)]); drag.last=[drag.last[0]+dx,drag.last[1]+dy]; drag.moved=true; render(); } }
+  else if(drag.type==='box'){ drag.b=[snap(m[0]),snap(m[1])]; render();
+    const [a,b]=[toS(...drag.a),toS(...drag.b)];
+    el('rect',{x:Math.min(a[0],b[0]),y:Math.min(a[1],b[1]),width:Math.abs(a[0]-b[0]),height:Math.abs(a[1]-b[1]),fill:css('--warn'),'fill-opacity':.2,stroke:css('--warn'),'stroke-dasharray':'6 4'});
+    el('text',{x:b[0]+8,y:b[1]+16}).textContent=`${Math.abs(drag.b[0]-drag.a[0]).toFixed(2)} × ${Math.abs(drag.b[1]-drag.a[1]).toFixed(2)} m`; }
+  else if(drag.type==='pen'){ const q=drag.s.pts[drag.s.pts.length-1];
+    if(Math.hypot(m[0]-q[0],m[1]-q[1])*view.k>3){ drag.s.pts.push([r2(m[0]),r2(m[1])]); render(); } } });
+const up=e=>{ pts.delete(e.pointerId); if(pts.size<2) pinch=null; if(pts.size) return;
+  const d=drag; drag=null; busy=false; if(!d) return;
+  if(d.type==='obj'&&d.moved) touch(d.o);
+  else if((d.type==='vert'||d.type==='wallmove')&&d.moved) touch();
+  else if(d.type==='pen'){ if(d.s.pts.length<2) M.drawings=M.drawings.filter(s=>s!==d.s); else touch(); }
+  else if(d.type==='box'){ const w=Math.abs(d.b[0]-d.a[0]), h=Math.abs(d.b[1]-d.a[1]);
+    if(w<.1||h<.1){ render(); return; }
+    const o={id:uid(),name:'thing',x:r2((d.a[0]+d.b[0])/2),y:r2((d.a[1]+d.b[1])/2),w:r2(w),d:r2(h),rot:0,pinned:true};
+    M.objects.push(o); sel={kind:'obj',id:o.id}; setTool('select'); touch(o);
+    setTimeout(()=>{ const n=$('f-name'); if(n){ n.focus(); n.select(); } },50); } };
+['pointerup','pointercancel'].forEach(t=>svg.addEventListener(t,up));
+svg.addEventListener('dblclick',()=>{ if(tool==='wall'&&draft) finishWall(draft.pts.length>2); });
+svg.addEventListener('wheel',e=>{ e.preventDefault(); const [sx,sy]=local(e), before=toM(sx,sy);
+  view.k=Math.max(10,Math.min(600,view.k*Math.exp(-e.deltaY*0.0015))); const after=toM(sx,sy);
+  view.x+=before[0]-after[0]; view.y+=before[1]-after[1]; render(); },{passive:false});
+function finishWall(close){
+  if(draft&&draft.pts.length>=2){
+    // drop a duplicate last point from a double click
+    const p=draft.pts.filter((q,i,a)=>!i||segLen(q,a[i-1])>.02);
+    const w={id:uid(),name:'room '+(M.walls.length+1),pts:p};
+    if(!close) w.open=true;
+    M.walls.push(w); sel={kind:'wall',id:w.id}; touch(); }
+  draft=null; setTool('select'); }
+function setTool(t){ if(t!=='wall'&&draft) finishWall(draft.pts.length>2); tool=t;
+  document.querySelectorAll('#tools [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  svg.style.cursor=t==='select'?'default':'crosshair';
+  $('hint').textContent={select:'Drag things to where they really are. Drag empty space to pan; scroll or pinch to zoom.',
+    wall:'Click each corner of the room. Click the first corner again (or double-click) to close it. Esc cancels.',
+    box:'Drag out a rectangle for a bed, desk or couch, then name it and set its real size.',
+    pen:'Draw anything: a rug, a path for the rover, a note to Vibey.'}[t]; render(); }
+$('tools').onclick=e=>{ const b=e.target.closest('[data-t]'); if(b) setTool(b.dataset.t); };
+$('fit').onclick=fit;
+addEventListener('keydown',e=>{ if(/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const k=e.key.toLowerCase();
+  if(k==='escape'){ draft=null; sel=null; setTool('select'); }
+  else if(k==='enter'&&draft) finishWall(true);
+  else if(k==='v') setTool('select'); else if(k==='w') setTool('wall'); else if(k==='b') setTool('box'); else if(k==='p') setTool('pen');
+  else if((k==='delete'||k==='backspace')&&sel){ e.preventDefault(); removeSel(); } });
+addEventListener('resize',()=>{ render(); });
+
+// ---- inspector -------------------------------------------------------------
+function removeSel(){ const s=sel; if(!s) return; sel=null;
+  if(s.kind==='obj'){ deleted.add(s.id); dirty.delete(s.id); M.objects=M.objects.filter(o=>o.id!==s.id); }
+  else if(s.kind==='wall') M.walls=M.walls.filter(w=>w.id!==s.id);
+  else M.drawings=M.drawings.filter(d=>d.id!==s.id);
+  touch(); }
+function field(label,id,val,attrs=''){ return `<label>${label}<input id="${id}" value="${val??''}" ${attrs}></label>`; }
+function renderInsp(){
+  const it=find(sel), body=$('inspBody');
+  if(document.activeElement&&body.contains(document.activeElement)) return;   // don't yank a field mid-typing
+  if(!it){ $('inspTitle').textContent='Selected'; body.className='hint'; body.innerHTML='Tap something on the plan to edit it.'; return; }
+  body.className='';
+  if(sel.kind==='obj'){ const o=it; $('inspTitle').textContent=o.name;
+    body.innerHTML=field('Name','f-name',o.name,'class=wide')+
+      field('Width (m)','f-w',o.w??'','type=number step=0.05 min=0 placeholder="—"')+
+      field('Depth (m)','f-d',o.d??'','type=number step=0.05 min=0 placeholder="—"')+
+      field('Height (m)','f-h',o.h??'','type=number step=0.05 min=0 placeholder="'+heightOf(o)+'"')+
+      field('Turn (°)','f-rot',o.rot??0,'type=number step=15')+
+      `<div class=hint>${o.pinned?'📌 You placed this, so scans leave it where it is.':`From ${o.seen||1} scan sighting${(o.seen||1)>1?'s':''}. Move or edit it to pin it.`}</div>`+
+      `<div class=row>${PRESETS.map(p=>`<button data-p="${p.join(',')}">${p[0]}</button>`).join('')}</div>`+
+      `<div class=row><button id=f-drive>Drive the rover here</button><button id=f-del class=danger>Delete</button></div>`;
+    const set=(k,v)=>{ if(v===''||v===null||isNaN(v)) delete o[k]; else o[k]=v; o.pinned=true; touch(o); };
+    $('f-name').onchange=e=>{ o.name=e.target.value.trim().toLowerCase()||o.name; o.pinned=true; touch(o); };
+    ['w','d','h','rot'].forEach(k=>{ $('f-'+k).onchange=e=>set(k,e.target.value===''?'':r2(+e.target.value)); });
+    body.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{ const [n,w,d]=b.dataset.p.split(',');
+      if(o.name==='thing') o.name=n; o.w=+w; o.d=+d; o.pinned=true; touch(o); });
+    $('f-drive').onclick=async()=>{ const r=await j('/rover/pilot',{goal:'drive to the '+o.name});
+      $('saved').textContent=r&&r.result==='driving'?'driving to the '+o.name+' · stop from the dashboard':(r&&r.result)||'chat service offline'; };
+    $('f-del').onclick=removeSel; return; }
+  if(sel.kind==='wall'){ const w=it; $('inspTitle').textContent=w.name||'room';
+    const p=w.pts, closed=p.length>2&&!w.open, n=p.length-(closed?0:1);
+    let segs=''; for(let i=0;i<n;i++){ const L=segLen(p[i],p[(i+1)%p.length]);
+      segs+=field(`Side ${i+1}`,'f-seg'+i,L.toFixed(2),'type=number step=0.01 min=0.05'); }
+    body.innerHTML=field('Room name','f-wname',w.name||'','class=wide')+
+      `<div class=hint>Type a side's real length (tape measure) and the whole plan scales to match, scan dots included.</div>`+segs+
+      (closed?`<div class=hint>${polyArea(p).toFixed(1)} m² floor area</div>`:'')+
+      `<div class=row><button id=f-wdel class=danger>Delete room</button></div>`;
+    $('f-wname').onchange=e=>{ w.name=e.target.value.trim(); touch(); };
+    for(let i=0;i<n;i++) $('f-seg'+i).onchange=e=>{ const want=+e.target.value, have=segLen(p[i],p[(i+1)%p.length]);
+      if(want>0&&have>0) rescale(want/have); };
+    $('f-wdel').onclick=removeSel; return; }
+  $('inspTitle').textContent='Pen stroke'; body.innerHTML=`<div class=row><button id=f-pdel class=danger>Delete stroke</button></div>`; $('f-pdel').onclick=removeSel;
+}
+function rescale(f){ // everything about Vibey's base, which stays put
+  const sc=p=>[r2(p[0]*f),r2(p[1]*f)];
+  M.walls.forEach(w=>w.pts=w.pts.map(sc)); M.drawings.forEach(d=>d.pts=d.pts.map(sc));
+  M.objects.forEach(o=>{ o.x=r2(o.x*f); o.y=r2(o.y*f); if(o.w) o.w=r2(o.w*f); if(o.d) o.d=r2(o.d*f); dirty.add(o.id); o.pinned=true; });
+  view.k/=f; view.x*=f; view.y*=f; touch(); }
+
+function renderList(){
+  const objs=[...M.objects].sort((a,b)=>Math.hypot(a.x,a.y)-Math.hypot(b.x,b.y));
+  $('count').textContent=`${objs.length} things · ${M.walls.length} room${M.walls.length===1?'':'s'}`;
+  $('things').innerHTML=objs.map(o=>`<div class=thing data-id="${o.id}"><span>${o.name} ${o.pinned?'<span class=pin>📌</span>':''}</span><small>${Math.hypot(o.x,o.y).toFixed(1)} m from Vibey${o.w?` · ${o.w}×${o.d} m`:''}</small></div>`).join('')||'<div class=hint>Nothing yet. Press Scan room, or draw with Furniture.</div>';
+  $('things').querySelectorAll('.thing').forEach(d=>d.onclick=()=>{ sel={kind:'obj',id:d.dataset.id}; const o=find(sel); view.x=o.x; view.y=o.y; render(); }); }
+
+$('scan').onclick=async()=>{ $('scan').disabled=true; $('scan').textContent='starting…'; await j('/rover/map/scan',{}); poll(800); };
+$('clearPen').onclick=()=>{ if(!M.drawings.length||!confirm('Erase all pen drawings?')) return; M.drawings=[]; touch(); };
+$('forgetScan').onclick=async()=>{ if(!confirm('Forget the scan dots? Rooms, drawings and anything you placed (📌) stay.')) return;
+  await j('/rover/map/forget',{}); dirty.clear(); deleted.clear(); planDirty=false; load(true); };
+$('eraseAll').onclick=async()=>{ if(!confirm('Erase the whole floor plan, rooms, drawings and all? This can\'t be undone.')) return;
+  await j('/rover/map/forget',{everything:true}); dirty.clear(); deleted.clear(); planDirty=false; sel=null; load(true); };
+let pollT=null; function poll(ms){ clearTimeout(pollT); pollT=setTimeout(async()=>{ if(!document.hidden) await load(); poll(M.status&&M.status.scanning?800:4000); },ms); }
+
+// ---------------------------------------------------------------------------
+// 3D: the same plan, walls 2.4 m high, things as boxes at a height that suits
+// their kind. three.js from a CDN; the plan works without it.
+// ---------------------------------------------------------------------------
+let threeT=null, three=null;
+function scheduleThree(){ clearTimeout(threeT); threeT=setTimeout(()=>{ if(three) three.build(); },120); }
+setTool('select'); load(true); poll(4000);
+</script>
+<script type=importmap>{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type=module>
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const cv=document.getElementById('three'), box=document.getElementById('stage3d');
+const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(2,devicePixelRatio));
+const scene=new THREE.Scene(), cam=new THREE.PerspectiveCamera(50,4/3,0.05,200);
+cam.position.set(4,6,7);
+const ctl=new OrbitControls(cam,cv); ctl.enableDamping=true; ctl.maxPolarAngle=Math.PI*0.49;
+scene.add(new THREE.HemisphereLight(0xffffff,0x444455,1.1)); const sun=new THREE.DirectionalLight(0xffffff,1.2); sun.position.set(5,10,4); scene.add(sun);
+let group=new THREE.Group(); scene.add(group); let framed=false;
+const col=k=>new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue(k).trim()||'#888');
+// map (x, y) -> three (x, -y); y is up in three.
+const P=(x,y,h=0)=>new THREE.Vector3(x,h,-y);
+function label(text){ const c=document.createElement('canvas'), g=c.getContext('2d'); g.font='600 40px -apple-system,system-ui,sans-serif';
+  const w=Math.ceil(g.measureText(text).width)+24; c.width=w; c.height=56; g.font='600 40px -apple-system,system-ui,sans-serif';
+  g.fillStyle='rgba(0,0,0,.55)'; g.beginPath(); g.roundRect(0,0,w,56,14); g.fill(); g.fillStyle='#fff'; g.fillText(text,12,42);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false})); s.scale.set(w/56*0.28,0.28,1); return s; }
+function build(){
+  const M=window.__M(); scene.remove(group); group.traverse(o=>{ o.geometry&&o.geometry.dispose(); }); group=new THREE.Group(); scene.add(group);
+  const pts=[[0,0]]; M.objects.forEach(o=>pts.push([o.x,o.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]), x0=Math.min(...xs)-1, x1=Math.max(...xs)+1, y0=Math.min(...ys)-1, y1=Math.max(...ys)+1;
+  // floor: the rooms if drawn, otherwise a plain rectangle under everything
+  const floorMat=new THREE.MeshStandardMaterial({color:col('--field'),roughness:1});
+  const rooms=M.walls.filter(w=>w.pts.length>2&&!w.open);
+  if(rooms.length) rooms.forEach(w=>{ const s=new THREE.Shape(w.pts.map(p=>new THREE.Vector2(p[0],p[1])));
+    const m=new THREE.Mesh(new THREE.ShapeGeometry(s),floorMat); m.rotation.x=-Math.PI/2; group.add(m); });
+  else { const m=new THREE.Mesh(new THREE.PlaneGeometry(x1-x0,y1-y0),floorMat); m.rotation.x=-Math.PI/2; m.position.copy(P((x0+x1)/2,(y0+y1)/2,-0.001)); group.add(m); }
+  const grid=new THREE.GridHelper(Math.ceil(Math.max(x1-x0,y1-y0))+2,Math.ceil(Math.max(x1-x0,y1-y0))+2,col('--line'),col('--grid'));
+  grid.position.copy(P((x0+x1)/2,(y0+y1)/2,0.002)); group.add(grid);
+  // walls
+  const wallMat=new THREE.MeshStandardMaterial({color:col('--wall'),transparent:true,opacity:.35});
+  M.walls.forEach(w=>{ const p=w.pts, n=p.length-(p.length>2&&!w.open?0:1);
+    for(let i=0;i<n;i++){ const a=p[i], b=p[(i+1)%p.length], L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<.02) continue;
+      const m=new THREE.Mesh(new THREE.BoxGeometry(L,2.4,0.08),wallMat);
+      m.position.copy(P((a[0]+b[0])/2,(a[1]+b[1])/2,1.2)); m.rotation.y=Math.atan2(b[1]-a[1],b[0]-a[0]); group.add(m); } });
+  // things
+  M.objects.forEach(o=>{ const h=window.__height(o), w=o.w||.35, d=o.d||.35;
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color:o.pinned?col('--warn'):col('--off'),roughness:.8}));
+    m.position.copy(P(o.x,o.y,h/2)); m.rotation.y=-(o.rot||0)*Math.PI/180; group.add(m);
+    const l=label(o.name); l.position.copy(P(o.x,o.y,h+0.25)); group.add(l); });
+  // Vibey and the rover
+  const vib=new THREE.Mesh(new THREE.CylinderGeometry(.12,.15,.35,24),new THREE.MeshStandardMaterial({color:col('--text')}));
+  vib.position.copy(P(0,0,.75+.175)); group.add(vib); const vl=label('Vibey'); vl.position.copy(P(0,0,1.35)); group.add(vl);
+  const desk=new THREE.Mesh(new THREE.BoxGeometry(.6,.75,.6),new THREE.MeshStandardMaterial({color:col('--off'),transparent:true,opacity:.5}));
+  desk.position.copy(P(0,0,.375)); group.add(desk);
+  if(M.rover){ const r=new THREE.Mesh(new THREE.ConeGeometry(.14,.32,3),new THREE.MeshStandardMaterial({color:col('--on')}));
+    r.rotation.x=-Math.PI/2; const g=new THREE.Group(); g.add(r); g.position.copy(P(M.rover.x,M.rover.y,.1)); g.rotation.y=-(M.rover.heading||0)*Math.PI/180; group.add(g); }
+  if(!framed){ framed=true; const c=P((x0+x1)/2,(y0+y1)/2,0), s=Math.max(x1-x0,y1-y0); ctl.target.copy(c);
+    cam.position.set(c.x+s*0.5,s*0.9+1,c.z+s*0.9); }
+}
+function size(){ const b=box.getBoundingClientRect(); renderer.setSize(b.width,b.height,false); cam.aspect=b.width/b.height; cam.updateProjectionMatrix(); }
+new ResizeObserver(size).observe(box); size();
+(function loop(){ ctl.update(); renderer.render(scene,cam); requestAnimationFrame(loop); })();
+window.__three={build}; build();
+</script>
+<script>
+// Hand the 3D view what it needs from the plan script (separate module scope).
+window.__M=()=>M; window.__height=heightOf;
+Object.defineProperty(window,'__ready',{value:true});
+const waitThree=setInterval(()=>{ if(window.__three){ three=window.__three; three.build(); clearInterval(waitThree); } },200);
+</script>
+</body>
+</html>

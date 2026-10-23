@@ -1933,7 +1933,12 @@ class _CtrlHandler(BaseHTTPRequestHandler):
                     return
                 elif p == "/rover/map/forget":
                     import reachy_roommap
-                    self._json({"ok": True, "result": reachy_roommap.clear()})
+                    self._json({"ok": True, "result": reachy_roommap.clear(
+                        bool(body.get("everything")))})
+                    return
+                elif p == "/rover/map/plan":                    # floor plan edits
+                    import reachy_roommap
+                    self._json({"ok": True, "map": reachy_roommap.save_plan(body)})
                     return
                 elif "left" in body and "right" in body:      # joystick
                     result = reachy_rover.hold_lr(body["left"], body["right"],

@@ -2535,6 +2535,20 @@ class Handler(BaseHTTPRequestHandler):
                     "IDENTITY.md — a file the robot writes itself.</p>"
                     "</body></html>")
             self._send(page.encode(), "text/html; charset=utf-8")
+        elif self.path.split("?")[0] in ("/map", "/floorplan"):
+            # The floor plan editor: same no-cache rule as the dashboard below.
+            try:
+                html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "floorplan.html"), "rb").read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+                return
+            except Exception as e:
+                self._send(f"floorplan.html missing: {e}".encode(), "text/plain", 500)
         elif self.path.split("?")[0] in ("/", "/control"):
             try:
                 html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),

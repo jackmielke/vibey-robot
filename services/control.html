@@ -270,7 +270,7 @@
     </div>
     <form class=memadd id=pilotf style="margin-top:6px"><input id=pilotgoal placeholder="Drive by eye… e.g. drive to the couch" aria-label="Where should Vibey drive"><button class=ghost id=pilotgo>Go</button></form>
     <div class=sub id=pilotsub style="min-height:1.2em;margin:4px 0 2px"></div>
-    <div class=row style="border-bottom:0"><div class=l>Room map<small id=mapsub>Vibey looks around and pins what it sees</small></div><div style="display:flex;gap:6px"><button class=ghost id=mapscan style="white-space:nowrap">Scan room</button><button class=ghost id=mapforget title="Forget the map">Clear</button></div></div>
+    <div class=row style="border-bottom:0"><div class=l>Room map<small id=mapsub>Vibey looks around and pins what it sees</small></div><div style="display:flex;gap:6px"><a class=ghost href="/map" target=_blank style="text-decoration:none;white-space:nowrap" title="Floor plan: draw rooms, fix sizes, 3D view">Floor plan ↗</a><button class=ghost id=mapscan style="white-space:nowrap">Scan room</button><button class=ghost id=mapforget title="Forget the map">Clear</button></div></div>
     <canvas id=roommap width=640 height=440 style="width:100%;aspect-ratio:16/11;border:1px solid var(--line);border-radius:12px;background:var(--field);cursor:pointer;touch-action:manipulation" aria-label="Top-down map of the room. Tap a thing to drive there."></canvas>
     <div class=row><div class=l>Top speed<small>let go of anything to stop</small></div><div class=seg id=wspeed style="width:200px"><button data-s=slow>Slow</button><button data-s=medium>Med</button><button data-s=fast>Fast</button></div></div>
   </div>

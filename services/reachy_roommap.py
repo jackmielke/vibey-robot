@@ -53,8 +53,17 @@ _state = {"scanning": False, "step": "", "last": ""}
 
 
 def _blank() -> dict:
+    # walls: rooms Jack draws on the floor plan, [{id, name, pts: [[x, y], ...]}]
+    # drawings: his pen strokes, [{id, pts, color}]
+    # objects edited by hand get pinned=True: scans then leave them where he put
+    # them, and they never age out. w/d/h/rot are a box's size (m) and turn (deg).
     return {"objects": [], "rover": None, "scans": 0, "updated": 0.0,
-            "hfov": HFOV}
+            "hfov": HFOV, "walls": [], "drawings": []}
+
+
+def _new_id() -> str:
+    import secrets
+    return secrets.token_hex(4)
 
 
 def _load() -> dict:
@@ -62,7 +71,10 @@ def _load() -> dict:
         with open(MAP_PATH) as f:
             m = json.load(f)
         if isinstance(m, dict) and isinstance(m.get("objects"), list):
-            return {**_blank(), **m}
+            m = {**_blank(), **m}
+            for o in m["objects"]:
+                o.setdefault("id", _new_id())
+            return m
     except (OSError, ValueError):
         pass
     return _blank()
@@ -86,12 +98,90 @@ def get() -> dict:
                 "riding": reachy_rover.RIDING}
 
 
-def clear() -> str:
+def clear(everything: bool = False) -> str:
+    """Forget what scans found. Jack's floor plan (walls, drawings and the
+    things he placed or fixed by hand) stays unless everything=True."""
     global _map
     with _mu:
-        _map = _blank()
+        if everything:
+            _map = _blank()
+        else:
+            _map = {**_blank(), "walls": _map.get("walls", []),
+                    "drawings": _map.get("drawings", []),
+                    "objects": [o for o in _map["objects"] if o.get("pinned")]}
         _save()
-    return "forgot the room map"
+    return "forgot the room map" if everything else "forgot what I saw (kept your floor plan)"
+
+
+def _num(v, lo: float, hi: float, default=None):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    return round(max(lo, min(hi, f)), 3) if math.isfinite(f) else default
+
+
+def _pts(v) -> list:
+    out = []
+    for p in (v or [])[:400]:
+        if isinstance(p, (list, tuple)) and len(p) >= 2:
+            x, y = _num(p[0], -50, 50), _num(p[1], -50, 50)
+            if x is not None and y is not None:
+                out.append([x, y])
+    return out
+
+
+def save_plan(body: dict) -> dict:
+    """The floor plan page saves here. walls/drawings replace the old ones when
+    sent; objects are upserted by id (so a scan that finished while Jack was
+    editing isn't lost) and `deleted` ids are removed."""
+    with _mu:
+        if isinstance(body.get("walls"), list):
+            _map["walls"] = [{"id": str(w.get("id") or _new_id())[:16],
+                              "name": str(w.get("name") or "")[:40],
+                              "pts": _pts(w.get("pts")),
+                              **({"open": True} if w.get("open") else {})}
+                             for w in body["walls"][:40] if isinstance(w, dict)]
+        if isinstance(body.get("drawings"), list):
+            _map["drawings"] = [{"id": str(d.get("id") or _new_id())[:16],
+                                 "color": str(d.get("color") or "")[:16],
+                                 "pts": _pts(d.get("pts"))}
+                                for d in body["drawings"][:200] if isinstance(d, dict)]
+        gone = {str(i) for i in (body.get("deleted") or [])}
+        objs = [o for o in _map["objects"] if o.get("id") not in gone]
+        by_id = {o.get("id"): o for o in objs}
+        for e in (body.get("objects") or [])[:80]:
+            if not isinstance(e, dict) or not str(e.get("name") or "").strip():
+                continue
+            x, y = _num(e.get("x"), -50, 50), _num(e.get("y"), -50, 50)
+            if x is None or y is None:
+                continue
+            o = by_id.get(e.get("id"))
+            if o is None:            # something Jack drew; keep the page's id for it
+                oid = re.sub(r"[^a-zA-Z0-9_-]", "", str(e.get("id") or ""))[:24]
+                o = {"id": oid if oid and oid not in gone else _new_id(),
+                     "seen": 0, "missed": 0, "at": time.time()}
+                objs.append(o)
+                by_id[o["id"]] = o
+            o.update(name=" ".join(str(e["name"]).split())[:40].lower(), x=x, y=y,
+                     pinned=True, missed=0)
+            for k, lo, hi in (("w", 0.05, 20), ("d", 0.05, 20), ("h", 0.02, 4),
+                              ("rot", -360, 360)):
+                v = _num(e.get(k), lo, hi)
+                if v is not None:
+                    o[k] = v
+                elif k in e:
+                    o.pop(k, None)
+        # A scan dot Jack has drawn over ("bed" dot inside the bed he drew) is
+        # the same thing; his version wins.
+        mine = [o for o in objs if o.get("pinned")]
+        objs = [o for o in objs if o.get("pinned") or not any(
+            _kind(o["name"]) == _kind(p["name"]) and math.hypot(o["x"] - p["x"], o["y"] - p["y"])
+            <= max(MERGE_M, math.hypot(p.get("w", 0), p.get("d", 0)) / 2) for p in mine)]
+        _map["objects"] = objs
+        _map["updated"] = time.time()
+        _save()
+    return get()
 
 
 def _norm(deg: float) -> float:
@@ -277,7 +367,9 @@ def _same(a: dict, b: dict, ox: float = 0.0, oy: float = 0.0) -> bool:
     much less, so one door seen from two angles stays one door."""
     if _kind(a["name"]) != _kind(b["name"]):
         return False
-    if math.hypot(a["x"] - b["x"], a["y"] - b["y"]) <= MERGE_M:
+    # A bed Jack drew 2 m long is "here" anywhere on it, not just at its middle.
+    reach = max(MERGE_M, *(math.hypot(o.get("w", 0), o.get("d", 0)) / 2 for o in (a, b)))
+    if math.hypot(a["x"] - b["x"], a["y"] - b["y"]) <= reach:
         return True
     da, db = math.hypot(a["x"] - ox, a["y"] - oy), math.hypot(b["x"] - ox, b["y"] - oy)
     ba = math.degrees(math.atan2(a["x"] - ox, a["y"] - oy))
@@ -298,19 +390,22 @@ def _merge(seen: list[dict], ox: float = 0.0, oy: float = 0.0) -> None:
             if best is None or dd < best_d:
                 best, best_d = i, dd
         if best is None:
-            objs.append({**s, "seen": 1, "missed": 0})
+            objs.append({**s, "id": _new_id(), "seen": 1, "missed": 0})
             hit.add(len(objs) - 1)
         else:
             o = objs[best]
+            hit.add(best)
+            if o.get("pinned"):              # Jack put it there; just note it's still seen
+                o.update(seen=o.get("seen", 0) + 1, missed=0, at=s["at"])
+                continue
             w = min(o["seen"], 4)            # older sightings count, but not forever
             o["x"] = round((o["x"] * w + s["x"]) / (w + 1), 2)
             o["y"] = round((o["y"] * w + s["y"]) / (w + 1), 2)
             o.update(seen=o["seen"] + 1, missed=0, at=s["at"])
-            hit.add(best)
     for i, o in enumerate(objs):
         if i not in hit:
             o["missed"] = o.get("missed", 0) + 1
-    _map["objects"] = [o for o in objs if o["missed"] < DROP_AFTER][:40]
+    _map["objects"] = [o for o in objs if o.get("pinned") or o["missed"] < DROP_AFTER][:80]
 
 
 def scan() -> str:
