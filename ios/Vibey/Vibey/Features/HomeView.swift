@@ -12,6 +12,7 @@ struct HomeView: View {
     @State private var showBrain = false
     @State private var music: MacMusic?
     @State private var musicVol: Double = 50
+    @State private var rover: RoverInfo?
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -72,6 +73,12 @@ struct HomeView: View {
         .toolbar(.hidden, for: .navigationBar)
         }
         .task { await loadVolume() }
+        .task {
+            while !Task.isCancelled {
+                rover = try? await store.api.roverInfo()
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
         .sheet(isPresented: $showBrain) {
             BrainSheet().environmentObject(store).presentationDetents([.large])
         }
@@ -100,6 +107,12 @@ struct HomeView: View {
         }
     }
 
+    private var roverLine: String {
+        guard let r = rover, r.connected else { return "Gas and steering, pad, joystick, room map" }
+        if r.online == false { return "Rover is off or out of Wi-Fi range" }
+        return r.battery.map { "Battery \($0)" } ?? "Rover connected"
+    }
+
     /// The rover, one tap from home (same screen as Play > Wheels).
     private var driveButton: some View {
         NavigationLink { DriveView() } label: {
@@ -111,7 +124,7 @@ struct HomeView: View {
                     .foregroundStyle(Palette.duck)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Drive the car").font(.system(.headline, design: .rounded))
-                    Text("Gas and steering, pad, joystick, room map")
+                    Text(roverLine)
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(Palette.inkDim)
                 }

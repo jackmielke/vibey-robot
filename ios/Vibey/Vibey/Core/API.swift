@@ -209,6 +209,19 @@ struct RoverInfo: Decodable {
     let online: Bool?
     let volts: Double?
     let pilot: PilotStatus?
+
+    /// Rough charge from the 3S 18650 pack: 9.6 V empty, 12.6 V full.
+    /// Reads a little low while the wheels are pulling.
+    var percent: Int? {
+        guard let v = volts, v > 5 else { return nil }
+        return Int((min(1, max(0, (v - 9.6) / 3.0)) * 100).rounded())
+    }
+
+    /// "78% · 11.9 V", or nil when it isn't answering.
+    var battery: String? {
+        guard online != false, let v = volts else { return nil }
+        return percent.map { "\($0)% · " }.map { $0 + String(format: "%.1f V", v) } ?? String(format: "%.1f V", v)
+    }
 }
 
 /// Drive-by-eye run (reachy_rover_pilot.status()).

@@ -98,7 +98,7 @@ struct DriveView: View {
             guard reachable, let info else { return (reachable ? "checking…" : "chat service offline", false) }
             if !info.connected { return ("no rover set (ROVER_URL)", false) }
             if info.online == false { return ("rover not answering", false) }
-            let v = info.volts.map { String(format: "%.1f V", $0) } ?? "connected"
+            let v = info.battery.map { "🔋 " + $0 } ?? "connected"
             return ((info.riding == true ? "riding · " : "") + v, true)
         }()
         return Label(text, systemImage: good ? "bolt.car.fill" : "exclamationmark.triangle.fill")
