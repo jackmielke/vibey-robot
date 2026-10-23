@@ -302,14 +302,15 @@ private struct HoldKey: View {
 
 /// One Car slider: vertical is gas (up forward, down reverse), horizontal is
 /// steering. Each has its own gesture, so both thumbs work at once.
-private struct CarTrack: View {
+struct CarTrack: View {
     let vertical: Bool
     let label: String
     @ObservedObject var driver: RoverDriver
     let disabled: Bool
     @State private var knob: CGFloat = 0
     @GestureState private var down = false
-    private let long: CGFloat = 230, short: CGFloat = 76
+    var long: CGFloat = 230
+    let short: CGFloat = 76
 
     var body: some View {
         let reach = long / 2 - 34
@@ -334,7 +335,7 @@ private struct CarTrack: View {
             .foregroundStyle(.white.opacity(0.4))
             .frame(width: vertical ? short : long, height: vertical ? long : short)
             .contentShape(Capsule())
-            .gesture(
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
                     .updating($down) { _, s, _ in s = true }
                     .onChanged { g in

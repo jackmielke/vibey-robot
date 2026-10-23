@@ -58,9 +58,10 @@ struct HomeView: View {
                     hero
                     if cost?.budget?.level == "over" { budgetBanner }
                     primaryButton
-                    driveButton
                     if let pp = visibleProgress { powerProgress(pp) }
                     CameraCard()
+                    if rover?.connected == true { RoverCard(info: rover) }
+                    driveButton
                     privacyCard
                     volumeCard
                 }
