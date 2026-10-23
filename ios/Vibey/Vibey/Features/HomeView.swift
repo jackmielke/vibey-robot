@@ -50,12 +50,14 @@ struct HomeView: View {
     }
 
     var body: some View {
+        NavigationStack {
         SpaceScreen {
             ScrollView {
                 VStack(spacing: 18) {
                     hero
                     if cost?.budget?.level == "over" { budgetBanner }
                     primaryButton
+                    driveButton
                     if let pp = visibleProgress { powerProgress(pp) }
                     CameraCard()
                     privacyCard
@@ -66,6 +68,8 @@ struct HomeView: View {
             }
             .scrollIndicators(.hidden)
             .refreshable { await store.refresh(); await loadVolume() }
+        }
+        .toolbar(.hidden, for: .navigationBar)
         }
         .task { await loadVolume() }
         .sheet(isPresented: $showBrain) {
@@ -94,6 +98,30 @@ struct HomeView: View {
                 try? await Task.sleep(for: .seconds(1.5))
             }
         }
+    }
+
+    /// The rover, one tap from home (same screen as Play > Wheels).
+    private var driveButton: some View {
+        NavigationLink { DriveView() } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "car.fill")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Palette.ink))
+                    .foregroundStyle(Palette.duck)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Drive the car").font(.system(.headline, design: .rounded))
+                    Text("Gas and steering, pad, joystick, room map")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(Palette.inkDim)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(Palette.inkDim)
+            }
+            .shell()
+        }
+        .buttonStyle(PressScale())
+        .accessibilityLabel("Drive the car")
     }
 
     /// Past the daily line: loud, but nothing stops. /sleep or the button does.
