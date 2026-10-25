@@ -377,6 +377,7 @@ def encode_faces(jpeg: bytes) -> list[dict]:
             "x": (cx / w - 0.5) * 2,
             "y": (cy / h - 0.5) * 2,
             "face_px": face_px,
+            "face_frac": round(face_px / h, 4) if h else 0,   # for distance (room map)
             "blur": blur,
             "blocky": blocky,
             "parts": parts,
@@ -1035,12 +1036,13 @@ def run():
 
         for f in faces:
             embedding, snap, x, y = f["embedding"], f["snapshot"], f["x"], f["y"]
+            frac = f.get("face_frac", 0)
             m = best_match(embedding, samples)
 
             if m:
                 row, dist = m
                 fid, name = row["face_id"], row.get("name")
-                seen_now.append({"face_id": fid, "name": name, "x": x, "y": y, "ts": now})
+                seen_now.append({"face_id": fid, "name": name, "x": x, "y": y, "face_frac": frac, "ts": now})
 
                 # A confident match auto-banks this sighting as a new sample —
                 # the model gets more accurate just from normal use — but only
@@ -1103,7 +1105,7 @@ def run():
                                     "name": None, "times_seen": 1})
                     last_greet[fid] = now
                     asked_name.add(fid)
-                    seen_now.append({"face_id": fid, "name": None, "x": x, "y": y, "ts": now})
+                    seen_now.append({"face_id": fid, "name": None, "x": x, "y": y, "face_frac": frac, "ts": now})
                     print(f"[memory] NEW face stored: {fid}", flush=True)
                     to_greet.append((fid, "__new__"))
                 except Exception as e:

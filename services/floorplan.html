@@ -94,7 +94,7 @@ const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim
 const uid=()=>Math.random().toString(16).slice(2,10);
 const r2=v=>Math.round(v*100)/100;
 
-let M={objects:[],walls:[],drawings:[],rover:null};
+let M={objects:[],walls:[],drawings:[],rover:null,people:[],vibey:{x:0,y:0,heading:0}};
 let dirty=new Set(), deleted=new Set(), planDirty=false, saveT=null, lastServer=0;
 let tool='select', sel=null;            // sel = {kind:'obj'|'wall'|'pen', id}
 let view={x:0,y:1.5,k:80};              // centre of view (m) and pixels per metre
@@ -113,7 +113,7 @@ async function load(force){
   if(busy||(!force&&(planDirty||dirty.size||deleted.size))) return;
   const m=await j('/rover/map'); if(!m) { $('saved').textContent='chat service offline'; return; }
   if(!force&&(busy||planDirty||dirty.size||deleted.size)) return;
-  M={...m,walls:m.walls||[],drawings:m.drawings||[]};
+  M={...m,walls:m.walls||[],drawings:m.drawings||[],people:m.people||[],vibey:m.vibey||{x:0,y:0,heading:0}};
   const st=m.status||{};
   $('scan').disabled=!!st.scanning; $('scan').textContent=st.scanning?(st.step||'scanning')+'…':'Scan room';
   if(sel&&!find(sel)) sel=null;
@@ -123,14 +123,14 @@ function touch(obj){ if(obj) dirty.add(obj.id); planDirty=true; $('saved').textC
   clearTimeout(saveT); saveT=setTimeout(save,700); render(); }
 async function save(){
   if(busy){ saveT=setTimeout(save,500); return; }
-  const body={walls:M.walls,drawings:M.drawings,deleted:[...deleted],
+  const body={walls:M.walls,drawings:M.drawings,deleted:[...deleted],vibey:M.vibey,
     objects:M.objects.filter(o=>dirty.has(o.id)).map(o=>({id:o.id,name:o.name,x:o.x,y:o.y,w:o.w,d:o.d,h:o.h,rot:o.rot}))};
   const sentDirty=new Set(dirty), sentDel=new Set(deleted);
   $('saved').textContent='saving…';
   const r=await j('/rover/map/plan',body);
   if(!r||!r.ok){ $('saved').textContent='not saved (chat service offline?)'; return; }
   sentDirty.forEach(i=>dirty.delete(i)); sentDel.forEach(i=>deleted.delete(i));
-  if(!dirty.size&&!deleted.size){ planDirty=false; M={...r.map,walls:r.map.walls||[],drawings:r.map.drawings||[]}; }
+  if(!dirty.size&&!deleted.size){ planDirty=false; M={...r.map,walls:r.map.walls||[],drawings:r.map.drawings||[],people:r.map.people||[],vibey:r.map.vibey||M.vibey}; }
   $('saved').textContent='saved'; render();
 }
 
@@ -140,8 +140,8 @@ const size=()=>{ const b=stage.getBoundingClientRect(); return [b.width,b.height
 const toS=(x,y)=>{ const [W,H]=size(); return [W/2+(x-view.x)*view.k, H/2-(y-view.y)*view.k]; };
 const toM=(sx,sy)=>{ const [W,H]=size(); return [view.x+(sx-W/2)/view.k, view.y-(sy-H/2)/view.k]; };
 function fit(){
-  const pts=[[0,0]];
-  M.objects.forEach(o=>pts.push([o.x,o.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
+  const pts=[[M.vibey.x,M.vibey.y]];
+  M.objects.forEach(o=>pts.push([o.x,o.y])); M.people.forEach(p=>pts.push([p.x,p.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
   M.drawings.forEach(d=>d.pts.forEach(p=>pts.push(p))); if(M.rover) pts.push([M.rover.x,M.rover.y]);
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   const x0=Math.min(...xs)-1, x1=Math.max(...xs)+1, y0=Math.min(...ys)-1, y1=Math.max(...ys)+1;
@@ -157,6 +157,7 @@ function polyArea(p){ let s=0; for(let i=0;i<p.length;i++){ const a=p[i], b=p[(i
 function boxCorners(o){ const w=o.w||.4, d=o.d||.4, a=(o.rot||0)*Math.PI/180, c=Math.cos(a), s=Math.sin(a);
   return [[-w/2,-d/2],[w/2,-d/2],[w/2,d/2],[-w/2,d/2]].map(([u,v])=>[o.x+u*c+v*s, o.y-u*s+v*c]); }
 function find(s){ if(!s) return null;
+  if(s.kind==='vibey') return M.vibey; if(s.kind==='person') return M.people.find(p=>p.id===s.id);
   return s.kind==='obj'?M.objects.find(o=>o.id===s.id):s.kind==='wall'?M.walls.find(w=>w.id===s.id):M.drawings.find(d=>d.id===s.id); }
 
 function render(){
@@ -204,8 +205,16 @@ function render(){
     el('circle',{cx:sx,cy:sy,r:on?8:6,fill:on?css('--sel'):css('--warn'),'data-obj':o.id},g);
     const t=el('text',{x:sx+10,y:sy+4,'data-obj':o.id},g); t.textContent=o.name+(o.pinned?' 📌':''); });
   // Vibey and the rover
-  const [vx,vy]=toS(0,0); el('circle',{cx:vx,cy:vy,r:10,fill:css('--text')}); el('path',{d:`M${vx} ${vy-18} l-6 9 h12z`,fill:css('--text')});
-  el('text',{x:vx+14,y:vy+4,class:'dim'}).textContent='Vibey';
+  { const V=M.vibey, [vx,vy]=toS(V.x,V.y), on=sel&&sel.kind==='vibey';
+    const g=el('g',{transform:`translate(${vx} ${vy}) rotate(${V.heading||0})`,style:'cursor:grab'});
+    el('circle',{cx:0,cy:0,r:on?12:10,fill:on?css('--sel'):css('--text'),'data-vibey':1},g); el('path',{d:'M0 -19 l-6 9 h12z',fill:on?css('--sel'):css('--text'),'data-vibey':1},g);
+    el('text',{x:vx+14,y:vy+4,class:'dim','data-vibey':1}).textContent='Vibey'; }
+  // people: where the face service last saw them
+  M.people.forEach(p=>{ const [a,b]=toS(p.x,p.y), on=sel&&sel.kind==='person'&&sel.id===p.id, old=p.ago>15;
+    const g=el('g',{opacity:old?.45:1,style:'cursor:pointer'});
+    el('circle',{cx:a,cy:b-6,r:5,fill:on?css('--sel'):css('--on'),'data-person':p.id},g);
+    el('path',{d:`M${a-8} ${b+10} q8 -14 16 0 z`,fill:on?css('--sel'):css('--on'),'data-person':p.id},g);
+    el('text',{x:a+12,y:b+4,'data-person':p.id},g).textContent=p.name+(old?` · ${ago(p.ago)}`:''); });
   if(M.rover){ const [a,b]=toS(M.rover.x,M.rover.y), g=el('g',{transform:`translate(${a} ${b}) rotate(${M.rover.heading||0})`});
     el('path',{d:'M0 -14 L9 10 L-9 10 Z',fill:M.rover.source==='seen'?css('--on'):'none',stroke:css('--on'),'stroke-width':2.5},g);
     el('text',{x:a+14,y:b+14,class:'dim'}).textContent='rover'; }
@@ -238,6 +247,8 @@ svg.addEventListener('pointerdown',e=>{
   if(tool==='pen'){ const s={id:uid(),pts:[[r2(m[0]),r2(m[1])]],color:''}; M.drawings.push(s); drag={type:'pen',s}; return; }
   // select
   if(d.vert){ const [wid,i]=d.vert.split(':'); drag={type:'vert',w:M.walls.find(w=>w.id===wid),i:+i}; return; }
+  if(d.vibey){ sel={kind:'vibey'}; drag={type:'vibey',off:[M.vibey.x-m[0],M.vibey.y-m[1]],moved:false}; render(); return; }
+  if(d.person){ sel={kind:'person',id:d.person}; render(); busy=false; return; }
   if(d.obj){ const o=M.objects.find(o=>o.id===d.obj); sel={kind:'obj',id:o.id}; drag={type:'obj',o,off:[o.x-m[0],o.y-m[1]],moved:false}; render(); return; }
   if(d.wall){ const w=M.walls.find(w=>w.id===d.wall); sel={kind:'wall',id:w.id}; drag={type:'wallmove',w,last:m,moved:false}; render(); return; }
   if(d.pen){ sel={kind:'pen',id:d.pen}; render(); busy=false; return; }
@@ -249,6 +260,7 @@ svg.addEventListener('pointermove',e=>{
   if(pinch&&pts.size===2){ const [a,b]=[...pts.values()]; view.k=Math.max(10,Math.min(600,pinch.k*Math.hypot(a[0]-b[0],a[1]-b[1])/pinch.d)); render(); return; }
   if(!drag) return; const [sx,sy]=local(e), m=toM(sx,sy);
   if(drag.type==='pan'){ view.x=drag.v.x-(sx-drag.s[0])/view.k; view.y=drag.v.y+(sy-drag.s[1])/view.k; render(); }
+  else if(drag.type==='vibey'){ M.vibey.x=r2(snap(m[0]+drag.off[0])); M.vibey.y=r2(snap(m[1]+drag.off[1])); drag.moved=true; render(); }
   else if(drag.type==='obj'){ drag.o.x=r2(snap(m[0]+drag.off[0])); drag.o.y=r2(snap(m[1]+drag.off[1])); drag.moved=true; render(); }
   else if(drag.type==='vert'){ drag.w.pts[drag.i]=[snap(m[0]),snap(m[1])]; drag.moved=true; render(); }
   else if(drag.type==='wallmove'){ const dx=snap(m[0]-drag.last[0]), dy=snap(m[1]-drag.last[1]);
@@ -262,6 +274,7 @@ svg.addEventListener('pointermove',e=>{
 const up=e=>{ pts.delete(e.pointerId); if(pts.size<2) pinch=null; if(pts.size) return;
   const d=drag; drag=null; busy=false; if(!d) return;
   if(d.type==='obj'&&d.moved) touch(d.o);
+  else if(d.type==='vibey'&&d.moved) touch();
   else if((d.type==='vert'||d.type==='wallmove')&&d.moved) touch();
   else if(d.type==='pen'){ if(d.s.pts.length<2) M.drawings=M.drawings.filter(s=>s!==d.s); else touch(); }
   else if(d.type==='box'){ const w=Math.abs(d.b[0]-d.a[0]), h=Math.abs(d.b[1]-d.a[1]);
@@ -308,9 +321,21 @@ function removeSel(){ const s=sel; if(!s) return; sel=null;
 function field(label,id,val,attrs=''){ return `<label>${label}<input id="${id}" value="${val??''}" ${attrs}></label>`; }
 function renderInsp(){
   const it=find(sel), body=$('inspBody');
-  if(document.activeElement&&body.contains(document.activeElement)) return;   // don't yank a field mid-typing
+  const key=sel?sel.kind+':'+(sel.id||''):'';
+  if(body.dataset.key===key&&document.activeElement&&body.contains(document.activeElement)) return;   // don't yank a field mid-typing
+  body.dataset.key=key;
   if(!it){ $('inspTitle').textContent='Selected'; body.className='hint'; body.innerHTML='Tap something on the plan to edit it.'; return; }
   body.className='';
+  if(sel.kind==='vibey'){ const V=M.vibey; $('inspTitle').textContent='Vibey';
+    body.innerHTML=field('Facing (°)','f-vh',V.heading||0,'type=number step=15')+
+      `<div class=hint>Drag Vibey to where it sits${V.x||V.y?` (${roomOf(V.x,V.y)||'outside the rooms you drew'})`:''}. Facing is the way its body points when centred, 0 = up on this plan. After moving Vibey to another room, press Scan room and what it sees lands in the same house plan.</div>`;
+    $('f-vh').onchange=e=>{ V.heading=((+e.target.value%360)+540)%360-180; touch(); }; return; }
+  if(sel.kind==='person'){ const p=it; $('inspTitle').textContent=p.name;
+    body.innerHTML=`<div class=hint>Seen ${ago(p.ago)}${p.room?' in the '+p.room:''}, about ${Math.hypot(p.x-M.vibey.x,p.y-M.vibey.y).toFixed(1)} m from Vibey. Placed from where their face was in Vibey's view and how big it looked, so treat it as rough.</div>`+
+      (p.name!=='someone'?`<div class=row><button id=f-pdrive>Drive the rover to ${p.name}</button></div>`:'');
+    if($('f-pdrive')) $('f-pdrive').onclick=async()=>{ const r=await j('/rover/pilot',{goal:'drive to '+p.name});
+      $('saved').textContent=r&&r.result==='driving'?'driving to '+p.name:(r&&r.result)||'chat service offline'; };
+    return; }
   if(sel.kind==='obj'){ const o=it; $('inspTitle').textContent=o.name;
     body.innerHTML=field('Name','f-name',o.name,'class=wide')+
       field('Width (m)','f-w',o.w??'','type=number step=0.05 min=0 placeholder="—"')+
@@ -345,14 +370,27 @@ function renderInsp(){
 function rescale(f){ // everything about Vibey's base, which stays put
   const sc=p=>[r2(p[0]*f),r2(p[1]*f)];
   M.walls.forEach(w=>w.pts=w.pts.map(sc)); M.drawings.forEach(d=>d.pts=d.pts.map(sc));
+  M.vibey.x=r2(M.vibey.x*f); M.vibey.y=r2(M.vibey.y*f);
   M.objects.forEach(o=>{ o.x=r2(o.x*f); o.y=r2(o.y*f); if(o.w) o.w=r2(o.w*f); if(o.d) o.d=r2(o.d*f); dirty.add(o.id); o.pinned=true; });
   view.k/=f; view.x*=f; view.y*=f; touch(); }
 
+function ago(s){ return s<15?'now':s<90?`${s}s ago`:`${Math.round(s/60)} min ago`; }
+function roomOf(x,y){ // which drawn room a point is in
+  for(const w of M.walls){ const p=w.pts; if(p.length<3||w.open) continue; let inside=false;
+    for(let i=0,k=p.length-1;i<p.length;k=i++){ const [x1,y1]=p[i],[x2,y2]=p[k];
+      if((y1>y)!==(y2>y)&&x<(x2-x1)*(y-y1)/(y2-y1)+x1) inside=!inside; }
+    if(inside) return w.name||'room'; } return ''; }
 function renderList(){
-  const objs=[...M.objects].sort((a,b)=>Math.hypot(a.x,a.y)-Math.hypot(b.x,b.y));
-  $('count').textContent=`${objs.length} things · ${M.walls.length} room${M.walls.length===1?'':'s'}`;
-  $('things').innerHTML=objs.map(o=>`<div class=thing data-id="${o.id}"><span>${o.name} ${o.pinned?'<span class=pin>📌</span>':''}</span><small>${Math.hypot(o.x,o.y).toFixed(1)} m from Vibey${o.w?` · ${o.w}×${o.d} m`:''}</small></div>`).join('')||'<div class=hint>Nothing yet. Press Scan room, or draw with Furniture.</div>';
-  $('things').querySelectorAll('.thing').forEach(d=>d.onclick=()=>{ sel={kind:'obj',id:d.dataset.id}; const o=find(sel); view.x=o.x; view.y=o.y; render(); }); }
+  const V=M.vibey, dV=o=>Math.hypot(o.x-V.x,o.y-V.y);
+  const objs=[...M.objects].sort((a,b)=>(roomOf(a.x,a.y)||'~').localeCompare(roomOf(b.x,b.y)||'~')||dV(a)-dV(b));
+  $('count').textContent=`${objs.length} things · ${M.people.length} ${M.people.length===1?'person':'people'} · ${M.walls.length} room${M.walls.length===1?'':'s'}`;
+  const ppl=M.people.map(p=>`<div class=thing data-person="${p.id}"><span>🧍 ${p.name}</span><small>${ago(p.ago)}${p.room?' · '+p.room:''} · ${dV(p).toFixed(1)} m from Vibey</small></div>`).join('');
+  let lastRoom=null;
+  const rows=objs.map(o=>{ const rm=roomOf(o.x,o.y); const head=rm!==lastRoom&&M.walls.length?`<div class=hint style="margin:8px 0 2px">${rm||'not in a room'}</div>`:''; lastRoom=rm;
+    return head+`<div class=thing data-id="${o.id}"><span>${o.name} ${o.pinned?'<span class=pin>📌</span>':''}</span><small>${dV(o).toFixed(1)} m from Vibey${o.w?` · ${o.w}×${o.d} m`:''}</small></div>`; }).join('');
+  $('things').innerHTML=(ppl+rows)||'<div class=hint>Nothing yet. Press Scan room, or draw with Furniture.</div>';
+  $('things').querySelectorAll('.thing').forEach(d=>d.onclick=()=>{ sel=d.dataset.person?{kind:'person',id:d.dataset.person}:{kind:'obj',id:d.dataset.id};
+    const o=find(sel); if(o){ view.x=o.x; view.y=o.y; } render(); }); }
 
 $('scan').onclick=async()=>{ $('scan').disabled=true; $('scan').textContent='starting…'; await j('/rover/map/scan',{}); poll(800); };
 $('clearPen').onclick=()=>{ if(!M.drawings.length||!confirm('Erase all pen drawings?')) return; M.drawings=[]; touch(); };
@@ -391,7 +429,8 @@ function label(text){ const c=document.createElement('canvas'), g=c.getContext('
   const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),depthTest:false})); s.scale.set(w/56*0.28,0.28,1); return s; }
 function build(){
   const M=window.__M(); scene.remove(group); group.traverse(o=>{ o.geometry&&o.geometry.dispose(); }); group=new THREE.Group(); scene.add(group);
-  const pts=[[0,0]]; M.objects.forEach(o=>pts.push([o.x,o.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
+  const V=M.vibey||{x:0,y:0,heading:0};
+  const pts=[[V.x,V.y]]; M.objects.forEach(o=>pts.push([o.x,o.y])); M.walls.forEach(w=>w.pts.forEach(p=>pts.push(p)));
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]), x0=Math.min(...xs)-1, x1=Math.max(...xs)+1, y0=Math.min(...ys)-1, y1=Math.max(...ys)+1;
   // floor: the rooms if drawn, otherwise a plain rectangle under everything
   const floorMat=new THREE.MeshStandardMaterial({color:col('--field'),roughness:1});
@@ -414,9 +453,11 @@ function build(){
     const l=label(o.name); l.position.copy(P(o.x,o.y,h+0.25)); group.add(l); });
   // Vibey and the rover
   const vib=new THREE.Mesh(new THREE.CylinderGeometry(.12,.15,.35,24),new THREE.MeshStandardMaterial({color:col('--text')}));
-  vib.position.copy(P(0,0,.75+.175)); group.add(vib); const vl=label('Vibey'); vl.position.copy(P(0,0,1.35)); group.add(vl);
+  vib.position.copy(P(V.x,V.y,.75+.175)); group.add(vib); const vl=label('Vibey'); vl.position.copy(P(V.x,V.y,1.35)); group.add(vl);
   const desk=new THREE.Mesh(new THREE.BoxGeometry(.6,.75,.6),new THREE.MeshStandardMaterial({color:col('--off'),transparent:true,opacity:.5}));
-  desk.position.copy(P(0,0,.375)); group.add(desk);
+  desk.position.copy(P(V.x,V.y,.375)); group.add(desk);
+  (M.people||[]).forEach(p=>{ const m=new THREE.Mesh(new THREE.CapsuleGeometry(.18,1.25,4,12),new THREE.MeshStandardMaterial({color:col('--on'),transparent:p.ago>15,opacity:p.ago>15?.4:1}));
+    m.position.copy(P(p.x,p.y,.8)); group.add(m); const l=label(p.name); l.position.copy(P(p.x,p.y,1.95)); group.add(l); });
   if(M.rover){ const r=new THREE.Mesh(new THREE.ConeGeometry(.14,.32,3),new THREE.MeshStandardMaterial({color:col('--on')}));
     r.rotation.x=-Math.PI/2; const g=new THREE.Group(); g.add(r); g.position.copy(P(M.rover.x,M.rover.y,.1)); g.rotation.y=-(M.rover.heading||0)*Math.PI/180; group.add(g); }
   if(!framed){ framed=true; const c=P((x0+x1)/2,(y0+y1)/2,0), s=Math.max(x1-x0,y1-y0); ctl.target.copy(c);

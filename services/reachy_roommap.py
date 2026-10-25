@@ -57,8 +57,12 @@ def _blank() -> dict:
     # drawings: his pen strokes, [{id, pts, color}]
     # objects edited by hand get pinned=True: scans then leave them where he put
     # them, and they never age out. w/d/h/rot are a box's size (m) and turn (deg).
+    # vibey: where Vibey sits in the house and which way its body faces when
+    # centred. (0, 0, 0) until Jack moves it on the floor plan; scans from a
+    # new spot then land in the same house-wide plan.
     return {"objects": [], "rover": None, "scans": 0, "updated": 0.0,
-            "hfov": HFOV, "walls": [], "drawings": []}
+            "hfov": HFOV, "walls": [], "drawings": [],
+            "vibey": {"x": 0.0, "y": 0.0, "heading": 0.0}}
 
 
 def _new_id() -> str:
@@ -93,9 +97,79 @@ def _save() -> None:
 
 
 def get() -> dict:
+    ppl = people()
     with _mu:
         return {**json.loads(json.dumps(_map)), "status": dict(_state),
-                "riding": reachy_rover.RIDING}
+                "riding": reachy_rover.RIDING, "people": ppl}
+
+
+def _vibey() -> tuple[float, float, float]:
+    v = _map.get("vibey") or {}
+    return float(v.get("x") or 0), float(v.get("y") or 0), float(v.get("heading") or 0)
+
+
+def room_of(x: float, y: float) -> str:
+    """Name of the drawn room a point is in, or ''."""
+    for w in _map.get("walls") or []:
+        p = w.get("pts") or []
+        if len(p) < 3 or w.get("open"):
+            continue
+        inside = False
+        for i in range(len(p)):
+            (x1, y1), (x2, y2) = p[i], p[i - 1]
+            if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+                inside = not inside
+        if inside:
+            return w.get("name") or "a room"
+    return ""
+
+
+# ---- people, live --------------------------------------------------------------
+# Who the face service (:8773) sees right now, put on the plan from the head's
+# angle, where the face is across the frame, and how big it is (a face is
+# about 22 cm tall). Kept a few minutes after they leave view so the map can
+# say where someone was last seen. Never written to disk.
+MEM_URL = os.environ.get("MEM_URL", "http://localhost:8773").rstrip("/")
+FACE_M = 0.22
+PEOPLE_KEEP = 300.0
+_people: dict[str, dict] = {}
+_people_at = 0.0
+
+
+def people() -> list[dict]:
+    global _people_at
+    now = time.time()
+    if now - _people_at > 1.5:
+        _people_at = now
+        try:
+            with urllib.request.urlopen(f"{MEM_URL}/current", timeout=1.0) as r:
+                cur = json.loads(r.read() or b"{}").get("people") or []
+        except Exception:  # noqa: BLE001
+            cur = []
+        fresh = [c for c in cur if c.get("fresh")]
+        yaw = _actual_yaw() if fresh else None
+        if fresh and yaw is not None:
+            with _mu:
+                ox, oy, oh = _observer()
+            for c in fresh:
+                try:
+                    xf = (float(c.get("x") or 0) + 1) / 2      # -1..1 -> 0..1
+                except (TypeError, ValueError):
+                    continue
+                frac = float(c.get("face_frac") or 0)
+                # vertical field of view of a 16:9 frame
+                vfov = 2 * math.atan(math.tan(math.radians(HFOV) / 2) * 9 / 16)
+                dist = FACE_M / (frac * 2 * math.tan(vfov / 2)) if frac > 0.01 else 1.5
+                p = _place(xf, dist, _norm(oh - yaw), ox, oy)
+                if not p:
+                    continue
+                key = str(c.get("face_id") or c.get("name") or "someone")
+                _people[key] = {"id": key, "name": c.get("name") or "someone",
+                                "x": p[0], "y": p[1], "at": c.get("ts") or now}
+        for k in [k for k, v in _people.items() if now - v["at"] > PEOPLE_KEEP]:
+            _people.pop(k, None)
+    return [dict(v, ago=round(now - v["at"]), room=room_of(v["x"], v["y"]))
+            for v in sorted(_people.values(), key=lambda v: -v["at"])]
 
 
 def clear(everything: bool = False) -> str:
@@ -147,6 +221,10 @@ def save_plan(body: dict) -> dict:
                                  "color": str(d.get("color") or "")[:16],
                                  "pts": _pts(d.get("pts"))}
                                 for d in body["drawings"][:200] if isinstance(d, dict)]
+        v = body.get("vibey")
+        if isinstance(v, dict):
+            _map["vibey"] = {"x": _num(v.get("x"), -50, 50, 0.0), "y": _num(v.get("y"), -50, 50, 0.0),
+                             "heading": _num(v.get("heading"), -360, 360, 0.0)}
         gone = {str(i) for i in (body.get("deleted") or [])}
         objs = [o for o in _map["objects"] if o.get("id") not in gone]
         by_id = {o.get("id"): o for o in objs}
@@ -224,7 +302,7 @@ def _observer() -> tuple[float, float, float]:
     r = _map.get("rover")
     if reachy_rover.RIDING and r:
         return r["x"], r["y"], r["heading"]
-    return 0.0, 0.0, 0.0
+    return _vibey()
 
 
 # ---- looking ----------------------------------------------------------------
@@ -565,8 +643,9 @@ def scan_async() -> str:
 def find(goal: str) -> dict | None:
     """The mapped thing a goal like 'drive to the blue chair' is about."""
     g = " " + _slug(goal) + " "
+    ppl = [p for p in people() if p["name"] != "someone"]
     with _mu:
-        objs = list(_map["objects"])
+        objs = list(_map["objects"]) + ppl
     best, score = None, 0
     for o in objs:
         n = _slug(o["name"])
@@ -598,8 +677,9 @@ def hint_for(goal: str) -> str:
     with _mu:
         r = dict(_map["rover"]) if _map.get("rover") else None
     if not r:
+        vx, vy, _ = _vibey()
         return (f"Map hint: the {o['name']} is about "
-                f"{math.hypot(o['x'], o['y']):.1f} m from you (Vibey).")
+                f"{math.hypot(o['x'] - vx, o['y'] - vy):.1f} m from you (Vibey).")
     dx, dy = o["x"] - r["x"], o["y"] - r["y"]
     d = math.hypot(dx, dy)
     rel = _norm(math.degrees(math.atan2(dx, dy)) - r["heading"])
@@ -610,23 +690,36 @@ def hint_for(goal: str) -> str:
 
 def describe() -> str:
     """The map in words, for the voice."""
+    ppl = people()
     with _mu:
         objs = list(_map["objects"])
         r = _map.get("rover")
         scans = _map.get("scans", 0)
-    if not objs:
+        vx, vy, vh = _vibey()
+        here = room_of(vx, vy)
+        rooms = {id(o): room_of(o["x"], o["y"]) for o in objs}
+        rooms.update({id(p): p.get("room", "") for p in ppl})
+    if not objs and not ppl:
         return "I haven't mapped the room yet; ask me to look around first"
-    parts = []
-    for o in sorted(objs, key=lambda o: math.hypot(o["x"], o["y"]))[:12]:
-        b = math.degrees(math.atan2(o["x"], o["y"]))
-        where = ("ahead" if abs(b) < 20 else "behind" if abs(b) > 150 else
-                 ("to my right" if b > 0 else "to my left"))
-        parts.append(f"{o['name']} {where}, {math.hypot(o['x'], o['y']):.1f} m")
+
+    def where(o) -> str:
+        dx, dy = o["x"] - vx, o["y"] - vy
+        b = _norm(math.degrees(math.atan2(dx, dy)) - vh)
+        side = ("ahead" if abs(b) < 20 else "behind me" if abs(b) > 150 else
+                ("to my right" if b > 0 else "to my left"))
+        rm = rooms.get(id(o))
+        return f"{side}, {math.hypot(dx, dy):.1f} m" + (f", in the {rm}" if rm and rm != here else "")
+    parts = [f"{o['name']} {where(o)}"
+             for o in sorted(objs, key=lambda o: math.hypot(o["x"] - vx, o["y"] - vy))[:12]]
     out = "; ".join(parts)
+    for p in ppl[:4]:
+        when = "now" if p["ago"] < 10 else f"{p['ago'] // 60 or 1} min ago"
+        out += f". {p['name'].capitalize()} ({when}): {where(p)}"
     if r:
-        out += (f". The rover is about {math.hypot(r['x'], r['y']):.1f} m away"
+        out += (f". The rover is about {math.hypot(r['x'] - vx, r['y'] - vy):.1f} m away"
                 f" ({'seen' if r.get('source') == 'seen' else 'estimated from its moves'})")
-    return f"From {scans} look-around{'s' if scans != 1 else ''}: {out}."
+    lead = f"I'm in the {here}. " if here else ""
+    return f"{lead}From {scans} look-around{'s' if scans != 1 else ''}: {out}."
 
 
 def _emit(text: str) -> None:
