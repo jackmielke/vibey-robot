@@ -2340,6 +2340,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/modes"):
             self._send(json.dumps(reachy_modes.status()).encode(),
                        "application/json")
+        elif self.path.split("?")[0] == "/emotes":
+            # Every emote the body knows, for the Moves panel. Read from the
+            # module so a new emote shows up without touching the page.
+            import reachy_emotes
+            self._send(json.dumps({"emotes": [k for k in reachy_emotes._MOVES
+                                              if not k.endswith("antenna_check")]}).encode(),
+                       "application/json")
         elif self.path.startswith("/chatstate"):
             # This branch shadowed a later one that added `turning`, so the page
             # never knew a /turn was still in flight: the button re-enabled
@@ -2730,6 +2737,22 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_reboot_robot, daemon=True).start()
             self._send(json.dumps({"ok": True, "rebooting": True}).encode(),
                        "application/json")
+            return
+        if self.path.startswith("/dance"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                secs = max(4.0, min(float(body.get("seconds", 12)), 60.0))
+                from reachy_emotes import play_dance
+                play_dance(secs)
+                self._send(json.dumps({"ok": True, "seconds": secs}).encode(), "application/json")
+            except Exception as e:
+                self.send_response(400); self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+            return
+        if self.path.startswith("/karaoke"):
+            r = _post(f"{CHAT_URL}/karaoke", {}, timeout=4.0)
+            self._send(json.dumps({"ok": bool(r and r.get("ok"))}).encode(), "application/json")
             return
         if self.path.startswith("/emote"):
             try:

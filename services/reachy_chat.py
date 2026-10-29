@@ -1795,6 +1795,12 @@ class _CtrlHandler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 self._json({"error": str(e)}, 400)
             return
+        if self.path.startswith("/karaoke"):
+            # Same show as saying "karaoke time": writes a song, sings it, dances.
+            _log_turn("wonder", "(karaoke time! 🎤 writing a song…)")
+            threading.Thread(target=_perform_karaoke, daemon=True).start()
+            self._json({"ok": True})
+            return
         if self.path.startswith(("/emote", "/sfx", "/say", "/dj/", "/friends/name")):
             # The phone's Play tab. Thin: each one is a call into a module the
             # voice brain already uses.
