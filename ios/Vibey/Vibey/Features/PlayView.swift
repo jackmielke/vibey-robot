@@ -175,6 +175,48 @@ struct PlayView: View {
     }
 }
 
+/// Every move Vibey knows, opened from Home. Dance party on top.
+struct MovesView: View {
+    @EnvironmentObject var store: Store
+    @State private var emotes: [String] = Array(Emotes.emojis.keys).sorted()
+    @State private var fired: String?
+
+    private let grid = [GridItem(.adaptive(minimum: 72), spacing: 8)]
+
+    var body: some View {
+        SpaceScreen {
+            ScrollView {
+                VStack(spacing: 14) {
+                    ScreenTitle(title: "Moves", subtitle: "Tap one and Vibey does it")
+                    Tile(emoji: "💃", title: "Dance party (12 s, with a beat)", lit: fired == "dance") {
+                        fire("dance")
+                    }
+                    SectionLabel(text: "Emotes", trailing: "\(emotes.count)")
+                    LazyVGrid(columns: grid, spacing: 8) {
+                        ForEach(emotes.filter { $0 != "dance" }, id: \.self) { e in
+                            Tile(emoji: Emotes.emoji(e), title: Emotes.title(e), lit: fired == e) { fire(e) }
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .task { if let e = try? await store.api.emotes(), !e.isEmpty { emotes = e } }
+    }
+
+    private func fire(_ e: String) {
+        Haptics.tap()
+        withAnimation(.spring(response: 0.25)) { fired = e }
+        store.run(nil) { try await $0.emote(e) }
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            if fired == e { withAnimation(.easeOut) { fired = nil } }
+        }
+    }
+}
+
 /// Square emoji button with a glow when it fires.
 struct Tile: View {
     let emoji: String

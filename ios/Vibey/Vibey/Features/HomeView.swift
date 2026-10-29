@@ -13,6 +13,7 @@ struct HomeView: View {
     @State private var music: MacMusic?
     @State private var musicVol: Double = 50
     @State private var rover: RoverInfo?
+    @State private var firedMove: String?
 
     private var s: VibeyState? { store.state }
     private var privacy: Bool { s?.privacy ?? true }
@@ -61,6 +62,7 @@ struct HomeView: View {
                     if let pp = visibleProgress { powerProgress(pp) }
                     CameraCard()
                     if rover?.connected == true { RoverCard(info: rover) }
+                    movesCard
                     driveButton
                     privacyCard
                     volumeCard
@@ -112,6 +114,38 @@ struct HomeView: View {
         guard let r = rover, r.connected else { return "Gas and steering, pad, joystick, room map" }
         if r.online == false { return "Rover is off or out of Wi-Fi range" }
         return r.battery.map { "Battery \($0)" } ?? "Rover connected"
+    }
+
+    /// A few emotes one tap from home; "All moves" opens every one (same list as Play).
+    private var movesCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Moves").font(.system(.headline, design: .rounded))
+                Spacer()
+                NavigationLink { MovesView() } label: {
+                    HStack(spacing: 4) {
+                        Text("All moves")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Palette.inkDim)
+                }
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(Emotes.fallback, id: \.self) { e in
+                    Tile(emoji: Emotes.emoji(e), title: Emotes.title(e), lit: firedMove == e) {
+                        Haptics.tap()
+                        withAnimation(.spring(response: 0.25)) { firedMove = e }
+                        store.run(nil) { try await $0.emote(e) }
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(700))
+                            if firedMove == e { withAnimation(.easeOut) { firedMove = nil } }
+                        }
+                    }
+                }
+            }
+        }
+        .shell()
     }
 
     /// The rover, one tap from home (same screen as Play > Wheels).
