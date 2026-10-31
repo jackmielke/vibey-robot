@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0612">
+<title>Vibey's Haunted Candy Hunt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+  /* Phone AR game. The camera is the world, the gyro is the aim, and the
+     real robot plays the boss. Served by services/reachy_halloween.py, which
+     turns game events into Vibey's voice, face and wheels. */
+  :root {
+    --bg: #0b0612; --ink: #fff7ec; --dim: #c9b9d6; --orange: #ff8a1f;
+    --purple: #8b5cf6; --green: #7cff6b; --red: #ff3b3b;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: Inter, system-ui, sans-serif; overflow: hidden; touch-action: none;
+    -webkit-user-select: none; user-select: none; }
+  #cam, #bg, #fx { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #cam { object-fit: cover; background: #120a1c; }
+  #bg { display: none; }
+  .spooky { font-family: Creepster, Inter, cursive; letter-spacing: 1px; font-weight: 400; }
+  .hud { position: fixed; left: 0; right: 0; top: 0; padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
+    display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none;
+    background: linear-gradient(#0b0612cc, transparent); }
+  .stat { font-weight: 900; font-size: 26px; text-shadow: 0 2px 8px #000; }
+  .stat small { display: block; font-size: 11px; font-weight: 700; color: var(--dim); letter-spacing: 1.5px; }
+  .pills { display: flex; gap: 6px; flex-direction: column; align-items: flex-end; pointer-events: auto; }
+  .pill { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 99px; background: #0008;
+    border: 1px solid #ffffff22; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #777; }
+  .on .dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  button.pill { color: var(--ink); font-family: inherit; }
+  #banner { position: fixed; left: 0; right: 0; top: 34%; text-align: center; font-size: 46px;
+    text-shadow: 0 0 18px #000, 0 4px 0 #000; pointer-events: none; opacity: 0; transition: opacity .3s; padding: 0 16px; }
+  #banner.show { opacity: 1; }
+  #toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 26px); transform: translateX(-50%);
+    background: #0009; border: 1px solid #ffffff22; padding: 8px 14px; border-radius: 14px; font-weight: 700;
+    font-size: 14px; max-width: calc(100% - 32px); text-align: center; pointer-events: none; opacity: 0; transition: opacity .25s; }
+  #toast.show { opacity: 1; }
+  .screen { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px 22px calc(env(safe-area-inset-bottom) + 24px); }
+  .screen.show { display: flex; }
+  #intro { background: radial-gradient(ellipse at 50% 30%, #3a1458 0%, #0b0612 70%); }
+  #intro h1 { font-size: 54px; line-height: .95; margin: 0 0 10px; color: var(--orange);
+    text-shadow: 0 0 24px #ff8a1f88, 0 4px 0 #000; }
+  #intro p { color: var(--dim); max-width: 340px; line-height: 1.45; margin: 6px 0; font-size: 15px; }
+  .big { margin-top: 18px; font: 900 19px Inter, sans-serif; color: #1a0b00; background: var(--orange);
+    border: 0; border-radius: 16px; padding: 16px 28px; box-shadow: 0 6px 0 #a24d00, 0 0 30px #ff8a1f66; }
+  .big:active { transform: translateY(3px); box-shadow: 0 3px 0 #a24d00; }
+  .ghostbtn { margin-top: 12px; background: none; border: 0; color: var(--dim); font: 600 14px Inter, sans-serif; text-decoration: underline; }
+  .rules { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; text-align: left; max-width: 330px;
+    margin: 14px 0 4px; font-size: 14px; color: var(--ink); }
+  .rules b { color: var(--orange); }
+  #calib { background: transparent; justify-content: flex-end; pointer-events: none; }
+  #calib .panel { pointer-events: auto; background: #0b0612e6; border: 1px solid #ffffff22; border-radius: 20px;
+    padding: 16px; width: 100%; max-width: 380px; }
+  #calib h2 { margin: 0 0 6px; font-size: 20px; }
+  #calib p { margin: 0 0 10px; color: var(--dim); font-size: 14px; }
+  input[type=range] { width: 100%; accent-color: var(--orange); }
+  #end { background: #0b0612ee; }
+  #end h2 { font-size: 46px; margin: 0; color: var(--orange); }
+  #end .score { font-size: 64px; font-weight: 900; margin: 10px 0 0; }
+  #end p { color: var(--dim); max-width: 320px; }
+  #radar { position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); width: 84px; height: 84px;
+    border-radius: 50%; background: #0008; border: 1px solid #ffffff2a; pointer-events: none; display: none; }
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="bg"></canvas>
+<canvas id="fx"></canvas>
+
+<div class="hud" id="hud" style="display:none">
+  <div style="display:flex; gap:18px">
+    <div class="stat"><small>CANDY</small><span id="score">0</span></div>
+    <div class="stat"><small>TIME</small><span id="time">75</span></div>
+  </div>
+  <div class="pills">
+    <div class="pill" id="link"><span class="dot"></span><span id="linktxt">Solo mode</span></div>
+    <button class="pill" id="wheels"><span class="dot"></span>Wheels</button>
+  </div>
+</div>
+<canvas id="radar" width="168" height="168"></canvas>
+<div id="banner" class="spooky"></div>
+<div id="toast"></div>
+
+<div class="screen show" id="intro">
+  <h1 class="spooky">Vibey's Haunted Candy Hunt</h1>
+  <p>Ghosts are loose in the house and they want your candy. Look around with your phone, grab the treats, and zap the ghosts.</p>
+  <div class="rules">
+    <span>🍬</span><span><b>Tap candy</b> to grab it. Chain grabs for combos.</span>
+    <span>👻</span><span><b>Tap ghosts twice</b> before they reach you, or they steal 20.</span>
+    <span>😈</span><span>At the halfway mark <b>Vibey gets possessed.</b> Zap the real robot to set it free.</span>
+  </div>
+  <button class="big" id="go">Start the hunt</button>
+  <button class="ghostbtn" id="nocam">No camera? Play in a spooky void</button>
+</div>
+
+<div class="screen" id="calib">
+  <div class="panel">
+    <h2>Find Vibey</h2>
+    <p>Point your phone at the robot so the horns sit on its head, then lock on. No robot nearby? Just lock on anywhere.</p>
+    <input type="range" id="size" min="0.5" max="2.2" step="0.05" value="1">
+    <button class="big" id="lock" style="width:100%">Lock on Vibey</button>
+  </div>
+</div>
+
+<div class="screen" id="end">
+  <h2 class="spooky" id="endtitle">Vibey is free!</h2>
+  <div class="score" id="endscore">0</div>
+  <p id="endline">pieces of candy saved</p>
+  <button class="big" id="again">Play again</button>
+</div>
+
+<script>
+(() => {
+"use strict";
+const Q = new URLSearchParams(location.search);
+const DEMO = Q.has("demo");                       // autopilot + still background (for recording)
+const BG_URL = Q.get("bg") || "";
+const BGX = Number(Q.get("bgx") || 0), BGY = Number(Q.get("bgy") || 0);   // nudge the still so Vibey sits under the costume                 // background image for the void / demo
+const API = (Q.get("vibey") || "").replace(/\/$/, "");  // where reachy_halloween.py lives ("" = same origin)
+const ROUND = DEMO ? Number(Q.get("round") || 60) : 75;
+const BOSS_AT = ROUND * 0.47;                     // seconds left when Vibey gets possessed
+const BOSS_HP = 12;
+
+const $ = id => document.getElementById(id);
+const cam = $("cam"), fx = $("fx"), bg = $("bg"), radar = $("radar");
+const ctx = fx.getContext("2d"), bctx = bg.getContext("2d"), rctx = radar.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  for (const c of [fx, bg]) { c.width = W * DPR; c.height = H * DPR; }
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); bctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener("resize", resize); resize();
+
+// ---------------------------------------------------------------- vectors --
+const v3 = (x, y, z) => ({ x, y, z });
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const D2R = Math.PI / 180;
+function dirOf(yaw, pitch) {            // world: x east, y north, z up; yaw clockwise from north
+  return v3(Math.sin(yaw) * Math.cos(pitch), Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch));
+}
+const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const rand = (a, b) => a + Math.random() * (b - a);
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+// --------------------------------------------------------------- the view --
+// view = camera basis in world coordinates. From the gyro when we have one,
+// from finger drags when we don't (desktop, Quest browser, no permission).
+const view = { yaw: 0, pitch: 0, right: v3(1, 0, 0), up: v3(0, 0, 1), fwd: v3(0, 1, 0) };
+let gyro = false, orient = null;
+function fromYawPitch(yaw, pitch) {
+  view.yaw = yaw; view.pitch = pitch;
+  view.fwd = dirOf(yaw, pitch);
+  view.right = v3(Math.cos(yaw), -Math.sin(yaw), 0);
+  const r = view.right, f = view.fwd;
+  view.up = v3(r.y * f.z - r.z * f.y, r.z * f.x - r.x * f.z, r.x * f.y - r.y * f.x);
+}
+fromYawPitch(0, 0);
+function fromOrientation(o) {
+  // W3C deviceorientation: R = Rz(alpha) Rx(beta) Ry(gamma). The rear camera
+  // looks down the device's -z axis; screen right/up are its +x/+y.
+  const a = (o.alpha || 0) * D2R, b = (o.beta || 0) * D2R, g = (o.gamma || 0) * D2R;
+  const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+  const r = v3(ca * cg - sa * sb * sg, sa * cg + ca * sb * sg, -cb * sg);
+  const u = v3(-sa * cb, ca * cb, sb);
+  const f = v3(-(ca * sg + sa * sb * cg), -(sa * sg - ca * sb * cg), -(cb * cg));
+  const th = ((screen.orientation && screen.orientation.angle) || window.orientation || 0) * D2R;
+  const c = Math.cos(th), s = Math.sin(th);
+  view.right = v3(c * r.x - s * u.x, c * r.y - s * u.y, c * r.z - s * u.z);
+  view.up = v3(s * r.x + c * u.x, s * r.y + c * u.y, s * r.z + c * u.z);
+  view.fwd = f;
+  view.yaw = Math.atan2(f.x, f.y); view.pitch = Math.asin(Math.max(-1, Math.min(1, f.z)));
+}
+addEventListener("deviceorientation", e => {
+  if (e.alpha == null) return;
+  orient = e; gyro = true;
+});
+
+// Pinhole projection. Vertical FOV about 60 degrees matches a phone's main
+// camera filling a portrait screen closely enough for things to feel pinned.
+const VFOV = 60 * D2R;
+const HEAD = 48;                                  // costume radius per unit of projected scale
+const sizeAt = (p, t) => Math.max(0.3, Math.min(1.7, p.s * 0.95 / t.dist));
+function project(dir) {
+  const cz = dot(dir, view.fwd);
+  if (cz < 0.05) return null;
+  const f = (H / 2) / Math.tan(VFOV / 2);
+  return { x: W / 2 + f * dot(dir, view.right) / cz, y: H / 2 - f * dot(dir, view.up) / cz, s: f / cz / 400 };
+}
+
+// Finger look (no gyro): drag to turn. A short touch still counts as a tap.
+let drag = null;
+fx.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: performance.now() }; });
+fx.addEventListener("pointermove", e => {
+  if (!drag || gyro) return;
+  const k = VFOV / H;
+  fromYawPitch(view.yaw - (e.clientX - drag.x) * k, Math.max(-1.2, Math.min(1.2, view.pitch + (e.clientY - drag.y) * k)));
+  drag.x = e.clientX; drag.y = e.clientY;
+});
+fx.addEventListener("pointerup", e => {
+  if (drag && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 14) tap(e.clientX, e.clientY);
+  drag = null;
+});
+
+// ------------------------------------------------------------- Vibey link --
+const link = { up: false, wheels: true, drives: false };
+async function vibeyState() {
+  try {
+    const r = await fetch(API + "/state", { cache: "no-store" });
+    const j = await r.json();
+    link.up = !!j.ok; link.drives = !!j.wheels;
+  } catch { link.up = false; }
+  $("link").classList.toggle("on", link.up);
+  $("linktxt").textContent = link.up ? "Vibey linked" : "Solo mode";
+  $("wheels").style.display = link.up && link.drives ? "" : "none";
+  $("wheels").classList.toggle("on", link.wheels);
+}
+$("wheels").addEventListener("click", () => { link.wheels = !link.wheels; vibeyState(); });
+function send(type, extra = {}) {
+  if (!link.up) return;
+  fetch(API + "/event", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, wheels: link.wheels, score: game.score, ...extra }) }).catch(() => {});
+}
+
+// ------------------------------------------------------------ phone audio --
+let AC = null;
+function beep(freq, dur = 0.12, type = "square", vol = 0.08, slide = 0) {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur);
+  } catch {}
+}
+const sfx = {
+  candy: n => { beep(660 + n * 60, 0.09, "square", 0.06); setTimeout(() => beep(990 + n * 60, 0.1, "square", 0.05), 60); },
+  zap: () => beep(1400, 0.18, "sawtooth", 0.06, -1100),
+  pop: () => { beep(220, 0.25, "triangle", 0.1, -150); beep(880, 0.2, "sine", 0.05, 600); },
+  steal: () => beep(300, 0.5, "sawtooth", 0.08, -220),
+  boss: () => { beep(70, 1.4, "sawtooth", 0.12, 30); beep(105, 1.4, "square", 0.05, -40); },
+  hit: () => beep(180, 0.15, "square", 0.1, -120),
+  miss: () => beep(500, 0.12, "sine", 0.05, 300),
+};
+
+// --------------------------------------------------------------- the game --
+const game = { on: false, t: ROUND, score: 0, combo: 0, comboT: 0, things: [], parts: [], rays: [],
+  phase: "hunt", boss: null, vibey: { yaw: 0, pitch: -0.05, size: 1 }, spawnT: 0, ghostT: 2, shake: 0 };
+const CANDY = ["wrap", "pop", "pumpkin", "corn", "wrap"];
+const COLORS = ["#ff4fa3", "#ffd23f", "#4fd1ff", "#9b6bff", "#7cff6b", "#ff7a3d"];
+
+function spawnCandy() {
+  const yaw = game.vibey.yaw + rand(-1, 1) * (DEMO ? 0.5 : 2.2), pitch = rand(-0.35, 0.3) * (DEMO ? 0.7 : 1);
+  game.things.push({ kind: "candy", style: pick(CANDY), color: pick(COLORS), yaw, pitch, dist: rand(1.6, 3),
+    born: performance.now(), life: rand(9, 14), spin: rand(-1, 1) });
+}
+function spawnGhost(fromBoss) {
+  const b = game.vibey;
+  const yaw = fromBoss ? b.yaw + rand(-0.15, 0.15) : game.vibey.yaw + rand(-1, 1) * (DEMO ? 0.55 : 2.4);
+  game.things.push({ kind: fromBoss ? "bat" : "ghost", yaw, pitch: fromBoss ? b.pitch + 0.05 : rand(-0.1, 0.35),
+    dist: fromBoss ? 2.4 : rand(5, 6.5), hp: fromBoss ? 1 : 2, speed: fromBoss ? 0.55 : rand(0.45, 0.7),
+    wob: rand(0, 6), drift: rand(-0.12, 0.12), born: performance.now() });
+}
+
+function start() {
+  Object.assign(game, { on: true, t: ROUND, score: 0, combo: 0, things: [], parts: [], rays: [], phase: "hunt",
+    boss: null, spawnT: 0, ghostT: 3 });
+  for (let i = 0; i < 6; i++) spawnCandy();
+  $("hud").style.display = ""; radar.style.display = "block";
+  $("end").classList.remove("show"); $("calib").classList.remove("show");
+  banner("Grab the candy!", 1600);
+  send("start");
+}
+
+function possess() {
+  game.phase = "boss";
+  game.boss = { hp: BOSS_HP, off: 0, target: 0, dodgeT: 2.5, flash: 1, hitT: 0, batT: 2 };
+  game.things = game.things.filter(t => t.kind === "candy");
+  game.shake = 1; sfx.boss();
+  banner("Vibey has been POSSESSED!", 2600);
+  toast("Turn to Vibey and zap it free");
+  send("boss_start");
+}
+
+function finish(won) {
+  game.on = false;
+  $("hud").style.display = "none"; radar.style.display = "none";
+  $("endtitle").textContent = won ? "Vibey is free!" : "The Vibeygeist wins";
+  $("endscore").textContent = game.score;
+  $("endline").textContent = won ? "pieces of candy saved" : "pieces of candy left. Vibey keeps the rest.";
+  $("end").classList.add("show");
+  send("end", { won });
+}
+
+let lastHitSent = 0;
+function tap(x, y) {
+  if (!game.on) return;
+  let best = null, bd = 1e9;
+  for (const t of game.things) {
+    const p = project(dirOf(t.yaw, t.pitch));
+    if (!p) continue;
+    const r = (t.kind === "candy" ? 46 : 56) * Math.max(0.6, sizeAt(p, t));
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < r + 18 && d < bd) { bd = d; best = { t, p }; }
+  }
+  // the boss is the robot itself
+  if (game.phase === "boss" && game.boss) {
+    const b = bossScreen();
+    if (b && Math.hypot(b.x - x, b.y - y) < b.r * 1.15 && (!best || best.t.kind === "candy")) {
+      ray(x, y, "#ff3b3b");
+      if (Math.abs(game.boss.off - game.boss.target) > 0.05 && game.boss.dodging) { sfx.miss(); float(x, y, "MISSED", "#fff"); return; }
+      game.boss.hp--; game.boss.hitT = 0.25; game.shake = 0.35; sfx.hit(); burst(b.x, b.y, "#ff3b3b", 14);
+      float(x, y - 30, "-1", "#ff6b6b");
+      const now = performance.now();
+      if (now - lastHitSent > 700) { lastHitSent = now; send("boss_hit", { hp: game.boss.hp }); }
+      if (game.boss.hp <= 0) {
+        game.score += 50; burst(b.x, b.y, "#ffd23f", 60); sfx.pop();
+        banner("Vibey is FREE!", 2200); send("boss_defeated");
+        setTimeout(() => finish(true), 2300); game.phase = "freed";
+      }
+      return;
+    }
+  }
+  if (!best) return;
+  const t = best.t;
+  if (t.kind === "candy") {
+    game.combo = game.comboT > 0 ? game.combo + 1 : 1; game.comboT = 2.2;
+    const pts = 10 + Math.min(game.combo - 1, 5) * 5;
+    game.score += pts; sfx.candy(Math.min(game.combo, 8));
+    burst(best.p.x, best.p.y, t.color, 16); float(best.p.x, best.p.y - 20, "+" + pts, "#ffd23f");
+    if (game.combo > 1) float(best.p.x, best.p.y - 52, game.combo + "x combo", "#fff");
+    game.things.splice(game.things.indexOf(t), 1);
+    send("candy", { combo: game.combo });
+  } else {
+    ray(best.p.x, best.p.y, "#7cf7ff"); sfx.zap(); t.hp--; t.hitT = 0.2;
+    if (t.hp <= 0) {
+      burst(best.p.x, best.p.y, "#cfefff", 22); sfx.pop(); game.score += 5;
+      float(best.p.x, best.p.y - 20, "+5", "#7cf7ff");
+      game.things.splice(game.things.indexOf(t), 1);
+      send("ghost_zap");
+    }
+  }
+}
+
+// ------------------------------------------------------------- effects --
+function burst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2), s = rand(80, 380);
+    game.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 80, life: rand(0.4, 0.9), color, r: rand(2, 5) });
+  }
+}
+function float(x, y, text, color) { game.parts.push({ x, y, vx: 0, vy: -60, life: 0.9, text, color }); }
+function ray(x, y, color) { game.rays.push({ x, y, life: 0.18, color }); }
+let bannerT = 0;
+function banner(text, ms) {
+  const b = $("banner"); b.textContent = text; b.classList.add("show");
+  clearTimeout(bannerT); bannerT = setTimeout(() => b.classList.remove("show"), ms);
+}
+let toastT = 0;
+function toast(text, ms = 2600) {
+  const t = $("toast"); t.textContent = text; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// ------------------------------------------------------------- drawing --
+function drawCandy(t, x, y, s, now) {
+  const a = Math.sin(now / 400 + t.spin * 3) * 0.3;
+  ctx.save(); ctx.translate(x, y + Math.sin(now / 300 + t.spin * 5) * 6 * s); ctx.rotate(a); ctx.scale(s, s);
+  ctx.shadowColor = t.color; ctx.shadowBlur = 24;
+  if (t.style === "wrap") {
+    ctx.fillStyle = t.color;
+    ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(-46, -16); ctx.lineTo(-44, 16); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(26, 0); ctx.lineTo(46, -16); ctx.lineTo(44, 16); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, 28, 20, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 4;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(i * 10 - 6, -17); ctx.lineTo(i * 10 + 6, 17); ctx.stroke(); }
+  } else if (t.style === "pop") {
+    ctx.fillStyle = "#f5efe6"; ctx.fillRect(-3, 10, 6, 46);
+    ctx.fillStyle = t.color; ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = "#ffffffcc"; ctx.lineWidth = 5; ctx.beginPath();
+    for (let i = 0; i < 40; i++) { const r = i * 0.6, an = i * 0.45; ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r); }
+    ctx.stroke();
+  } else if (t.style === "pumpkin") {
+    ctx.fillStyle = "#ff7a1a";
+    for (const dx of [-16, 16, 0]) { ctx.beginPath(); ctx.ellipse(dx, 0, 22, 26, 0, 0, Math.PI * 2); ctx.fill(); }
+    ctx.shadowBlur = 0; ctx.fillStyle = "#3a7d22"; ctx.fillRect(-3, -34, 7, 12);
+    ctx.fillStyle = "#ffe066";
+    ctx.beginPath(); ctx.moveTo(-16, -8); ctx.lineTo(-6, -8); ctx.lineTo(-11, -16); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(16, -8); ctx.lineTo(6, -8); ctx.lineTo(11, -16); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-18, 6); ctx.lineTo(18, 6); ctx.lineTo(10, 15); ctx.lineTo(0, 9); ctx.lineTo(-10, 15); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.moveTo(0, -34); ctx.lineTo(26, 26); ctx.lineTo(-26, 26); ctx.closePath();
+    ctx.fillStyle = "#fff4dc"; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = "#ff9a1f"; ctx.fillRect(-30, -8, 60, 20);
+    ctx.fillStyle = "#ffe14d"; ctx.fillRect(-30, 12, 60, 16);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawGhost(t, x, y, s, now) {
+  const bob = Math.sin(now / 260 + t.wob) * 8 * s, flash = t.hitT > 0;
+  ctx.save(); ctx.translate(x, y + bob); ctx.scale(s, s);
+  ctx.globalAlpha = 0.92; ctx.shadowColor = "#b8f3ff"; ctx.shadowBlur = 30;
+  ctx.fillStyle = flash ? "#7cf7ff" : "#f4f7ff";
+  ctx.beginPath(); ctx.moveTo(-34, 30); ctx.lineTo(-34, -6); ctx.arc(0, -6, 34, Math.PI, 0); ctx.lineTo(34, 30);
+  for (let i = 0; i < 4; i++) { const xx = 34 - i * 17; ctx.quadraticCurveTo(xx - 4, 44 + Math.sin(now / 150 + i) * 4, xx - 8.5, 30); ctx.quadraticCurveTo(xx - 13, 18, xx - 17, 30); }
+  ctx.fill(); ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.fillStyle = "#1a1030";
+  ctx.beginPath(); ctx.ellipse(-12, -8, 7, 10, 0, 0, Math.PI * 2); ctx.ellipse(12, -8, 7, 10, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, 12, 8, 6 + Math.sin(now / 200) * 3, 0, 0, Math.PI * 2); ctx.fill();
+  if (t.hp === 1) { ctx.strokeStyle = "#7cf7ff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-20, -30); ctx.lineTo(-6, -14); ctx.lineTo(-14, -6); ctx.stroke(); }
+  ctx.restore();
+}
+function drawBat(t, x, y, s, now) {
+  const f = Math.sin(now / 60 + t.wob) * 0.6;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.fillStyle = "#14051f"; ctx.shadowColor = "#ff3b3b"; ctx.shadowBlur = 18;
+  for (const side of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(side * 26, -24 * f - 10, side * 46, -6 * f);
+    ctx.quadraticCurveTo(side * 34, 4, side * 30, 12); ctx.quadraticCurveTo(side * 18, 4, 0, 10); ctx.fill();
+  }
+  ctx.beginPath(); ctx.ellipse(0, 4, 9, 12, 0, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.fillStyle = "#ff3b3b"; ctx.fillRect(-5, 0, 3, 3); ctx.fillRect(2, 0, 3, 3);
+  ctx.restore();
+}
+
+// The costume that sits on the real robot. One unit = Vibey's head width at
+// size 1 and 1.4 m away; the calibrate slider scales it to fit.
+function bossScreen() {
+  const v = game.vibey, off = game.boss ? game.boss.off : 0;
+  const p = project(dirOf(v.yaw + off, v.pitch));
+  if (!p) return null;
+  return { x: p.x, y: p.y, r: HEAD * v.size * p.s };
+}
+function drawCostume(x, y, r, now, mode) {
+  const evil = mode !== "preview" ? 1 : 0.7, hit = game.boss && game.boss.hitT > 0;
+  ctx.save(); ctx.translate(x, y);
+  // aura
+  const g = ctx.createRadialGradient(0, r * 0.4, r * 0.2, 0, r * 0.4, r * 2.2);
+  g.addColorStop(0, `rgba(255,40,40,${0.35 * evil + (hit ? 0.3 : 0)})`); g.addColorStop(1, "rgba(255,0,0,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, r * 0.4, r * 2.2, 0, Math.PI * 2); ctx.fill();
+  // horns
+  ctx.fillStyle = "#c81d25"; ctx.shadowColor = "#ff2b2b"; ctx.shadowBlur = 20;
+  for (const s of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(s * r * 0.55, -r * 0.55); ctx.quadraticCurveTo(s * r * 1.15, -r * 0.9, s * r * 0.95, -r * 1.65);
+    ctx.quadraticCurveTo(s * r * 0.75, -r * 1.0, s * r * 0.25, -r * 0.62); ctx.fill();
+  }
+  // flaming crown
+  ctx.shadowColor = "#ffb31a"; ctx.fillStyle = "#ffcc33";
+  ctx.beginPath(); ctx.moveTo(-r * 0.42, -r * 0.62);
+  for (let i = 0; i <= 4; i++) { const xx = -r * 0.42 + i * r * 0.21; ctx.lineTo(xx, -r * (0.95 + 0.12 * Math.sin(now / 90 + i * 2))); ctx.lineTo(xx + r * 0.105, -r * 0.7); }
+  ctx.lineTo(r * 0.42, -r * 0.62); ctx.closePath(); ctx.fill();
+  // glowing eyes over Vibey's black goggles
+  ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 30 + 10 * Math.sin(now / 120);
+  ctx.fillStyle = "#ff1e1e";
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * r * 0.36, 0, r * 0.2, 0, Math.PI * 2); ctx.fill(); }
+  ctx.fillStyle = "#ffe0e0";
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * r * 0.36, 0, r * 0.06, 0, Math.PI * 2); ctx.fill(); }
+  ctx.shadowBlur = 0;
+  if (mode === "preview") {
+    ctx.strokeStyle = "#ffffff99"; ctx.setLineDash([8, 8]); ctx.lineWidth = 2;
+    ctx.strokeRect(-r * 0.75, -r * 0.55, r * 1.5, r * 1.1); ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+function drawBossHud(b) {
+  const w = Math.min(W - 60, 300), x = (W - w) / 2, y = 92;
+  ctx.fillStyle = "#000a"; ctx.fillRect(x - 4, y - 4, w + 8, 22);
+  ctx.fillStyle = "#ff3b3b"; ctx.fillRect(x, y, w * Math.max(0, game.boss.hp) / BOSS_HP, 14);
+  ctx.font = "400 22px Creepster, Inter"; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+  ctx.fillText("THE VIBEYGEIST", W / 2, y - 10);
+  if (!b || b.x < -40 || b.x > W + 40 || b.y < -40 || b.y > H + 40) edgeArrow(dirOf(game.vibey.yaw, game.vibey.pitch), "#ff3b3b", "VIBEY");
+}
+function edgeArrow(dir, color, label) {
+  const sx = dot(dir, view.right), sy = dot(dir, view.up);
+  const a = Math.atan2(-sy, sx), cx = W / 2 + Math.cos(a) * (W / 2 - 46), cy = H / 2 + Math.sin(a) * (H / 2 - 110);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(a); ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 16;
+  ctx.beginPath(); ctx.moveTo(22, 0); ctx.lineTo(-10, -16); ctx.lineTo(-10, 16); ctx.fill(); ctx.restore();
+  if (label) { ctx.font = "800 12px Inter"; ctx.fillStyle = color; ctx.textAlign = "center"; ctx.fillText(label, cx, cy + 30); }
+}
+function drawRadar() {
+  const S = 168, c = S / 2; rctx.clearRect(0, 0, S, S);
+  rctx.strokeStyle = "#ffffff30"; rctx.lineWidth = 2;
+  rctx.beginPath(); rctx.arc(c, c, 40, 0, Math.PI * 2); rctx.stroke();
+  rctx.fillStyle = "#ffffff18"; rctx.beginPath(); rctx.moveTo(c, c);
+  rctx.arc(c, c, 78, -Math.PI / 2 - 0.45, -Math.PI / 2 + 0.45); rctx.fill();
+  const plot = (yaw, dist, color, r) => {
+    const a = wrap(yaw - view.yaw) - Math.PI / 2, rr = Math.min(76, 18 + dist * 11);
+    rctx.fillStyle = color; rctx.beginPath(); rctx.arc(c + Math.cos(a) * rr, c + Math.sin(a) * rr, r, 0, Math.PI * 2); rctx.fill();
+  };
+  for (const t of game.things) plot(t.yaw, t.dist, t.kind === "candy" ? "#ffd23f" : "#bff4ff", t.kind === "candy" ? 5 : 6);
+  plot(game.vibey.yaw, 1.4, game.phase === "boss" ? "#ff3b3b" : "#ff8a1f", 8);
+}
+
+// -------------------------------------------------------------- the loop --
+let last = performance.now(), calib = false;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (gyro && orient) fromOrientation(orient);
+  if (DEMO) autopilot(dt, now);
+  drawBackground();
+  ctx.clearRect(0, 0, W, H);
+  if (game.shake > 0) { game.shake -= dt; ctx.save(); ctx.translate(rand(-8, 8) * game.shake, rand(-8, 8) * game.shake); }
+
+  if (calib) {
+    const p = project(dirOf(view.yaw, view.pitch));
+    drawCostume(W / 2, H / 2, HEAD * Number($("size").value) * (p ? p.s : 1), now, "preview");
+  }
+
+  if (game.on) {
+    game.t -= dt;
+    game.comboT -= dt;
+    $("time").textContent = Math.max(0, Math.ceil(game.t));
+    $("score").textContent = game.score;
+    if (game.phase === "hunt" && game.t <= BOSS_AT) possess();
+    if (game.t <= 0 && game.phase === "boss") { finish(false); }
+    // spawns
+    game.spawnT -= dt;
+    const candies = game.things.filter(t => t.kind === "candy").length;
+    if (game.spawnT <= 0 && candies < (game.phase === "boss" ? 4 : 9)) { spawnCandy(); game.spawnT = rand(0.5, 1.2); }
+    game.ghostT -= dt;
+    if (game.phase === "hunt" && game.ghostT <= 0) { spawnGhost(false); game.ghostT = rand(2.6, 4.2); }
+    // boss behaviour: sidesteps (the real robot tilts and wiggles with it), throws bats
+    const B = game.boss;
+    if (B && game.phase === "boss") {
+      B.hitT -= dt; B.dodgeT -= dt; B.batT -= dt;
+      if (B.dodgeT <= 0) {
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        B.target = dir * 0.12; B.dodging = true; B.dodgeT = rand(2.2, 3.6);
+        send("boss_dodge", { dir: dir < 0 ? "left" : "right" });
+        setTimeout(() => { if (game.boss) { game.boss.target = 0; game.boss.dodging = false; } }, 900);
+      }
+      B.off += (B.target - B.off) * Math.min(1, dt * 6);
+      if (B.batT <= 0) { spawnGhost(true); B.batT = rand(2.4, 3.8); }
+    }
+    // things
+    for (const t of [...game.things]) {
+      if (t.kind === "candy") {
+        if ((now - t.born) / 1000 > t.life) game.things.splice(game.things.indexOf(t), 1);
+        continue;
+      }
+      t.dist -= t.speed * dt; t.yaw += t.drift * dt; t.hitT = (t.hitT || 0) - dt;
+      if (t.kind === "bat") t.pitch -= 0.02 * dt;
+      if (t.dist < 0.7) {
+        game.things.splice(game.things.indexOf(t), 1);
+        const lost = Math.min(game.score, t.kind === "bat" ? 10 : 20);
+        game.score -= lost; game.shake = 0.6; sfx.steal();
+        toast(t.kind === "bat" ? `A bat grabbed ${lost} candy` : `A ghost stole ${lost} candy!`);
+        flash = 0.5;
+        send("ghost_steal", { lost });
+      }
+    }
+    // draw far to near
+    const order = [...game.things].sort((a, b) => b.dist - a.dist);
+    if (game.phase === "boss" || game.phase === "freed") {
+      const b = bossScreen();
+      if (b && game.phase === "boss") drawCostume(b.x, b.y, b.r, now, "boss");
+      if (game.phase === "boss") drawBossHud(b);
+    }
+    for (const t of order) {
+      const p = project(dirOf(t.yaw, t.pitch));
+      if (!p) continue;
+      const s = sizeAt(p, t);
+      if (t.kind === "candy") drawCandy(t, p.x, p.y, s, now);
+      else if (t.kind === "ghost") drawGhost(t, p.x, p.y, s, now);
+      else drawBat(t, p.x, p.y, s, now);
+    }
+    // nearest ghost off screen gets an arrow
+    const danger = game.things.filter(t => t.kind !== "candy" && t.dist < 3.2).sort((a, b) => a.dist - b.dist)[0];
+    if (danger) {
+      const p = project(dirOf(danger.yaw, danger.pitch));
+      if (!p || p.x < 0 || p.x > W || p.y < 0 || p.y > H) edgeArrow(dirOf(danger.yaw, danger.pitch), "#bff4ff", "GHOST");
+    }
+    drawRadar();
+  }
+  // rays, particles, flash
+  for (const r of [...game.rays]) {
+    r.life -= dt; if (r.life <= 0) { game.rays.splice(game.rays.indexOf(r), 1); continue; }
+    ctx.strokeStyle = r.color; ctx.lineWidth = 6 * r.life / 0.18 + 1; ctx.shadowColor = r.color; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.moveTo(W / 2, H + 10);
+    const mx = (W / 2 + r.x) / 2 + rand(-20, 20), my = (H + r.y) / 2 + rand(-20, 20);
+    ctx.quadraticCurveTo(mx, my, r.x, r.y); ctx.stroke(); ctx.shadowBlur = 0;
+  }
+  for (const p of [...game.parts]) {
+    p.life -= dt; if (p.life <= 0) { game.parts.splice(game.parts.indexOf(p), 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.text) {
+      ctx.globalAlpha = Math.min(1, p.life * 2); ctx.font = "900 22px Inter"; ctx.textAlign = "center";
+      ctx.lineWidth = 4; ctx.strokeStyle = "#000"; ctx.strokeText(p.text, p.x, p.y); ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y);
+    } else {
+      p.vy += 500 * dt; ctx.globalAlpha = Math.min(1, p.life * 2); ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (flash > 0) { flash -= dt; ctx.fillStyle = `rgba(255,0,40,${flash * 0.5})`; ctx.fillRect(0, 0, W, H); }
+  if (game.phase === "boss" && game.t > BOSS_AT - 1.2) { ctx.fillStyle = `rgba(255,255,255,${Math.max(0, (game.t - (BOSS_AT - 1.2)) / 1.2) * 0.7})`; ctx.fillRect(0, 0, W, H); }
+  // spooky vignette
+  const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
+  vg.addColorStop(0, "rgba(20,0,40,0)"); vg.addColorStop(1, game.phase === "boss" ? "rgba(90,0,10,0.6)" : "rgba(30,0,60,0.55)");
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  if (game.shake > 0) ctx.restore();
+  requestAnimationFrame(frame);
+}
+let flash = 0;
+
+// No camera (or recording a demo): a still picture stands in for the room
+// and pans as you turn, so the game still feels anchored.
+let bgImg = null, voidMode = false;
+function drawBackground() {
+  if (!voidMode) return;
+  const w = W, h = H;
+  if (bgImg && bgImg.complete && bgImg.naturalWidth) {
+    const iw = bgImg.naturalWidth, ih = bgImg.naturalHeight, f = (h / 2) / Math.tan(VFOV / 2);
+    const scale = h * (1.12 + 2 * Math.abs(BGY)) / ih;          // a little taller than the screen for pitch
+    const dw = iw * scale, dh = ih * scale;
+    const dy = (h - dh) / 2 + Math.tan(view.pitch) * f;
+    const dx = (w - dw) / 2 - wrap(view.yaw - game.vibey.yaw) * f + BGX * dw;
+    const dyy = BGY * dh;
+    bctx.fillStyle = "#07040c"; bctx.fillRect(0, 0, w, h);
+    // tile it, mirroring every other copy, so turning away never shows a void
+    for (let k = -3; k <= 3; k++) {
+      const x0 = dx + k * dw;
+      if (x0 > w || x0 + dw < 0) continue;
+      bctx.save();
+      if (k % 2) { bctx.translate(x0 + dw, 0); bctx.scale(-1, 1); bctx.drawImage(bgImg, 0, dy + dyy, dw, dh); }
+      else bctx.drawImage(bgImg, x0, dy + dyy, dw, dh);
+      bctx.restore();
+    }
+    bctx.fillStyle = "rgba(25,5,45,0.25)"; bctx.fillRect(0, 0, w, h);   // dusk
+    return;
+  }
+  // procedural haunted void
+  const f = (h / 2) / Math.tan(VFOV / 2), horizon = h / 2 + Math.tan(view.pitch) * f;
+  const sky = bctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, "#12051f"); sky.addColorStop(1, "#2a0c3a");
+  bctx.fillStyle = sky; bctx.fillRect(0, 0, w, h);
+  const mx = W / 2 - wrap(view.yaw - 0.6) * f;
+  bctx.fillStyle = "#fff6d6"; bctx.shadowColor = "#fff2b0"; bctx.shadowBlur = 40;
+  bctx.beginPath(); bctx.arc(mx, horizon - f * 0.5, 40, 0, Math.PI * 2); bctx.fill(); bctx.shadowBlur = 0;
+  bctx.fillStyle = "#0b0412"; bctx.fillRect(0, horizon, w, h - horizon);
+  for (let i = -12; i <= 12; i++) {
+    const x = W / 2 + wrap(i * 0.5 - view.yaw) * f;
+    if (x < -60 || x > w + 60) continue;
+    bctx.fillStyle = "#1a0b26"; bctx.fillRect(x - 10, horizon - 40, 20, 40);
+    bctx.beginPath(); bctx.arc(x, horizon - 40, 10, Math.PI, 0); bctx.fill();
+  }
+}
+
+// ---------------------------------------------------------- demo autopilot --
+// Used to record the concept video: turns toward the nearest target and taps.
+let apT = 0, apAim = null;
+function autopilot(dt, now) {
+  if (!game.on) return;
+  let target = null;
+  if (game.phase === "boss") {
+    const near = game.things.filter(t => t.kind === "bat" && t.dist < 1.6)[0];
+    target = near ? { yaw: near.yaw, pitch: near.pitch, t: near } : { yaw: game.vibey.yaw + game.boss.off, pitch: game.vibey.pitch, boss: true };
+  } else {
+    const list = game.things.slice().sort((a, b) => {
+      const pa = (a.kind !== "candy" ? -2 : 0) + Math.abs(wrap(a.yaw - view.yaw)), pb = (b.kind !== "candy" ? -2 : 0) + Math.abs(wrap(b.yaw - view.yaw));
+      return pa - pb;
+    });
+    const t = list.find(t => t.kind === "candy" || t.dist < 3.5) || list[0];
+    if (t) target = { yaw: t.yaw, pitch: t.pitch, t };
+  }
+  if (!target) return;
+  const k = Math.min(1, dt * 2.6);
+  fromYawPitch(view.yaw + wrap(target.yaw - view.yaw) * k, view.pitch + (target.pitch - view.pitch) * k);
+  apT -= dt;
+  const p = project(dirOf(target.yaw, target.pitch));
+  if (apT <= 0 && p && Math.abs(p.x - W / 2) < W * 0.22 && Math.abs(p.y - H / 2) < H * 0.25) {
+    if (target.boss) { const b = bossScreen(); if (b) tap(b.x, b.y); apT = rand(0.3, 0.55); }
+    else { tap(p.x, p.y); apT = rand(0.35, 0.6); }
+  }
+}
+
+// ------------------------------------------------------------ start flow --
+async function askMotion() {
+  try {
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === "function") {
+      await DeviceOrientationEvent.requestPermission();
+    }
+  } catch {}
+}
+async function startCamera() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    cam.srcObject = s; await cam.play().catch(() => {});
+    return true;
+  } catch (e) { return false; }
+}
+function useVoid() {
+  voidMode = true; cam.style.display = "none"; bg.style.display = "block";
+  if (BG_URL) { bgImg = new Image(); bgImg.src = BG_URL; }
+}
+function toCalibrate() {
+  $("intro").classList.remove("show");
+  calib = true; $("calib").classList.add("show");
+  setTimeout(() => { if (!gyro) toast("No motion sensor here, so drag to look around"); }, 1200);
+}
+$("go").addEventListener("click", async () => {
+  beep(440, 0.05, "sine", 0.01);              // unlock audio inside the tap
+  await askMotion();
+  const ok = await startCamera();
+  if (!ok) { useVoid(); toast("Camera blocked, playing in the spooky void"); }
+  toCalibrate();
+});
+$("nocam").addEventListener("click", async () => { beep(440, 0.05, "sine", 0.01); await askMotion(); useVoid(); toCalibrate(); });
+$("lock").addEventListener("click", () => {
+  game.vibey = { yaw: view.yaw, pitch: view.pitch, size: Number($("size").value) };
+  calib = false; send("calibrated"); start();
+});
+$("again").addEventListener("click", () => { $("end").classList.remove("show"); calib = true; $("calib").classList.add("show"); });
+
+vibeyState(); setInterval(vibeyState, 8000);
+requestAnimationFrame(frame);
+
+if (DEMO) {                                   // straight into a round, no taps needed
+  useVoid(); $("intro").classList.remove("show");
+  game.vibey = { yaw: 0, pitch: Number(Q.get("vp") || -0.02), size: Number(Q.get("vs") || 1.05) };
+  setTimeout(start, 600);
+}
+window.GAME = game;
+})();
+</script>
+</body>
+</html>

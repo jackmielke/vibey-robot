@@ -15,6 +15,7 @@
 #   vibey look [path]  grab one camera frame to a jpeg (default /tmp/vibey_look.jpg)
 #   vibey fix          robot moves return 200 but the body is frozen → daemon restart
 #   vibey logs         tail every service log at once
+#   vibey party        Halloween phone AR game: starts it and prints an https link + QR
 REPO=~/dev/vibey-robot
 cd "$REPO" || exit 1
 URL=$(grep '^REACHY_URL=' .env | cut -d= -f2-)
@@ -204,6 +205,42 @@ PYEOF
     else
       python3 services/reachy_transcript.py "$2"
     fi
+    ;;
+  party)
+    # Vibey's Haunted Candy Hunt (services/reachy_halloween.py + halloween.html).
+    # Phones only allow the camera and motion sensors on https pages, so this
+    # opens a throwaway Cloudflare tunnel to the GAME port only (never the
+    # dashboard) and prints a link and QR anyone at the party can scan.
+    # Ctrl-C ends the game server and the link together.
+    if ! curl -s -m 2 localhost:8781/state >/dev/null; then
+      python3 services/reachy_halloween.py > /tmp/reachy_halloween.log 2>&1 &
+      GAME_PID=$!
+      sleep 1
+    fi
+    if ! command -v cloudflared >/dev/null; then
+      echo "installing cloudflared (one time)…"
+      brew install cloudflared || { echo "no cloudflared; on this Wi-Fi try http://$(ipconfig getifaddr en0):8781 (no camera over http)"; exit 1; }
+    fi
+    trap 'kill $TUN_PID $GAME_PID 2>/dev/null; echo; echo "party over 🎃"' INT TERM EXIT
+    cloudflared tunnel --no-autoupdate --url http://localhost:8781 > /tmp/vibey_party_tunnel.log 2>&1 &
+    TUN_PID=$!
+    LINK=""
+    for _ in $(seq 1 40); do
+      LINK=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/vibey_party_tunnel.log | head -1)
+      [[ -n "$LINK" ]] && break
+      sleep 0.5
+    done
+    if [[ -z "$LINK" ]]; then echo "tunnel didn't come up, see /tmp/vibey_party_tunnel.log"; exit 1; fi
+    echo ""
+    echo "🎃  Vibey's Haunted Candy Hunt is live:"
+    echo "    $LINK"
+    echo ""
+    if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 "$LINK"
+    else python3 -c "import qrcode,sys;q=qrcode.QRCode(border=1);q.add_data(sys.argv[1]);q.print_ascii(invert=True)" "$LINK" 2>/dev/null \
+      || echo "(brew install qrencode for a scannable QR here)"; fi
+    echo "Scan it, tap Start, point at Vibey, lock on. Ctrl-C to end the party."
+    echo "$LINK" | pbcopy 2>/dev/null
+    wait $TUN_PID
     ;;
   wifi)
     case "$2" in
