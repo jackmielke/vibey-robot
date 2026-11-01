@@ -23,9 +23,9 @@ struct RoverCard: View {
                     .lineLimit(1)
             }
             HStack(alignment: .center, spacing: 12) {
-                CarTrack(vertical: true, label: "GAS", long: 190, driver: driver, disabled: off)
+                CarTrack(vertical: true, label: "GAS", driver: driver, disabled: off, long: 190)
                 Spacer(minLength: 0)
-                CarTrack(vertical: false, label: "STEER", long: 190, driver: driver, disabled: off)
+                CarTrack(vertical: false, label: "STEER", driver: driver, disabled: off, long: 190)
             }
             HStack(spacing: 10) {
                 Picker("Speed", selection: $speed) {
