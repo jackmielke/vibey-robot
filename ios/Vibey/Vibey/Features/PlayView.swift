@@ -8,6 +8,7 @@ struct PlayView: View {
     @State private var fired: String?
     @State private var line = ""
     @FocusState private var typing: Bool
+    @State private var haunt = false
 
     private let grid = [GridItem(.adaptive(minimum: 64), spacing: 8)]
 
@@ -24,6 +25,9 @@ struct PlayView: View {
                         soundboard
                         SectionLabel(text: "DJ")
                         DJCard()
+                        SectionLabel(text: "AR games")
+                        Button { Haptics.tap(); haunt = true } label: { hauntRow }
+                            .buttonStyle(.plain)
                         SectionLabel(text: "Wheels")
                         NavigationLink { DriveView() } label: { driveRow }
                             .buttonStyle(.plain)
@@ -38,6 +42,23 @@ struct PlayView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .task { await load() }
+        .fullScreenCover(isPresented: $haunt) { HauntView().environmentObject(store) }
+    }
+
+    private var hauntRow: some View {
+        HStack(spacing: 14) {
+            Text("👻").font(.title2)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(Palette.ink))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Haunted Candy Hunt").font(.system(.headline, design: .rounded))
+                Text("AR: grab candy, zap ghosts, free possessed Vibey").font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(Palette.inkDim)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").foregroundStyle(Palette.inkDim)
+        }
+        .shell()
     }
 
     // MARK: Say

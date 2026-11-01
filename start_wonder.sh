@@ -46,6 +46,7 @@ stop_all() {
   pkill -f "reachy_bridge.py" 2>/dev/null
   pkill -f "reachy_alarm.py" 2>/dev/null
   pkill -f "reachy_dj.py" 2>/dev/null
+  pkill -f "reachy_halloween.py" 2>/dev/null
   pkill -f "reachy_gestures.py" 2>/dev/null
   pkill -f "reachy_watchdog.py" 2>/dev/null
   pkill -f "reachy_heal.py" 2>/dev/null
@@ -103,6 +104,7 @@ here telegram  && python3                services/reachy_telegram.py  > /tmp/tel
 [[ "$BRIDGE" == "1" ]] && NO_WAKE=1 python3 services/reachy_bridge.py > /tmp/reachy_bridge.log 2>&1 &
 here alarm     && python3                services/reachy_alarm.py     > /tmp/reachy_alarm.log  2>&1 &
 reachy_env/bin/python3 services/reachy_dj.py        > /tmp/reachy_dj.log     2>&1 &   # music + beat-synced dancing
+python3                services/reachy_halloween.py > /tmp/reachy_halloween.log 2>&1 &   # AR game events (:8781) for the app and ./vibey party
 # Gesture watcher: waves back at you. Its own venv on purpose — mediapipe pins
 # numpy<2 and the robot SDK needs numpy>=2.2.5, so they cannot share one.
 [[ -x .venv-gestures/bin/python3 ]] && \

@@ -37,6 +37,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera shows your room for AR games with Vibey.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Vibey talks to your Mac on this Wi-Fi to control the robot.</string>
 	<key>UIApplicationSceneManifest</key>
